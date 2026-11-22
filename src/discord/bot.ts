@@ -169,10 +169,13 @@ export class CasinoBot {
         const w = app.roulette.peek(id);
         if (!w) return null;
         if (frame === undefined) return this.checked(await roulettePanel(app, w));
-        return this.checked(await roulettePanel(app, w, this.animations ? { animate: true } : { spinFrame: frame }));
+        return this.checked(await roulettePanel(app, w, this.animatesGames(w.record.guildId) ? { animate: true } : { spinFrame: frame }));
       },
       // A spin plays the wheel turning and the ball dropping (one GIF), or two stills without animations.
-      frames: (_id, spun) => (spun ? (this.animations ? 1 : 2) : 0),
+      frames: (id, spun) => {
+        const w = app.roulette.peek(id);
+        return spun && w ? (this.animatesGames(w.record.guildId) ? 1 : 2) : 0;
+      },
       holdScale: timing.animationScale,
       frameDelayMs: timing.spinFrameMs,
       minIntervalMs: timing.wheelMinIntervalMs,
@@ -322,6 +325,11 @@ export class CasinoBot {
   }
 
   // ───────────────────────────── channels & threads ─────────────────────────────
+
+  /** Animated roulette spins, slot reels and coin tosses for this server (blackjack has its own switch). */
+  animatesGames(guildId: string): boolean {
+    return this.animations && this.app.settings.get(guildId).animations;
+  }
 
   /** Threads are separate channels; in test mode they are never used. */
   get threadsAllowed(): boolean {

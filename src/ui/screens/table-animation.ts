@@ -20,7 +20,7 @@ export interface TableAnimation {
 
 const DEAL = { flight: 6, stagger: 2, frameMs: 55, quiet: true };
 const DRAW = { flight: 6, stagger: 0, frameMs: 50 };
-const REVEAL = { flight: 7, stagger: 8, frameMs: 55, landMs: 240 };
+const REVEAL = { flight: 6, stagger: 7, frameMs: 55, landMs: 170 };
 
 /**
  * The animation for a table change: cards dealt from the shoe, a drawn card flying in, the dealer
@@ -74,7 +74,7 @@ export async function tableAnimation(app: CasinoApp, snapshot: Readonly<TableSna
     if (arrivals.length) frames.push(...cardArrivalFrames(revealView, arrivals, REVEAL));
     // Settling: chips slide to the winners and away from the losers.
     const moves = result.seats.filter((s) => s.net !== 0).map((s) => ({ seat: s.seatIndex, toSeat: s.net > 0, amount: s.wagered }));
-    if (moves.length) frames.push(...chipFrames(buildTableView(snapshot, rules), moves, 8, 55));
+    if (moves.length) frames.push(...chipFrames(buildTableView(snapshot, rules), moves, 7, 55));
   }
 
   return frames.length ? encode(frames, mode) : null;

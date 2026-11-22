@@ -85,6 +85,53 @@ describe('animated GIFs', () => {
   }, 30_000);
 });
 
+describe('animation timing (real timings, simulated latency)', () => {
+  it('a second click during an animation is answered at once and its card never shows early', async () => {
+    h = new CasinoHarness({ timing: 'real' });
+    h.fd.recording = true;
+    h.fd.latencyMs = 100;
+    const alex = h.user('Alex');
+    await h.click(alex, h.seen(await h.slash(alex, 'casino')), 'Play Blackjack');
+    const tableId = h.app.blackjack.tableOfUser(h.guildId, alex.id)!.record.id;
+    const panelId = h.tablePanel(tableId).id;
+    await h.app.blackjack.debugSetShoe(tableId, ['2S', '9C', '3D', '7H', '4C', '5H', '2C'] as Card[]);
+    await h.click(alex, h.tablePanel(tableId), '25');
+    await h.advance(ALL_IN_DEAL_DELAY_MS);
+    h.fd.timeline.length = 0;
+    const first = h.fd.click(alex, h.tablePanel(tableId), 'Hit');
+    await new Promise((r) => setTimeout(r, 400)); // the first card's GIF is still playing
+    const second = h.fd.click(alex, h.tablePanel(tableId), 'Hit');
+    await h.settle();
+    expect(first.errors).toEqual([]);
+    expect(second.errors).toEqual([]);
+    expect(second.ackedAt! - second.createdAt).toBeLessThan(1_500); // not queued behind the first animation
+    // The first hit's still is skipped: its picture would already be superseded.
+    const frames = h.fd.timeline.filter((e) => e.messageId === panelId);
+    expect(kinds(frames)).toEqual(['gif', 'gif', 'png']);
+    expect(h.app.blackjack.peek(tableId)!.state.round!.seats[0]!.hands[0]!.cards).toHaveLength(4);
+  }, 30_000);
+
+  it('animates a dealer blackjack at the deal and settles it', async () => {
+    h = new CasinoHarness({ animations: true });
+    h.fd.recording = true;
+    const [alex, hanna] = [h.user('Alex'), h.user('Hanna')];
+    await h.click(alex, h.seen(await h.slash(alex, 'casino')), 'Play Blackjack');
+    const tableId = h.app.blackjack.tableOfUser(h.guildId, alex.id)!.record.id;
+    const panelId = h.tablePanel(tableId).id;
+    // Dealer shows a king and holds an ace: the hand ends at the deal.
+    await h.app.blackjack.debugSetShoe(tableId, ['9S', 'TC', 'KD', '7H', '8D', 'AS'] as Card[]);
+    await h.click(alex, h.tablePanel(tableId), '25');
+    await h.click(hanna, h.tablePanel(tableId), '25');
+    h.fd.timeline.length = 0;
+    await h.advance(ALL_IN_DEAL_DELAY_MS);
+    const frames = h.fd.timeline.filter((e) => e.messageId === panelId);
+    expect(kinds(frames)).toEqual(['gif', 'png']);
+    expect(frames[0]!.text).not.toMatch(/won|lost|results/);
+    expect(frames[1]!.text).toContain('Dealer had **blackjack**');
+    expect(h.app.economy.reconcile()).toEqual([]);
+  });
+});
+
 describe('My hand (private view)', () => {
   it('shows your hand with a tip, acts privately, and keeps the table panel in step', async () => {
     h = new CasinoHarness({ allowThreads: true });

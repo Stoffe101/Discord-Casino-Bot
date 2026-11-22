@@ -74,6 +74,10 @@ export class InteractionRouter {
   /** Called by the panel observers: the interaction that caused a change answers it. */
   claim(origin?: object): Carrier | undefined {
     if (!origin) return undefined;
+    // A click on someone's private (ephemeral) message must never be answered with the shared
+    // panel — that would replace their private view with the table.
+    const message = (origin as { message?: { flags?: { has(flag: number): boolean } } | null }).message;
+    if (message?.flags?.has(MessageFlags.Ephemeral)) return undefined;
     this.claimed.add(origin);
     return origin as Carrier;
   }
@@ -207,14 +211,16 @@ export class InteractionRouter {
   private async playFrames(i: Component, frames: Array<() => Promise<Screen>>, delayMs: number): Promise<void> {
     const last = frames.length - 1;
     for (const [index, build] of frames.entries()) {
-      const started = Date.now();
+      let started = Date.now();
       let hold = delayMs;
       try {
         const screen = this.bot.checked(await build());
-        // An animated frame (GIF) stays up for its own length.
-        if (screen.holdMs !== undefined) hold = screen.holdMs * this.bot.timing.animationScale;
+        const animated = screen.holdMs !== undefined;
+        // An animated frame (GIF) stays up for its own length, counted from when Discord has it.
+        if (animated) hold = screen.holdMs! * this.bot.timing.animationScale;
         if (index === 0 && !i.deferred && !i.replied) await i.update(editOptions(screen));
         else await i.editReply(editOptions(screen));
+        if (animated) started = Date.now();
       } catch (error) {
         if (index === 0 && !i.deferred && !i.replied) throw error; // nothing shown yet: normal error path
         // An in-between frame failed: never leave the message mid-animation (its controls are
@@ -769,7 +775,7 @@ export class InteractionRouter {
       const bet = intArg(args[0]);
       // The spin is settled first (money is final); the reels then stop one after another.
       await this.app.slots.spin(viewer.guildId, viewer.userId, bet, intArg(args[1], -1));
-      const reels = this.bot.animations
+      const reels = this.bot.animatesGames(viewer.guildId)
         ? [() => slotsScreen(this.app, viewer, bet, { animate: true }), () => slotsScreen(this.app, viewer, bet)]
         : [() => slotsScreen(this.app, viewer, bet, { stopped: 0 }), () => slotsScreen(this.app, viewer, bet, { stopped: 2 }), () => slotsScreen(this.app, viewer, bet)];
       return this.playFrames(i, reels, this.bot.timing.spinFrameMs);
@@ -805,7 +811,7 @@ export class InteractionRouter {
         // The coin goes up first, then lands.
         await this.playFrames(
           i,
-          [async () => (await this.bot.coinflipScreen(challenge.id, { flipping: true, animate: this.bot.animations }))!, async () => (await this.bot.coinflipScreen(challenge.id))!],
+          [async () => (await this.bot.coinflipScreen(challenge.id, { flipping: true, animate: this.bot.animatesGames(viewer.guildId) }))!, async () => (await this.bot.coinflipScreen(challenge.id))!],
           this.bot.timing.spinFrameMs * 1.6,
         );
         return;

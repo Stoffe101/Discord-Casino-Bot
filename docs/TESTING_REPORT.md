@@ -13,6 +13,58 @@ This report keeps four kinds of evidence apart:
 | **C. Simulated players** | Behaviour of the real bot code under player actions | The full-stack harness: real discord.js, guard, router and panel sync against an in-memory Discord (`tests/harness/`). Its payload rules are *a model* of Discord's |
 | **D. Real human clicks** | Real players pressing buttons in the client | **Not verified.** The bot can't press its own buttons, and the owner's account was deliberately not automated |
 
+## Round 4: real animation and "My hand" (owner request)
+
+**Animated GIFs.** Discord can't animate part of a message, so motion lives in the image.
+
+What animates:
+- **Blackjack:**
+  - cards fly from the shoe and turn over, staggered like a real deal;
+  - a hit's card flies in, with the controls already live;
+  - the dealer's hole card turns, and each draw lands with a beat;
+  - chips slide from losing seats to the dealer's tray, and from the tray to winners' stacks.
+- **Roulette:** the wheel decelerates while the ball runs the rim, spirals in and drops into the winning pocket.
+- **Slots:** the reels scroll and stop left to right with a bounce.
+- **Coinflip:** the coin tumbles and lands.
+
+How it works:
+- Every animation plays once and is followed by a static still. The text and controls carry the information, and nothing depends on the GIF playing.
+- **Encoder:** frames are rendered on the libuv thread pool and encoded with `gifenc` (MIT, no dependencies). One shared palette, plus transparent deltas between frames. Sizes run 60–270 KB per animation, at 0.2–0.6 s to build.
+- **Accepted by Discord live:** GIFs inside a Components V2 panel, both on create and when swapped in by an edit.
+- **Hold timing:** an animated frame's hold starts once Discord has it, not when the upload starts, so the still never cuts the animation short.
+- **Fast clicks:** a click during an animation cuts the hold short and skips the superseded still, so actions never queue and a card never appears before its own animation.
+- **Switches:** "Table animations" (blackjack) and "Game animations" (roulette, slots, coin) can each be turned off in the admin panel, falling back to the still frames described in round 3.
+
+Timings at about 0.5 s per request:
+
+| Step | Gap |
+| --- | --- |
+| Deal GIF, then table and controls | about 1.3 s |
+| A hit's card | GIF, still about 1.4 s later; the controls are live immediately |
+| Dealer reveal and payout | about 3.1 s; last click to the next hand's bets about 3.7 s |
+| Slots, roulette, coin | about 1.5–2 s each |
+
+**"My hand"** (a private button on the table) shows:
+- a close-up image of your hand(s) against the dealer's cards, with your total;
+- whose turn it is;
+- a **basic-strategy tip**, e.g. "Split — 16 is the worst hand; two 8s are better";
+- what each move would do, using your actual numbers;
+- private action buttons.
+
+Acting from the private view refreshes it in place while the shared panel updates. The router refuses to ever answer a private message with the shared panel.
+
+**Found and fixed this round:**
+- **Private actions answered with the shared panel.** Pressing Split in the private view replaced it with the table panel, because the edit that would have prevented it had silently not applied. A test caught it; fixed, and blocked at the router level as well.
+- **`gifenc` resolved differently under Node and under vitest.** Under vitest, animations failed. The import now works under both, and a plain-Node encode from the built code was checked.
+- **GIFs cut short.** The still replaced a GIF before it finished. Hold time now starts when the send completes.
+
+**Verified:**
+- 315 tests pass (`tests/integration/gif-animations.test.ts` among them).
+- Discord accepted all 42 screens, including the GIF and "My hand" screens.
+- A live thread run with GIF animations had 0 rate-limited and 0 blocked.
+
+**Not verified:** whether the GIFs autoplay and finish in the owner's client. Players with GIF autoplay off or Reduced Motion on see the first frame for 1–3 s, then the still.
+
 ## Round 3: game feel (owner feedback: "a bit janky")
 
 **How it was reviewed.** `npm run record` plays short sessions through the full stack with the bot's production animation timings, simulated network latency and human-paced clicks. It writes an HTML replay of every message change for each game, plus the frame images. I reviewed every frame before and after the changes. A web survey of other Discord casino bots fed into the priorities:
@@ -38,15 +90,13 @@ This report keeps four kinds of evidence apart:
 
 **Also new:** bets typed as `2k`, `1.5k`, `all`, `max` or `half` in the bet, roulette and coinflip boxes.
 
-**Timings, measured at the owner's real latency** (`npm run record -- --latency 500`, i.e. about 0.5 s per Discord request).
-- Frames are paced by cadence: the time a request takes counts towards the frame, with a 180 ms minimum hold. A slow connection therefore doesn't stretch the animation.
-- Gaps measured:
+**Still-frame steps.** These are now the fallback, used when animations are switched off; round 4 replaced them with GIFs. They're paced by cadence: the time a request takes counts towards the frame, with a 180 ms minimum hold. At about 0.5 s per request:
 
 | Step | Gap |
 | --- | --- |
-| Deal pass, then cards, totals and controls | 0.9 s |
+| Deal pass, then cards and controls | 0.9 s |
 | Each dealer card | 0.7–0.9 s |
-| Slot reels | about 0.7 s per stop (about 1.9 s from click to result) |
+| Slot reel stop | 0.7 s |
 | Roulette | 0.7 s, then 1.0 s |
 | Coin | 1.0 s |
 
@@ -205,7 +255,7 @@ The running bot now logs Discord API timings by request kind every 10 minutes an
   - A "Table 01 — closed" panel, re-posted from the thread when test mode started, then closed by the idle sweep.
   - The bench message was deleted at the end of testing.
   - The thread from the earlier unguarded run was closed, locked and archived in round 2.
-  - Rounds 2–3 left **10 archived, locked bench threads** under #casino. Four are private, and they are named like real tables (`blackjack-table-NN`). The guard deliberately can't delete threads, so remove them by hand if you want them gone.
+  - Rounds 2–4 left **12 archived, locked bench threads** under #casino. Five are private, and they are named like real tables (`blackjack-table-NN`). The guard deliberately can't delete threads, so remove them by hand if you want them gone.
 
 ## 7. Remaining limitations and unverified behaviour
 

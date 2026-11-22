@@ -88,6 +88,20 @@ export class PanelSync<Hint = unknown> {
     }, wait).unref?.();
   }
 
+  /** Wait ``ms``, but stop early (returning true) as soon as someone clicks the panel. */
+  private queued(slot: Slot<Hint>): Slot<Hint>['pending'] {
+    return slot.pending;
+  }
+
+  private async holdUnlessClicked(slot: Slot<Hint>, ms: number): Promise<boolean> {
+    const until = Date.now() + ms;
+    while (Date.now() < until) {
+      if (slot.pending?.carriers.length) return true;
+      await sleep(Math.min(40, until - Date.now()));
+    }
+    return Boolean(slot.pending?.carriers.length);
+  }
+
   private async run(key: string, slot: Slot<Hint>): Promise<void> {
     slot.running = true;
     try {
@@ -97,15 +111,27 @@ export class PanelSync<Hint = unknown> {
         let carriers = job.carriers;
         const frames = this.options.frames?.(key, job.hint) ?? 0;
         const delay = typeof this.options.frameDelayMs === 'function' ? this.options.frameDelayMs(job.hint) : (this.options.frameDelayMs ?? 900);
-        for (let frame = 0; frame < frames; frame++) {
-          // Pace by cadence: the time Discord took to show this frame counts towards its slot, so
-          // a slow connection doesn't stretch the animation (a short minimum hold keeps it readable).
-          const shown = Date.now();
+        let interrupted = false;
+        for (let frame = 0; frame < frames && !interrupted; frame++) {
+          const started = Date.now();
           const hold = await this.renderAndSend(key, slot, frame, carriers, job.hint);
           carriers = [];
-          // An animated frame stays up for its own length; a still frame for the cadence.
-          const target = hold !== undefined ? hold * (this.options.holdScale ?? 1) : delay;
-          await sleep(Math.max(target > 0 ? MIN_FRAME_HOLD_MS : 0, target - (Date.now() - shown)));
+          if (hold !== undefined) {
+            // An animated frame (GIF) only starts playing once Discord has it, so its hold counts
+            // from now. A player's click cuts it short: their action is never kept waiting.
+            interrupted = await this.holdUnlessClicked(slot, hold * (this.options.holdScale ?? 1));
+          } else {
+            // A still frame paces by cadence: the time the send took counts towards its slot, so a
+            // slow connection doesn't stretch the animation (a short minimum hold keeps it readable).
+            await sleep(Math.max(delay > 0 ? MIN_FRAME_HOLD_MS : 0, delay - (Date.now() - started)));
+          }
+        }
+        // If a click arrived mid-animation, its own job renders the latest state next: the still
+        // for this change would only show its cards before their animation.
+        const queued = this.queued(slot); // refilled by request() while we were holding
+        if (interrupted && queued) {
+          queued.carriers.unshift(...carriers);
+          continue;
         }
         await this.renderAndSend(key, slot, undefined, carriers, job.hint);
       }

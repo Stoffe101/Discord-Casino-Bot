@@ -5,6 +5,8 @@
 export interface GuildSettings {
   casinoName: string;
   enabled: boolean;
+  /** Animated spins, reels and coin tosses (blackjack has its own switch). */
+  animations: boolean;
   economy: {
     startingBalance: number;
     passivePerHour: number;
@@ -45,6 +47,7 @@ export interface GuildSettings {
 
 export const DEFAULT_SETTINGS: GuildSettings = {
   casinoName: 'The Emerald Room',
+  animations: true,
   enabled: true,
   economy: {
     startingBalance: 1000,
@@ -104,6 +107,7 @@ export const SETTING_GROUPS: Record<SettingGroup, { label: string; description: 
 export const SETTING_SPECS: readonly SettingSpec[] = [
   { key: 'casinoName', group: 'general', label: 'Casino name', help: 'Shown on every screen', type: 'text', maxLength: 40 },
   { key: 'enabled', group: 'general', label: 'Casino open', help: 'Close the casino to everyone but admins', type: 'bool' },
+  { key: 'animations', group: 'general', label: 'Game animations', help: 'Animated roulette spins, slot reels and coin tosses', type: 'bool' },
 
   { key: 'economy.startingBalance', group: 'economy', label: 'Starting chips', help: 'Granted once to new players', type: 'int', min: 0, max: 1_000_000 },
   { key: 'economy.passivePerHour', group: 'economy', label: 'Passive chips / hour', help: 'Accrues while offline', type: 'int', min: 0, max: 100_000 },
@@ -128,7 +132,7 @@ export const SETTING_SPECS: readonly SettingSpec[] = [
   { key: 'blackjack.maxSplitHands', group: 'blackjack', label: 'Max hands after splits', help: '2 = no resplitting', type: 'int', min: 2, max: 4 },
   { key: 'blackjack.resplitAces', group: 'blackjack', label: 'Resplit aces', help: 'Allow splitting aces again', type: 'bool' },
   { key: 'blackjack.penetrationPercent', group: 'blackjack', label: 'Shoe penetration (%)', help: 'Reshuffle after this much is dealt', type: 'int', min: 50, max: 90 },
-  { key: 'blackjack.dealerAnimation', group: 'blackjack', label: 'Dealer reveal animation', help: 'Reveal dealer cards one at a time', type: 'bool' },
+  { key: 'blackjack.dealerAnimation', group: 'blackjack', label: 'Table animations', help: 'Animated dealing, card draws, dealer reveal and payouts', type: 'bool' },
 
   { key: 'tables.maxTables', group: 'tables', label: 'Max open tables', help: 'Across all games', type: 'int', min: 1, max: 25 },
   { key: 'tables.useThreads', group: 'tables', label: 'Use table threads', help: 'Off = post tables in the casino channel', type: 'bool' },

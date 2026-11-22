@@ -54,6 +54,14 @@ Further reading: [Discord setup guide](docs/DISCORD_SETUP.md) · [Architecture](
 - **Multiple concurrent tables**, each with its own thread, dealer, shoe, seats, timers and panel.
   Discord's "started a thread" notice is removed again, because the lobby already lists every table
   with a link, so the casino channel doesn't fill up. Closed tables are locked and archived.
+- **Animated play.** Short GIFs, each followed by a static still:
+  - Blackjack: cards are dealt from the shoe and flip over; the dealer turns the hole card and draws; chips slide to the winners.
+  - Roulette: the wheel spins and the ball drops.
+  - Slots: the reels roll and stop.
+  - Coinflip: the coin tumbles.
+
+  Both switches, "Table animations" and "Game animations", are in the admin panel.
+- **My hand.** A private close-up of your cards and total, with whose turn it is and a basic-strategy tip ("Split — 16 is the worst hand; two 8s are better"). It explains each move with your actual numbers and has private action buttons.
   Five seats by default (1–7 configurable). Private tables with access codes.
 - One persistent **table panel** per thread that updates in place: the table image (dealer, every
   hand, bets, the active player highlighted in gold), a status line, a short activity log and
@@ -321,7 +329,7 @@ message is edited in place (or re-posted if it was deleted). See [docs/ARCHITECT
 ## Testing
 
 ```powershell
-npm test                  # 301 tests, ~15 s, fully headless (never connects to Discord)
+npm test                  # 315 tests, ~15 s, fully headless (never connects to Discord)
 npm run check             # typecheck + lint + tests + build
 npm run simulate          # engine level, e.g. -- --tables 12 --players 5 --rounds 15 --crash
 npm run simulate:discord  # full Discord stack, e.g. -- --tables 12 --players 5 --rounds 3 --latency 40

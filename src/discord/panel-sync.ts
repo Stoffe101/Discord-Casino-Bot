@@ -34,6 +34,8 @@ export interface PanelSyncOptions<Hint> {
 
 interface Slot<Hint> {
   running: boolean;
+  /** The hint of the job being rendered and sent right now (with its animation hold). */
+  current: { hint: Hint | undefined } | null;
   pending: { hint: Hint | undefined; carriers: Carrier[] } | null;
   lastFile: string | null;
   lastSentAt: number;
@@ -59,7 +61,7 @@ export class PanelSync<Hint = unknown> {
   request(key: string, hint?: Hint, carrier?: Carrier): void {
     let slot = this.slots.get(key);
     if (!slot) {
-      slot = { running: false, pending: null, lastFile: null, lastSentAt: 0 };
+      slot = { running: false, current: null, pending: null, lastFile: null, lastSentAt: 0 };
       this.slots.set(key, slot);
     }
     if (!slot.pending) slot.pending = { hint, carriers: [] };
@@ -75,10 +77,11 @@ export class PanelSync<Hint = unknown> {
     this.slots.delete(key);
   }
 
-  /** True while this panel has a render queued or in flight (an animation is playing). */
-  busy(key: string): boolean {
+  /** True while a job matching ``test`` is queued for this panel or being shown (with its hold). */
+  showing(key: string, test: (hint: Hint | undefined) => boolean): boolean {
     const slot = this.slots.get(key);
-    return !!slot && (slot.running || slot.pending !== null);
+    if (!slot) return false;
+    return (slot.current !== null && test(slot.current.hint)) || (slot.pending !== null && test(slot.pending.hint));
   }
 
   async idle(): Promise<void> {
@@ -114,6 +117,7 @@ export class PanelSync<Hint = unknown> {
       while (slot.pending) {
         const job = slot.pending;
         slot.pending = null;
+        slot.current = { hint: job.hint };
         let carriers = job.carriers;
         const frames = this.options.frames?.(key, job.hint) ?? 0;
         const delay = typeof this.options.frameDelayMs === 'function' ? this.options.frameDelayMs(job.hint) : (this.options.frameDelayMs ?? 900);
@@ -145,6 +149,7 @@ export class PanelSync<Hint = unknown> {
       this.options.logger.error(`${this.options.name} render loop failed`, { key, error });
     } finally {
       slot.running = false;
+      slot.current = null;
       if (slot.pending) void this.run(key, slot);
     }
   }

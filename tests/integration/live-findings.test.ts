@@ -111,6 +111,23 @@ describe('My hand after the hand ends', () => {
   });
 });
 
+describe('My hand between hands', () => {
+  it("other redraws (sitting out) never hide a finished hand behind \"Dealer's turn\"", async () => {
+    h = new CasinoHarness({ allowThreads: true });
+    const { alex, tableId } = await soloTable(['TS', '9C', '8D', '8H', '2C']);
+    await h.click(alex, h.tablePanel(tableId), '25');
+    await h.advance(ALL_IN_DEAL_DELAY_MS);
+    await h.click(alex, h.tablePanel(tableId), 'Stand');
+    const view = h.seen(await h.click(alex, h.tablePanel(tableId), 'My seat'))!;
+    expect(h.text(view)).toContain('Hand 1 · You won **25**');
+    // Sitting out redraws the table panel; the private view must still show the finished hand.
+    await h.click(alex, view, 'Sit out');
+    expect(h.text(view)).not.toContain("Dealer's turn");
+    expect(h.text(view)).toContain('Hand 1 · You won **25**');
+    expect(h.text(view)).toContain('Balance');
+  });
+});
+
 describe('slots', () => {
   it('a reopened machine only mentions the last spin; a spin shows its result', async () => {
     h = new CasinoHarness();

@@ -22,7 +22,7 @@ This report keeps four kinds of evidence apart:
   - chip bet and Rebet;
   - the deal GIF;
   - My hand: open, Hit, Double, Stand, Refresh;
-  - Hit and Stand on the shared panel;
+  - Stand on the shared panel (Hit was only clicked from My hand);
   - a turn that timed out;
   - dealer reveal and results.
 - **Roulette:** the bet menu and amount form (Red 50, Odd 10), the spin GIF and the result.
@@ -45,7 +45,7 @@ These remain covered by the simulated-player tests (C) only.
 | # | Seen live | Fix |
 | --- | --- | --- |
 | 1 | The betting countdown read "dealing 1 seconds ago" (and roulette "spinning 1 seconds ago") for 1–2 s: the next real change reaches the client after its deadline | A live countdown stops 3.5 s before its deadline. The services schedule one redraw, which shows **"dealing now…"**, **"spinning now — last bets!"** or **"time is nearly up — the hand stands automatically"**. A short wait (everyone has bet) shows no countdown at all |
-| 2 | Standing from **My hand** turned the private view into the seat menu with the new balance while the table still read "Skrra to act". The result was told before the dealer's turn had played | While the table is still animating, the private view shows your final hand, the dealer's up card and **"Dealer's turn — watch the table"**, with no balance. Refresh afterwards shows **"Hand 7 · You won 50"** with the full dealer hand, then the seat menu |
+| 2 | Standing from **My hand** turned the private view into the seat menu with the new balance while the shared table still showed it as the player's turn. The result was told before the dealer's turn had played | While the table is still animating, the private view shows your final hand, the dealer's up card and **"Dealer's turn — watch the table"**, with no balance. Refresh afterwards shows **"Hand 7 · You won 50"** with the full dealer hand, then the seat menu |
 | 3 | A hand that stood because the timer ran out looked like any other result | Results say **"· ran out of time"** for that player |
 | 4 | Reopening slots showed the previous spin ("No win this time · Bet 25 · −25") under "bet 5", as if it had just happened | Only a spin shows its result. Opening the machine or changing the bet shows **"Pull the lever · Last spin: no win · bet 5"** |
 | 5 | Collect changed the balance without a word | **"✓ Collected 16 chips"** / **"✓ Daily reward: +N chips"** on the screen the button was on |
@@ -56,7 +56,7 @@ These remain covered by the simulated-player tests (C) only.
 | Step | Time |
 | --- | --- |
 | Chip click | handled in 3 ms; Discord answered the update in 0.3 s |
-| Deal GIF | sent 0.43 s after the betting deadline (0.26 s render, 0.41 s upload) |
+| Deal GIF | on Discord about 0.7 s after the betting deadline (0.26 s render + 0.41 s upload) |
 | Deal GIF, 5 players | 0.42 s to build |
 | Dealer's turn | 0.67–0.72 s to build |
 | GIF uploads | 0.4–0.65 s, up to 270 KB |
@@ -66,7 +66,9 @@ The longest event-loop stall while encoding was **19 ms**, so other players' cli
 Two Discord-side outliers were 2.4 s (the first click after a restart) and 1.95 s (a plain edit). What the client shows also includes Discord's delivery and the GIF download. That is why the countdown fix matters more than shaving render time.
 
 **Verified:**
-- 322 tests pass. `tests/integration/live-findings.test.ts` covers findings 1–5 (checked to fail without the fixes); the deal-with-controls change is in `gif-animations.test.ts`.
+- 324 tests pass.
+  - `tests/integration/live-findings.test.ts` covers findings 1–5, plus a Sit out case. The countdown, private-view and Sit out tests were checked to fail with their fix removed; the timeout, slots and Collect tests check text that didn't exist before.
+  - `gif-animations.test.ts` covers the deal with controls, including a Hit during the deal animation (real timings, simulated latency).
 - `live-bench`: Discord accepted all 46 screens, including the 4 new ones; 0 blocked by the guard.
 - The live re-run showed:
   - "dealing now…" and the deal arriving with its buttons;
@@ -75,7 +77,10 @@ Two Discord-side outliers were 2.4 s (the first click after a restart) and 1.95 
   - "spinning now — last bets!";
   - "✓ Collected 16 chips";
   - "Pull the lever · Last spin".
-- No warnings or errors in the bot log during the run.
+- No warnings or errors in the bot log during the run. Its 10-minute metrics showed 0 rate-limited requests.
+- **Not re-run:** multi-table live play (`live-tables`) with the extra countdown redraw, which adds one edit per hand per table.
+
+**Found in review after the first push:** the private view treated *any* table redraw (someone betting, the countdown redraw, Sit out) as "the dealer's turn is still playing". Sitting out after a finished hand would have shown "Dealer's turn" with no seat menu. The check now only counts a pending or playing end-of-hand animation, and a test covers Sit out.
 
 **Known limits:**
 - **My hand timer:** the private view's own timer ("decide in N seconds") is a snapshot. The bot can't redraw someone's private message on a timer, so it can still count past zero if left open; its Refresh button updates it.

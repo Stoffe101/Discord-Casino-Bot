@@ -327,9 +327,13 @@ export class CasinoBot {
   // ───────────────────────────── channels & threads ─────────────────────────────
 
   /** Animated roulette spins, slot reels and coin tosses for this server (blackjack has its own switch). */
-  /** True while the table panel is still being animated (e.g. the dealer's turn is playing). */
+  /**
+   * True while the table panel is still showing (or about to show) the end of a hand — the
+   * dealer's turn and the payout — so a private view must not tell the result yet. Other redraws
+   * (a bet, a countdown, someone sitting out) don't count.
+   */
   tableAnimating(tableId: string): boolean {
-    return this.tablePanels.busy(tableId);
+    return this.tablePanels.showing(tableId, (hint) => hint?.kind === 'round_settled');
   }
 
   animatesGames(guildId: string): boolean {

@@ -329,7 +329,7 @@ message is edited in place (or re-posted if it was deleted). See [docs/ARCHITECT
 ## Testing
 
 ```powershell
-npm test                  # 322 tests, ~15 s, fully headless (never connects to Discord)
+npm test                  # 324 tests, ~15 s, fully headless (never connects to Discord)
 npm run check             # typecheck + lint + tests + build
 npm run simulate          # engine level, e.g. -- --tables 12 --players 5 --rounds 15 --crash
 npm run simulate:discord  # full Discord stack, e.g. -- --tables 12 --players 5 --rounds 3 --latency 40

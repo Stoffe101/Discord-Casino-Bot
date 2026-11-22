@@ -118,6 +118,34 @@ describe('animation timing (real timings, simulated latency)', () => {
     expect(h.app.blackjack.peek(tableId)!.state.round!.seats[0]!.hands[0]!.cards).toHaveLength(4);
   }, 30_000);
 
+  it('a click during the deal animation is answered at once and plays its own card', async () => {
+    h = new CasinoHarness({ timing: 'real' });
+    h.fd.recording = true;
+    h.fd.latencyMs = 100;
+    const alex = h.user('Alex');
+    await h.click(alex, h.seen(await h.slash(alex, 'casino')), 'Play Blackjack');
+    const tableId = h.app.blackjack.tableOfUser(h.guildId, alex.id)!.record.id;
+    const panelId = h.tablePanel(tableId).id;
+    // Alex 2+3 vs dealer 9 (7 in the hole); the hit draws a 4.
+    await h.app.blackjack.debugSetShoe(tableId, ['2S', '9C', '3D', '7H', '4C', '5H'] as Card[]);
+    await h.click(alex, h.tablePanel(tableId), '25');
+    h.fd.timeline.length = 0;
+    h.clock.advance(ALL_IN_DEAL_DELAY_MS);
+    h.scheduler.runDue();
+    // As soon as the deal GIF is on the panel its buttons are live: hit during its hold.
+    const dealt = () => h.fd.timeline.some((e) => e.messageId === panelId && e.image?.filename.endsWith('.gif'));
+    for (let i = 0; i < 200 && !dealt(); i++) await new Promise((r) => setTimeout(r, 20));
+    expect(dealt()).toBe(true);
+    const hit = h.fd.click(alex, h.tablePanel(tableId), 'Hit');
+    await h.settle();
+    expect(hit.errors).toEqual([]);
+    expect(hit.ackedAt! - hit.createdAt).toBeLessThan(1_500);
+    // The deal, the hit's card, then one still (the deal's own still would already be out of date).
+    expect(kinds(h.fd.timeline.filter((e) => e.messageId === panelId))).toEqual(['gif', 'gif', 'png']);
+    expect(h.app.blackjack.peek(tableId)!.state.round!.seats[0]!.hands[0]!.cards).toHaveLength(3);
+    expect(h.fd.problems).toEqual([]);
+  }, 30_000);
+
   it('animates a dealer blackjack at the deal and settles it', async () => {
     h = new CasinoHarness({ animations: true });
     h.fd.recording = true;

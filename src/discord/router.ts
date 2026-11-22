@@ -312,6 +312,9 @@ export class InteractionRouter {
       case 'setup': {
         const channel = (i.options.getChannel('channel') ?? i.channel) as TextChannel | null;
         if (!channel || !('threads' in channel)) throw new UserError('Pick a regular text channel for the casino lobby.');
+        if (!this.bot.allowsChannel(channel.id)) {
+          throw new UserError('The bot is in test mode and may only post in its allowlisted channel. Run setup there instead.', 'test_mode_channel', 'Test mode');
+        }
         await this.defer(i, 'reply');
         const { url, missing } = await this.bot.setupLobby(viewer.guildId, channel);
         if (!url) {
@@ -770,7 +773,7 @@ export class InteractionRouter {
     const screen = await this.bot.coinflipScreen(challenge.id);
     if (!screen) return;
     // The card mentions the opponent; only this first post is allowed to ping them.
-    const response = await i.reply({ ...createOptions(screen, [opponentId]), withResponse: true } as Parameters<typeof i.reply>[0] & { withResponse: true });
+    const response = await i.reply({ ...createOptions(screen, this.bot.guard ? [] : [opponentId]), withResponse: true } as Parameters<typeof i.reply>[0] & { withResponse: true });
     const message = (response as { resource?: { message?: { id: string; channelId: string } } }).resource?.message;
     if (message) await this.app.coinflip.attachMessage(challenge.id, message.channelId, message.id);
   }

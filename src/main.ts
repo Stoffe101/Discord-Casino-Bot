@@ -3,6 +3,7 @@ import { Logger } from './core/logger.js';
 import { openDatabase, type Database } from './db/database.js';
 import { CasinoApp } from './app/casino-app.js';
 import { CasinoBot } from './discord/bot.js';
+import { OutboundGuard, allowlistFromEnv } from './discord/outbound-guard.js';
 
 /**
  * Entry point: load configuration, open (and migrate) the database, restore every game,
@@ -43,9 +44,15 @@ async function main(): Promise<void> {
   const env = readEnv();
   logger = new Logger({ level: env.logLevel, dir: env.logDir });
   logger.info('starting casino', { env: env.nodeEnv, database: env.databasePath });
+  let allowlist;
+  try {
+    allowlist = allowlistFromEnv(process.env, env.clientId);
+  } catch (error) {
+    throw new ConfigError(error instanceof Error ? error.message : String(error));
+  }
   db = openDatabase(env.databasePath);
   app = new CasinoApp({ db, logger });
-  bot = new CasinoBot(app, logger);
+  bot = new CasinoBot(app, logger, { guard: allowlist ? new OutboundGuard(allowlist, logger) : null });
 
   process.on('SIGINT', () => void shutdown('SIGINT', 0));
   process.on('SIGTERM', () => void shutdown('SIGTERM', 0));

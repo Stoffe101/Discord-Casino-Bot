@@ -2,6 +2,7 @@ import type { ButtonInteraction, Client, MessageComponentInteraction, ModalSubmi
 import type { Logger } from '../core/logger.js';
 import type { Screen } from '../ui/kit.js';
 import { DISCORD_ERRORS, discordErrorCode, editOptions, primaryFileName } from './payload.js';
+import { isOutboundBlocked } from './outbound-guard.js';
 
 /** An interaction on the panel message itself, which we may answer by updating that message. */
 export type Carrier = MessageComponentInteraction | ModalSubmitInteraction | ButtonInteraction;
@@ -156,9 +157,11 @@ export class PanelSync<Hint = unknown> {
     } catch (error) {
       this.stats.failures++;
       const code = discordErrorCode(error);
-      if (code === DISCORD_ERRORS.unknownMessage || code === DISCORD_ERRORS.unknownChannel) {
+      // A panel the test-mode allowlist can't reach (e.g. in a thread) is treated like a missing one:
+      // it gets recreated somewhere allowed.
+      if (code === DISCORD_ERRORS.unknownMessage || code === DISCORD_ERRORS.unknownChannel || isOutboundBlocked(error)) {
         slot.lastFile = null;
-        this.options.logger.warn(`${this.options.name} message missing; recreating`, { key, code });
+        this.options.logger.warn(`${this.options.name} message missing or not allowed; recreating`, { key, code });
         await this.options.onMissing(key).catch((e: unknown) => this.options.logger.error(`${this.options.name} recreate failed`, { key, error: e }));
       } else if (reuse) {
         // The cached image may be gone (e.g. edited elsewhere): retry once with a fresh upload.

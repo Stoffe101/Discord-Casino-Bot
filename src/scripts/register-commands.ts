@@ -1,6 +1,8 @@
 import { REST, Routes } from 'discord.js';
 import { ConfigError, loadEnvFile, readEnv } from '../config/env.js';
 import { commandDefinitions } from '../discord/commands.js';
+import { Logger } from '../core/logger.js';
+import { OutboundGuard, allowlistFromEnv } from '../discord/outbound-guard.js';
 
 /**
  * Registers slash commands. With DISCORD_DEV_GUILD_ID set they are registered to that server
@@ -22,6 +24,9 @@ async function main(): Promise<void> {
     throw error;
   }
   const rest = new REST().setToken(env.token);
+  // Test mode: only the allowlisted server's commands may be changed (global registration is refused).
+  const allowlist = allowlistFromEnv(process.env, env.clientId);
+  if (allowlist) new OutboundGuard(allowlist, new Logger({ level: 'warn' })).install(rest);
   const args = new Set(process.argv.slice(2));
   const body = commandDefinitions();
 

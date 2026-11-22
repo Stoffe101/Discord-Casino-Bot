@@ -5,6 +5,7 @@ import {
   GatewayIntentBits,
   PermissionFlagsBits,
   ThreadAutoArchiveDuration,
+  type ClientOptions,
   type GuildTextBasedChannel,
   type TextChannel,
   type ThreadChannel,
@@ -23,6 +24,26 @@ import { COLORS } from '../ui/theme.js';
 import { PanelSync, sleep } from './panel-sync.js';
 import { DISCORD_ERRORS, createOptions, discordErrorCode, editOptions, primaryFileName } from './payload.js';
 import { InteractionRouter } from './router.js';
+import type { OutboundGuard } from './outbound-guard.js';
+
+export interface BotTiming {
+  /** Delay between dealer-reveal frames. */
+  frameDelayMs: number;
+  /** Minimum gap between two edits of the same table/wheel panel (when no click is waiting). */
+  tableMinIntervalMs: number;
+  wheelMinIntervalMs: number;
+  /** Lobby refreshes are debounced so bursts of table activity become one edit. */
+  lobbyDebounceMs: number;
+}
+
+export const DEFAULT_TIMING: BotTiming = { frameDelayMs: 850, tableMinIntervalMs: 350, wheelMinIntervalMs: 500, lobbyDebounceMs: 2_500 };
+
+export interface CasinoBotOptions {
+  guard?: OutboundGuard | null;
+  /** Replace the HTTP layer (tests use an in-memory Discord). */
+  makeRequest?: NonNullable<ClientOptions['rest']>['makeRequest'];
+  timing?: Partial<BotTiming>;
+}
 
 export const REQUIRED_CHANNEL_PERMISSIONS = [
   ['ViewChannel', PermissionFlagsBits.ViewChannel],
@@ -50,14 +71,25 @@ export class CasinoBot {
   private readonly lobbyFiles = new Map<string, string | null>();
   private readonly lobbyBusy = new Map<string, Promise<void>>();
   private readonly intervals: NodeJS.Timeout[] = [];
+  private readonly inflight = new Set<Promise<void>>();
   private stopping = false;
+  readonly guard: OutboundGuard | null;
+  readonly timing: BotTiming;
 
   constructor(
     readonly app: CasinoApp,
     readonly logger: Logger,
+    options: CasinoBotOptions = {},
   ) {
+    this.guard = options.guard ?? null;
+    const timing = { ...DEFAULT_TIMING, ...options.timing };
+    this.timing = timing;
     // Only the Guilds intent: no message content, no member lists, no presences.
-    this.client = new Client({ intents: [GatewayIntentBits.Guilds] });
+    // Mentions never ping unless a message explicitly allows it (the coinflip challenge does).
+    this.client = new Client({ intents: [GatewayIntentBits.Guilds], allowedMentions: { parse: [], repliedUser: false }, ...(options.makeRequest ? { rest: { makeRequest: options.makeRequest } } : {}) });
+    // Test mode: every outgoing request passes the allowlist check before it reaches the network.
+    this.guard?.install(this.client.rest);
+    const guard = this.guard;
     this.tablePanels = new PanelSync<RenderHint>({
       name: 'table',
       client: this.client,
@@ -73,8 +105,8 @@ export class CasinoBot {
         const snap = app.blackjack.peek(id);
         return snap && app.settings.get(snap.record.guildId).blackjack.dealerAnimation ? Math.min(hint.dealerSteps, 5) : 0;
       },
-      frameDelayMs: 850,
-      minIntervalMs: 350,
+      frameDelayMs: timing.frameDelayMs,
+      minIntervalMs: timing.tableMinIntervalMs,
       onMissing: (id) => this.recreateTablePanel(id),
     });
     this.wheelPanels = new PanelSync<boolean>({
@@ -89,7 +121,7 @@ export class CasinoBot {
         const w = app.roulette.peek(id);
         return w ? this.checked(await roulettePanel(app, w)) : null;
       },
-      minIntervalMs: 500,
+      minIntervalMs: timing.wheelMinIntervalMs,
       onMissing: (id) => this.recreateWheelPanel(id),
     });
     this.router = new InteractionRouter(app, this);
@@ -116,7 +148,11 @@ export class CasinoBot {
       challengeChanged: (challenge) => void this.router.refreshChallenge(challenge),
     });
 
-    this.client.on(Events.InteractionCreate, (interaction) => void this.router.handle(interaction));
+    this.client.on(Events.InteractionCreate, (interaction) => {
+      if (guard && !guard.admitInteraction(interaction)) return;
+      const handled: Promise<void> = this.router.handle(interaction).finally(() => this.inflight.delete(handled));
+      this.inflight.add(handled);
+    });
     this.client.on(Events.Error, (error) => logger.error('discord client error', { error }));
     this.client.on(Events.Warn, (message) => logger.warn('discord client warning', { message }));
     this.client.rest.on('rateLimited', (info) => logger.debug('rate limited', { route: info.route, timeToReset: info.timeToReset }));
@@ -129,8 +165,14 @@ export class CasinoBot {
     await this.client.login(token);
   }
 
-  private async onReady(tag: string): Promise<void> {
+  /** Runs once the gateway is ready (tests call it directly): re-attach panels, refresh lobbies, start upkeep. */
+  async onReady(tag: string): Promise<void> {
     this.logger.info(`logged in as ${tag}`, { guilds: this.client.guilds.cache.size });
+    if (this.guard) {
+      const { guildId, channelId } = this.guard.allow;
+      this.logger.info('TEST MODE: outgoing Discord actions are limited to one channel; threads are disabled', { guildId, channelId });
+      if (!this.app.settings.lobby(guildId).channelId) this.app.settings.setLobby(guildId, channelId, null);
+    }
     // Re-attach every restored panel (recreating missing ones) and refresh lobbies.
     for (const snap of this.app.blackjack.allOpenTables()) {
       if (!snap.record.messageId) await this.recreateTablePanel(snap.record.id);
@@ -160,11 +202,25 @@ export class CasinoBot {
     else this.logger.debug('ledger reconciled');
   }
 
+  /** Resolves once every in-flight interaction, game action and panel/lobby update has finished. */
+  async idle(): Promise<void> {
+    for (let pass = 0; pass < 100; pass++) {
+      await Promise.all([...this.inflight]);
+      await this.app.blackjack.idle();
+      await Promise.all([this.tablePanels.idle(), this.wheelPanels.idle()]);
+      await Promise.all([...this.lobbyBusy.values()]);
+      if (this.inflight.size === 0 && this.lobbyTimers.size === 0) return;
+      await sleep(5);
+    }
+  }
+
   async stop(): Promise<void> {
     if (this.stopping) return;
     this.stopping = true;
     for (const t of this.intervals) clearInterval(t);
     for (const t of this.lobbyTimers.values()) clearTimeout(t);
+    // Let interactions that are already being handled finish before disconnecting.
+    await Promise.race([Promise.all([...this.inflight]), sleep(5_000)]);
     await Promise.race([Promise.all([this.tablePanels.idle(), this.wheelPanels.idle()]), sleep(5_000)]);
     await this.client.destroy();
   }
@@ -182,11 +238,21 @@ export class CasinoBot {
 
   // ───────────────────────────── channels & threads ─────────────────────────────
 
+  /** Threads are separate channels; in test mode they are never used. */
+  get threadsAllowed(): boolean {
+    return this.guard?.threadsAllowed ?? true;
+  }
+
+  /** In test mode only the allowlisted channel may host panels. */
+  allowsChannel(channelId: string): boolean {
+    return this.guard ? this.guard.allowsLocation({ channelId, threadId: null }) : true;
+  }
+
   /** The channel new tables are created in: the lobby channel if set, else where the user is. */
   async casinoChannel(guildId: string, fallbackChannelId: string | null): Promise<TextChannel | null> {
     const lobby = this.app.settings.lobby(guildId).channelId;
     for (const id of [lobby, fallbackChannelId]) {
-      if (!id) continue;
+      if (!id || !this.allowsChannel(id)) continue;
       const channel = await this.client.channels.fetch(id).catch(() => null);
       if (channel?.isThread()) {
         const parent = channel.parent;
@@ -211,7 +277,7 @@ export class CasinoBot {
     const channel = await this.casinoChannel(snap.record.guildId, fallbackChannelId);
     if (!channel) throw new Error('No usable text channel for the table');
     const screen = this.checked(await blackjackPanel(this.app, snap));
-    const useThreads = this.app.settings.get(snap.record.guildId).tables.useThreads;
+    const useThreads = this.app.settings.get(snap.record.guildId).tables.useThreads && this.threadsAllowed;
     let thread: ThreadChannel | null = null;
     if (useThreads) {
       try {
@@ -260,7 +326,7 @@ export class CasinoBot {
     if (!snap) return;
     const { record } = snap;
     // Try to post a fresh panel in the existing thread first.
-    if (record.threadId) {
+    if (record.threadId && this.threadsAllowed) {
       const thread = await this.client.channels.fetch(record.threadId).catch(() => null);
       if (thread?.isThread()) {
         if (thread.archived) await thread.setArchived(false).catch(() => undefined);
@@ -306,7 +372,7 @@ export class CasinoBot {
     if (!channel) throw new Error('No usable text channel for roulette');
     const screen = this.checked(await roulettePanel(this.app, wheel));
     let thread: ThreadChannel | null = null;
-    if (this.app.settings.get(wheel.record.guildId).tables.useThreads) {
+    if (this.app.settings.get(wheel.record.guildId).tables.useThreads && this.threadsAllowed) {
       thread = await channel.threads
         .create({ name: 'roulette-wheel', autoArchiveDuration: ThreadAutoArchiveDuration.OneDay, type: ChannelType.PublicThread, reason: 'Roulette wheel opened' })
         .catch(() => null);
@@ -359,7 +425,7 @@ export class CasinoBot {
   // ───────────────────────────── lobby ─────────────────────────────
 
   /** Debounced lobby refresh (coalesces bursts of table activity into one edit). */
-  requestLobby(guildId: string, delayMs = 2_500): void {
+  requestLobby(guildId: string, delayMs = this.timing.lobbyDebounceMs): void {
     if (this.stopping || !this.app.settings.lobby(guildId).channelId) return;
     if (this.lobbyTimers.has(guildId)) return;
     const timer = setTimeout(() => {
@@ -380,6 +446,10 @@ export class CasinoBot {
   async syncLobby(guildId: string): Promise<string | null> {
     const { channelId, messageId } = this.app.settings.lobby(guildId);
     if (!channelId) return null;
+    if (!this.allowsChannel(channelId)) {
+      this.logger.warn('test mode: lobby channel is outside the allowlist; not updating it', { guildId, channelId });
+      return null;
+    }
     const channel = await this.client.channels.fetch(channelId).catch(() => null);
     if (!channel || channel.type !== ChannelType.GuildText) {
       this.logger.warn('lobby channel unavailable', { guildId, channelId });

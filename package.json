@@ -20,6 +20,7 @@
     "lint:fix": "eslint . --fix",
     "simulate": "tsx src/scripts/simulate.ts",
     "render-preview": "tsx src/scripts/render-preview.ts",
+    "test:allowlist": "tsx src/scripts/test-allowlist.ts",
     "check": "npm run typecheck && npm run lint && npm test && npm run build"
   },
   "dependencies": {

@@ -41,8 +41,12 @@ export function bannerSvg(casinoName: string): string {
 
 const POCKET_FILL = { red: '#b3263a', black: '#16181b', green: '#13784f' } as const;
 
-/** Wheel graphic with the winning pocket under the pointer, plus the big result number. */
-export function rouletteSvg(options: { result: number | null; history: number[]; spinNumber: number }): string {
+/**
+ * Wheel graphic with the winning pocket under the pointer, plus the big result number.
+ * `spin` draws an in-motion frame instead: the wheel short of its final position and the ball still
+ * running round the rim (frame 0 = just launched, 1 = slowing down), with no result shown yet.
+ */
+export function rouletteSvg(options: { result: number | null; history: number[]; spinNumber: number; spin?: { frame: number; target: number } }): string {
   const W = 900;
   const H = 420;
   const cx = 220;
@@ -50,8 +54,11 @@ export function rouletteSvg(options: { result: number | null; history: number[];
   const R = 180;
   const pockets = WHEEL_ORDER.length;
   const step = 360 / pockets;
-  const index = options.result === null ? 0 : WHEEL_ORDER.indexOf(options.result);
-  const rotation = -index * step; // winning pocket at the top
+  const spinning = options.spin !== undefined;
+  const target = spinning ? options.spin!.target : options.result;
+  const index = target === null ? 0 : WHEEL_ORDER.indexOf(target);
+  // Winning pocket at the top; while spinning the wheel is still short of its final position.
+  const rotation = -index * step + (spinning ? [212, 63][options.spin!.frame] ?? 0 : 0);
   const parts: string[] = [];
   parts.push(`<rect width="${W}" height="${H}" fill="url(#rfelt)"/>`);
   parts.push(`<circle cx="${cx}" cy="${cy}" r="${R + 14}" fill="#2a170b" stroke="#c9a54e" stroke-width="3"/>`);
@@ -80,11 +87,23 @@ export function rouletteSvg(options: { result: number | null; history: number[];
   parts.push(`<circle cx="${cx}" cy="${cy}" r="14" fill="#f2d78a" stroke="#8a6420" stroke-width="2"/>`);
   // Pointer and ball at the top.
   parts.push(`<path d="M ${cx - 14} ${cy - R - 26} L ${cx + 14} ${cy - R - 26} L ${cx} ${cy - R - 4} Z" fill="#f2d78a" stroke="#8a6420" stroke-width="1.5"/>`);
-  if (options.result !== null) parts.push(`<circle cx="${cx}" cy="${cy - R + 40}" r="9" fill="#fdfcf8" stroke="#9aa0a6" stroke-width="1"/>`);
+  if (spinning) {
+    // The ball runs on the outer track, ahead of the pointer, with a short motion trail.
+    const ballAngle = ([-128, -46][options.spin!.frame] ?? 0) - 90;
+    for (let t = 3; t >= 0; t--) {
+      const a = ((ballAngle - t * 7) * Math.PI) / 180;
+      parts.push(`<circle cx="${n(cx + (R + 6) * Math.cos(a))}" cy="${n(cy + (R + 6) * Math.sin(a))}" r="${9 - t * 1.5}" fill="#fdfcf8" opacity="${t === 0 ? 1 : 0.18 * (4 - t)}"/>`);
+    }
+  } else if (options.result !== null) parts.push(`<circle cx="${cx}" cy="${cy - R + 40}" r="9" fill="#fdfcf8" stroke="#9aa0a6" stroke-width="1"/>`);
 
   // Result panel.
   const px = 470;
-  if (options.result !== null) {
+  if (spinning) {
+    parts.push(`<text x="${px}" y="92" font-family="Cinzel" font-weight="700" font-size="18" fill="#d6ad4b" letter-spacing="5">SPIN ${options.spinNumber}</text>`);
+    parts.push(`<text x="${px}" y="170" font-family="Cinzel" font-weight="900" font-size="38" fill="#f2d78a" letter-spacing="2">NO MORE</text>`);
+    parts.push(`<text x="${px}" y="220" font-family="Cinzel" font-weight="900" font-size="38" fill="#f2d78a" letter-spacing="2">BETS</text>`);
+    parts.push(`<text x="${px}" y="258" font-family="Manrope" font-weight="700" font-size="17" fill="#cfe3d8">${options.spin!.frame === 0 ? 'The ball is rolling…' : 'Slowing down…'}</text>`);
+  } else if (options.result !== null) {
     const color = pocketColor(options.result);
     parts.push(
       `<text x="${px}" y="92" font-family="Cinzel" font-weight="700" font-size="18" fill="#d6ad4b" letter-spacing="5">SPIN ${options.spinNumber}</text>`,
@@ -106,7 +125,7 @@ export function rouletteSvg(options: { result: number | null; history: number[];
     parts.push(`<text x="${px}" y="258" font-family="Manrope" font-weight="700" font-size="17" fill="#cfe3d8">European wheel · single zero</text>`);
   }
   // History strip.
-  const history = options.history.slice(options.result === null ? 0 : 1, 13);
+  const history = options.history.slice(options.result === null && !spinning ? 0 : 1, 13);
   if (history.length) {
     parts.push(`<text x="${px}" y="318" font-family="Cinzel" font-weight="700" font-size="13" fill="#d6ad4b" letter-spacing="3">PREVIOUS</text>`);
     history.forEach((num, i) => {
@@ -163,7 +182,14 @@ function slotSymbol(symbol: SlotSymbol, cx: number, cy: number, size: number): s
   }
 }
 
-export function slotsSvg(options: { rows: SlotSymbol[][] | null; win: boolean; label: string; bet: number; payout: number }): string {
+const REEL_BLUR: SlotSymbol[] = ['cherry', 'bell', 'seven', 'lemon', 'gem', 'clover', 'bar'];
+
+/**
+ * The slot machine. `stopped` (0–3) draws an in-motion frame where only the first reels have
+ * stopped; the others are a blur. `paying` marks middle-row positions that pay (glow on a win).
+ */
+export function slotsSvg(options: { rows: SlotSymbol[][] | null; win: boolean; label: string; bet: number; payout: number; stopped?: number; paying?: number[] }): string {
+  const stopped = options.stopped ?? 3;
   const W = 720;
   const H = 400;
   const parts: string[] = [];
@@ -174,6 +200,21 @@ export function slotsSvg(options: { rows: SlotSymbol[][] | null; win: boolean; l
   for (let r = 0; r < 3; r++) {
     const x = 84 + r * (reelW + 12);
     parts.push(`<rect x="${x}" y="64" width="${reelW}" height="${reelH}" rx="12" fill="url(#reel)" stroke="#8a6420" stroke-width="2"/>`);
+    if (options.rows && r >= stopped) {
+      // Still spinning: stretched, faded symbols between rows plus speed lines.
+      parts.push(`<g clip-path="url(#reelclip${r})">`);
+      for (let k = 0; k < 4; k++) {
+        const symbol = REEL_BLUR[(r * 3 + k + stopped) % REEL_BLUR.length]!;
+        const cy = 64 + k * 84;
+        parts.push(`<g opacity="0.32" transform="translate(0 ${n(cy)}) scale(1 1.35) translate(0 ${n(-cy)})">${slotSymbol(symbol, x + reelW / 2, cy, 70)}</g>`);
+      }
+      for (let k = 0; k < 5; k++) parts.push(`<rect x="${n(x + 18 + k * 30)}" y="70" width="2" height="${reelH - 12}" fill="#8a6420" opacity="0.12"/>`);
+      parts.push('</g>');
+      continue;
+    }
+    if (row1Pays(options.paying, r)) {
+      parts.push(`<rect x="${x + 8}" y="${64 + 84 + 6}" width="${reelW - 16}" height="72" rx="12" fill="#f2d78a" fill-opacity="0.7" stroke="#c9952f" stroke-width="4"/>`);
+    }
     for (let row = 0; row < 3; row++) {
       const symbol = options.rows?.[row]?.[r];
       const cy = 64 + 42 + row * 84;
@@ -190,7 +231,7 @@ export function slotsSvg(options: { rows: SlotSymbol[][] | null; win: boolean; l
   parts.push(`<rect x="72" y="${64 + 84 + 2}" width="576" height="80" rx="10" fill="none" stroke="${lineColor}" stroke-width="${options.win ? 4 : 2}"/>`);
   parts.push(`<path d="M 48 190 L 64 180 L 64 200 Z" fill="${lineColor}"/><path d="M 672 190 L 656 180 L 656 200 Z" fill="${lineColor}"/>`);
   // Caption.
-  const caption = options.rows ? (options.win ? `${options.label.toUpperCase()} · WIN ${options.payout.toLocaleString('en-US')}` : 'NO WIN · SPIN AGAIN') : 'EMERALD SLOTS';
+  const caption = options.rows && stopped < 3 ? 'SPINNING…' : options.rows ? (options.win ? `${options.label.toUpperCase()} · WIN ${options.payout.toLocaleString('en-US')}` : 'NO WIN · SPIN AGAIN') : 'EMERALD SLOTS';
   parts.push(
     `<text x="${W / 2}" y="378" text-anchor="middle" font-family="Cinzel" font-weight="900" font-size="24" fill="${options.win ? '#f2d78a' : '#cfe3d8'}" letter-spacing="3">${esc(caption)}</text>`,
   );
@@ -198,17 +239,32 @@ export function slotsSvg(options: { rows: SlotSymbol[][] | null; win: boolean; l
     cardDefs() +
     '<radialGradient id="sfelt" cx="50%" cy="40%" r="80%"><stop offset="0" stop-color="#17704f"/><stop offset="1" stop-color="#05261a"/></radialGradient>' +
     '<linearGradient id="reel" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#d9d3c2"/><stop offset="0.2" stop-color="#fbf8f0"/><stop offset="0.8" stop-color="#fbf8f0"/><stop offset="1" stop-color="#d9d3c2"/></linearGradient>' +
-    '<linearGradient id="sevenGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff5c6c"/><stop offset="1" stop-color="#b3172b"/></linearGradient>';
+    '<linearGradient id="sevenGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff5c6c"/><stop offset="1" stop-color="#b3172b"/></linearGradient>' +
+    [0, 1, 2].map((r) => `<clipPath id="reelclip${r}"><rect x="${84 + r * 180}" y="64" width="168" height="252" rx="12"/></clipPath>`).join('');
   return svgDoc(W, H, parts.join(''), defs);
+}
+
+function row1Pays(paying: number[] | undefined, reel: number): boolean {
+  return paying?.includes(reel) ?? false;
 }
 
 // ───────────────────────────── coin ─────────────────────────────
 
-export function coinSvg(side: 'heads' | 'tails' | null): string {
+export function coinSvg(side: 'heads' | 'tails' | null | 'flip'): string {
   const W = 520;
   const H = 300;
   const cx = 260;
   const cy = 150;
+  if (side === 'flip') {
+    // Mid-air: the coin seen almost edge-on, high above its shadow, with motion arcs.
+    const air =
+      `<rect width="${W}" height="${H}" fill="url(#cfelt)"/>` +
+      `<ellipse cx="${cx}" cy="${cy + 112}" rx="46" ry="7" fill="#000" opacity="0.25"/>` +
+      `<path d="M ${cx - 120} ${cy + 10} Q ${cx - 70} ${cy - 120} ${cx} ${cy - 118}" fill="none" stroke="#f2d78a" stroke-opacity="0.35" stroke-width="3" stroke-dasharray="6 8"/>` +
+      `<path d="M ${cx + 120} ${cy + 10} Q ${cx + 70} ${cy - 120} ${cx} ${cy - 118}" fill="none" stroke="#f2d78a" stroke-opacity="0.2" stroke-width="3" stroke-dasharray="6 8"/>` +
+      `<g transform="translate(${cx} ${cy - 40}) rotate(-18)"><ellipse rx="112" ry="22" fill="url(#gold)" stroke="#7a5a1c" stroke-width="4"/><ellipse rx="112" ry="8" cy="10" fill="#8a6420" opacity="0.6"/></g>`;
+    return svgDoc(W, H, air, cardDefs() + '<radialGradient id="cfelt" cx="50%" cy="45%" r="75%"><stop offset="0" stop-color="#17704f"/><stop offset="1" stop-color="#05261a"/></radialGradient>');
+  }
   const face =
     side === 'heads'
       ? '<path d="M-44 18 L-54 -30 L-22 -8 L0 -44 L22 -8 L54 -30 L44 18 Z" fill="#8a6420"/><text x="0" y="62" text-anchor="middle" font-family="Cinzel" font-weight="900" font-size="26" fill="#6b4a14">HEADS</text>'

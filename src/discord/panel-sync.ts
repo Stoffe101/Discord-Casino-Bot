@@ -19,10 +19,11 @@ export interface PanelSyncOptions<Hint> {
   logger: Logger;
   locate(key: string): PanelLocation | undefined;
   /** Render the panel. `frame` is an intermediate animation frame (undefined = final state). */
-  render(key: string, frame: number | undefined): Promise<Screen | null>;
+  render(key: string, frame: number | undefined, hint: Hint | undefined): Promise<Screen | null>;
   /** Number of animation frames to show before the final render for this hint. */
   frames?(key: string, hint: Hint | undefined): number;
-  frameDelayMs?: number;
+  /** Pause after each animation frame (may depend on what is being animated). */
+  frameDelayMs?: number | ((hint: Hint | undefined) => number);
   /** Minimum time between two edits of the same message. */
   minIntervalMs?: number;
   /** Called when the panel message or its channel no longer exists. */
@@ -91,12 +92,13 @@ export class PanelSync<Hint = unknown> {
         slot.pending = null;
         let carriers = job.carriers;
         const frames = this.options.frames?.(key, job.hint) ?? 0;
+        const delay = typeof this.options.frameDelayMs === 'function' ? this.options.frameDelayMs(job.hint) : (this.options.frameDelayMs ?? 900);
         for (let frame = 0; frame < frames; frame++) {
-          await this.renderAndSend(key, slot, frame, carriers);
+          await this.renderAndSend(key, slot, frame, carriers, job.hint);
           carriers = [];
-          await sleep(this.options.frameDelayMs ?? 900);
+          await sleep(delay);
         }
-        await this.renderAndSend(key, slot, undefined, carriers);
+        await this.renderAndSend(key, slot, undefined, carriers, job.hint);
       }
     } catch (error) {
       this.options.logger.error(`${this.options.name} render loop failed`, { key, error });
@@ -106,12 +108,12 @@ export class PanelSync<Hint = unknown> {
     }
   }
 
-  private async renderAndSend(key: string, slot: Slot<Hint>, frame: number | undefined, carriers: Carrier[]): Promise<void> {
+  private async renderAndSend(key: string, slot: Slot<Hint>, frame: number | undefined, carriers: Carrier[], hint?: Hint): Promise<void> {
     const spacing = (this.options.minIntervalMs ?? 300) - (Date.now() - slot.lastSentAt);
-    if (spacing > 0 && carriers.length === 0) await sleep(spacing);
+    if (spacing > 0 && carriers.length === 0 && frame === undefined) await sleep(spacing);
     let screen: Screen | null = null;
     try {
-      screen = await this.options.render(key, frame);
+      screen = await this.options.render(key, frame, hint);
     } catch (error) {
       this.options.logger.error(`${this.options.name} render failed`, { key, error });
     }

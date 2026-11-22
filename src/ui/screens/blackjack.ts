@@ -1,7 +1,7 @@
 import type { CasinoApp } from '../../app/casino-app.js';
 import { chips, escapeMarkdown, discordTime, plural } from '../../core/format.js';
 import { cardLabel } from '../../games/cards.js';
-import { describeRules, describeTotal, type BlackjackRules } from '../../games/blackjack/engine.js';
+import { describeRules, describeTotal, handValue, isNaturalCards, type BlackjackRules } from '../../games/blackjack/engine.js';
 import { renderTableSvg } from '../../render/table-image.js';
 import { rulesFromSettings } from '../../tables/blackjack-table-service.js';
 import { buildTableView, describeTableForAlt } from '../../tables/table-view.js';
@@ -146,7 +146,7 @@ export function customBetModal(tableId: string, min: number, max: number, curren
       description: `Between ${chips(min)} and ${chips(max)} chips`,
       value: current ? String(current) : undefined,
       max: 12,
-      placeholder: String(min),
+      placeholder: 'e.g. 250, 2k, half or all',
     }),
   ]);
 }
@@ -159,7 +159,22 @@ const TONE_GLYPH: Record<LogEntry['tone'], string> = { info: '·', good: '▲', 
  * The shared, persistent panel in each table's thread. Everyone sees it; buttons act for
  * whoever presses them, and turn controls only work for the active player (checked server-side).
  */
-export async function blackjackPanel(app: CasinoApp, snapshot: Readonly<TableSnapshot>, options: { revealStep?: number } = {}): Promise<Screen> {
+/** "Alex 8♠ 3♣ **11** · 8♥ 9♥ **17**": every player's hands in one line, for the table summary. */
+function seatSummary(state: TableSnapshot['state'], round: NonNullable<TableSnapshot['state']['round']>, activeUserId: string | null): string[] {
+  return round.seats.map((rs) => {
+    const name = escapeMarkdown(state.seats.find((s) => s.userId === rs.userId)?.displayName ?? 'Player');
+    const hands = rs.hands
+      .map((h) => {
+        const { total } = handValue(h.cards);
+        const tag = h.surrendered ? ' surrendered' : total > 21 ? ' bust' : !h.fromSplit && isNaturalCards(h.cards) ? ' blackjack' : h.doubled ? ' doubled' : '';
+        return `${h.cards.map(cardLabel).join(' ')} **${describeTotal(h.cards, h.fromSplit)}**${tag}`;
+      })
+      .join('  ·  ');
+    return `${rs.userId === activeUserId ? '▸' : '　'} ${name} — ${hands}`;
+  });
+}
+
+export async function blackjackPanel(app: CasinoApp, snapshot: Readonly<TableSnapshot>, options: { revealStep?: number; dealStep?: number } = {}): Promise<Screen> {
   const { record, state } = snapshot;
   const rules = tableRules(app, snapshot);
   const view = buildTableView(snapshot, rules, options);
@@ -173,11 +188,19 @@ export async function blackjackPanel(app: CasinoApp, snapshot: Readonly<TableSna
   const tableId = record.id;
   const parts: ReturnType<typeof text>[] = [];
   const rows: ReturnType<typeof row>[] = [];
+  const dealing = options.dealStep !== undefined;
   const revealing = options.revealStep !== undefined;
+  // Animation frames show no controls and no activity log (the log already knows the outcome).
+  const animating = dealing || revealing;
 
-  if (revealing && state.lastResult) {
+  if (dealing) {
+    const players = view.seats.filter((s) => s.hands.length).map((s) => escapeMarkdown(s.name));
+    parts.push(text(`### 🃏 Dealing hand ${view.roundNumber}\n-# Cards are going out to ${players.join(', ') || 'the table'}…`));
+  } else if (revealing && state.lastResult) {
     const shown = state.lastResult.dealerCards.slice(0, 2 + options.revealStep!);
-    parts.push(text(`### Dealer's turn\nThe dealer shows ${shown.map(cardLabel).join(' ')} — **${describeTotal(shown)}**`));
+    const step = options.revealStep!;
+    const line = step === 0 ? 'The dealer turns over the hole card…' : `The dealer draws ${cardLabel(shown.at(-1)!)}…`;
+    parts.push(text(`### Dealer's turn\n${line}\nDealer: ${shown.map(cardLabel).join(' ')} — **${describeTotal(shown)}**`));
   } else if (state.phase === 'playing' && state.round) {
     const round = state.round;
     const turn = round.turn!;
@@ -186,11 +209,16 @@ export async function blackjackPanel(app: CasinoApp, snapshot: Readonly<TableSna
     const who = state.seats.find((s) => s.userId === seat.userId)?.displayName ?? 'Player';
     const opts = app.blackjack.playerOptions(tableId, seat.userId);
     const handOf = seat.hands.length > 1 ? ` · hand ${turn.hand + 1} of ${seat.hands.length}` : '';
+    const up = round.dealer[0]!;
     parts.push(
       text(
-        `### ▸ ${escapeMarkdown(who)} to act${handOf}\n${hand.cards.map(cardLabel).join('  ')} — **${describeTotal(hand.cards, hand.fromSplit)}** · bet ${chips(hand.bet)}\n-# Decide ${discordTime(state.deadline ?? app.clock.now())} — after that the hand stands automatically.`,
+        `### ▸ ${escapeMarkdown(who)} to act${handOf}\n` +
+          `## ${hand.cards.map(cardLabel).join(' ')}  →  ${describeTotal(hand.cards, hand.fromSplit)}\n` +
+          `-# Bet ${chips(hand.bet)} · dealer shows ${cardLabel(up)} · decide ${discordTime(state.deadline ?? app.clock.now())}, then the hand stands automatically`,
       ),
     );
+    if (round.seats.length > 1) parts.push(text(`-# The table
+${seatSummary(state, round, seat.userId).join('\n')}`));
     const seq = round.seq;
     const id = (action: string) => cid('bj', 'act', tableId, action, seq);
     rows.push(
@@ -283,11 +311,12 @@ export async function blackjackPanel(app: CasinoApp, snapshot: Readonly<TableSna
   }
 
   // Right after a hand the results block already tells the story: only show what happened since.
-  const showingResults = !revealing && state.phase === 'betting' && state.lastResult !== null && !state.lastResult.voided;
-  const recent = showingResults ? state.log.filter((l) => l.at > state.lastResult!.settledAt) : state.log;
-  const log = recent.slice(-4).map((l) => `-# ${TONE_GLYPH[l.tone]} ${escapeMarkdown(l.text)}`);
+  const showingResults = !animating && state.phase === 'betting' && state.lastResult !== null && !state.lastResult.voided;
+  const recent = animating ? [] : showingResults ? state.log.filter((l) => l.at > state.lastResult!.settledAt) : state.log;
+  // While a hand is in play the table summary shows the state; keep only the latest moves.
+  const log = recent.slice(state.phase === 'playing' ? -2 : -4).map((l) => `-# ${TONE_GLYPH[l.tone]} ${escapeMarkdown(l.text)}`);
   const full = state.seats.length >= record.config.maxSeats;
-  const accent = state.phase === 'playing' ? COLORS.gold : state.lastResult && !revealing && state.phase === 'betting' ? COLORS.deepEmerald : COLORS.emerald;
+  const accent = state.phase === 'playing' && !dealing ? COLORS.gold : state.lastResult && !animating && state.phase === 'betting' ? COLORS.deepEmerald : COLORS.emerald;
   return {
     files: [{ name: fileName, data: png, description: describeTableForAlt(view) }],
     components: [
@@ -297,7 +326,7 @@ export async function blackjackPanel(app: CasinoApp, snapshot: Readonly<TableSna
         ...parts,
         log.length ? separator() : null,
         log.length ? text(log.join('\n')) : null,
-        ...(revealing ? [] : rows),
+        ...(animating ? [] : rows),
       ]),
       row(
         button({ id: cid('bj', 'join', tableId), label: full ? 'Table full' : 'Take a seat', emoji: ICONS.tables, tone: 'success', disabled: full }),

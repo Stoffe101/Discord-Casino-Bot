@@ -32,6 +32,10 @@ import { RestMetrics } from './rest-metrics.js';
 export interface BotTiming {
   /** Delay between dealer-reveal frames. */
   frameDelayMs: number;
+  /** Delay after the first pass of the deal. */
+  dealFrameMs: number;
+  /** Delay between roulette spin frames. */
+  spinFrameMs: number;
   /** Minimum gap between two edits of the same table/wheel panel (when no click is waiting). */
   tableMinIntervalMs: number;
   wheelMinIntervalMs: number;
@@ -39,7 +43,18 @@ export interface BotTiming {
   lobbyDebounceMs: number;
 }
 
-export const DEFAULT_TIMING: BotTiming = { frameDelayMs: 850, tableMinIntervalMs: 350, wheelMinIntervalMs: 500, lobbyDebounceMs: 2_500 };
+export const DEFAULT_TIMING: BotTiming = { frameDelayMs: 700, dealFrameMs: 450, spinFrameMs: 650, tableMinIntervalMs: 350, wheelMinIntervalMs: 500, lobbyDebounceMs: 2_500 };
+
+/** Which animation frame of a table panel to draw for a given render hint. */
+export function tableFrame(frame: number | undefined, hint: RenderHint | undefined): { revealStep?: number; dealStep?: number } {
+  if (frame === undefined || !hint) return {};
+  if (hint.kind === 'dealt') return { dealStep: 0 };
+  if (hint.kind === 'round_settled') {
+    if (hint.dealt && frame === 0) return { dealStep: 0 };
+    return { revealStep: frame - (hint.dealt ? 1 : 0) };
+  }
+  return {};
+}
 
 export interface CasinoBotOptions {
   guard?: OutboundGuard | null;
@@ -114,17 +129,20 @@ export class CasinoBot {
       client: this.client,
       logger,
       locate: (id) => app.blackjack.peek(id)?.record,
-      render: async (id, frame) => {
+      render: async (id, frame, hint) => {
         const snap = app.blackjack.peek(id);
         if (!snap) return null;
-        return this.checked(await blackjackPanel(app, snap, frame === undefined ? {} : { revealStep: frame }));
+        return this.checked(await blackjackPanel(app, snap, tableFrame(frame, hint)));
       },
+      // Dealing goes out in passes and the dealer turns cards one at a time (if animation is on).
       frames: (id, hint) => {
-        if (!hint || hint.kind !== 'round_settled') return 0;
         const snap = app.blackjack.peek(id);
-        return snap && app.settings.get(snap.record.guildId).blackjack.dealerAnimation ? Math.min(hint.dealerSteps, 5) : 0;
+        if (!snap || !app.settings.get(snap.record.guildId).blackjack.dealerAnimation) return 0;
+        if (hint?.kind === 'dealt') return 1;
+        if (hint?.kind === 'round_settled') return (hint.dealt ? 1 : 0) + Math.min(hint.dealerSteps, 5);
+        return 0;
       },
-      frameDelayMs: timing.frameDelayMs,
+      frameDelayMs: (hint) => (hint?.kind === 'dealt' ? timing.dealFrameMs : timing.frameDelayMs),
       minIntervalMs: timing.tableMinIntervalMs,
       onMissing: (id) => this.recreateTablePanel(id),
     });
@@ -136,10 +154,13 @@ export class CasinoBot {
         const w = app.roulette.peek(id);
         return w ? { channelId: w.record.channelId, threadId: w.record.threadId, messageId: w.record.messageId } : undefined;
       },
-      render: async (id) => {
+      render: async (id, frame) => {
         const w = app.roulette.peek(id);
-        return w ? this.checked(await roulettePanel(app, w)) : null;
+        return w ? this.checked(await roulettePanel(app, w, frame === undefined ? {} : { spinFrame: frame })) : null;
       },
+      // A spin shows the ball rolling, then slowing, before the result lands.
+      frames: (_id, spun) => (spun ? 2 : 0),
+      frameDelayMs: timing.spinFrameMs,
       minIntervalMs: timing.wheelMinIntervalMs,
       onMissing: (id) => this.recreateWheelPanel(id),
     });
@@ -489,14 +510,14 @@ export class CasinoBot {
     }
   }
 
-  async coinflipScreen(challengeId: string): Promise<Screen | null> {
+  async coinflipScreen(challengeId: string, options: { flipping?: boolean } = {}): Promise<Screen | null> {
     const c = this.app.coinflip.get(challengeId);
     if (!c) return null;
     const names = {
       challenger: this.app.economy.getPlayer(c.guildId, c.challengerId)?.display_name || 'Challenger',
       opponent: this.app.economy.getPlayer(c.guildId, c.opponentId)?.display_name || 'Opponent',
     };
-    return this.checked(await coinflipMessage(this.app, c, names));
+    return this.checked(await coinflipMessage(this.app, c, names, options));
   }
 
   // ───────────────────────────── lobby ─────────────────────────────

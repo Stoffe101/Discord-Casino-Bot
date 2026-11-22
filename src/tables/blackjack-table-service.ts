@@ -938,7 +938,8 @@ export class BlackjackTableService {
     state.round = round;
     state.lastResult = null;
     pushLog(state, now, `Hand ${state.roundNumber} is dealt — ${playable.length} ${playable.length === 1 ? 'player' : 'players'}`, 'info');
-    return this.applyRound(ctx, round, true);
+    const hint = this.applyRound(ctx, round, true);
+    return hint.kind === 'round_settled' ? { ...hint, dealt: true } : { kind: 'dealt' };
   }
 
   /**

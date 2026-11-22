@@ -114,6 +114,7 @@ Then, in your server, run **`/casinoadmin setup`** in the channel you want as th
 | `npm run render-preview` | Render sample artwork to `render-preview/` |
 | `npm run test:allowlist` | Find your dev server's `#casino` channel for [test mode](#test-mode-one-channel-allowlist) |
 | `npm run live-bench` | Test mode only: validate every screen against the real Discord API in the allowlisted channel |
+| `npm run record` | Play short sessions through the full stack with real animation timings and write HTML replays to `recordings/` |
 | `npm run live-tables` | Test mode with threads: real table threads under the allowlisted channel, simulated players |
 | `npm run reconcile` | Read-only ledger check of the database (run while the bot is stopped) |
 
@@ -320,7 +321,7 @@ message is edited in place (or re-posted if it was deleted). See [docs/ARCHITECT
 ## Testing
 
 ```powershell
-npm test                  # 283 tests, ~15 s, fully headless (never connects to Discord)
+npm test                  # 298 tests, ~15 s, fully headless (never connects to Discord)
 npm run check             # typecheck + lint + tests + build
 npm run simulate          # engine level, e.g. -- --tables 12 --players 5 --rounds 15 --crash
 npm run simulate:discord  # full Discord stack, e.g. -- --tables 12 --players 5 --rounds 3 --latency 40

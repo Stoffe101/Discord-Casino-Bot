@@ -40,6 +40,22 @@ export interface FakeAttachment {
   id: string;
   filename: string;
   size: number;
+  /** Kept only while recording. */
+  data?: Uint8Array;
+}
+
+/** One visible change to a message, for recordings. */
+export interface TimelineEntry {
+  at: number;
+  op: 'create' | 'edit';
+  messageId: string;
+  channelId: string;
+  forUser: string | null;
+  accent: number | null;
+  text: string;
+  buttons: Array<{ label: string; style: number; disabled: boolean; emoji?: string }>;
+  selects: string[];
+  image: { filename: string; data: Uint8Array } | null;
 }
 
 export interface FakeMessage {
@@ -127,6 +143,9 @@ export class FakeDiscord {
   readonly problems: string[] = [];
   /** Artificial network latency per request. */
   latencyMs = 0;
+  /** When true, keep image bytes and a timeline of every message change (recordings). */
+  recording = false;
+  readonly timeline: TimelineEntry[] = [];
   /** Fault injection: return an error result for matching requests. */
   fault: ((method: string, route: string) => Result | null) | null = null;
   private client: Client | null = null;
@@ -353,12 +372,13 @@ export class FakeDiscord {
       flags: payload.flags ?? 0,
       content: payload.content ?? '',
       components: payload.components ?? [],
-      attachments: files.map((f) => ({ id: snowflake(), filename: f.name, size: f.size })),
+      attachments: files.map((f) => ({ id: snowflake(), filename: f.name, size: f.size, ...(this.recording ? { data: f.data } : {}) })),
     };
     const problems = validateMessage(draft, payload);
     if (problems.length) return this.reject(problems);
     const m = this.blank(channelId, forUser, draft.flags);
     Object.assign(m, draft);
+    this.record('create', m);
     return m;
   }
 
@@ -370,14 +390,35 @@ export class FakeDiscord {
       flags,
       content: payload.content === undefined ? message.content : (payload.content ?? ''),
       components: payload.components === undefined ? message.components : payload.components,
-      attachments: [...kept, ...files.map((f) => ({ id: snowflake(), filename: f.name, size: f.size }))],
+      attachments: [...kept, ...files.map((f) => ({ id: snowflake(), filename: f.name, size: f.size, ...(this.recording ? { data: f.data } : {}) }))],
     };
     const problems = validateMessage(draft, payload);
     if (message.flags & V2 && !(draft.flags & V2)) problems.push('IS_COMPONENTS_V2 cannot be removed from a message');
     if (problems.length) return this.reject(problems);
     Object.assign(message, draft);
     message.edits++;
+    this.record('edit', message);
     return null;
+  }
+
+  private record(op: 'create' | 'edit', m: FakeMessage): void {
+    if (!this.recording) return;
+    const container = m.components.find((c: Json) => c.type === 17);
+    const media = findComponents(m.components, 12)[0]?.items?.[0]?.media?.url as string | undefined;
+    const name = media?.startsWith('attachment://') ? media.slice('attachment://'.length) : null;
+    const file = name ? m.attachments.find((a) => a.filename === name) : undefined;
+    this.timeline.push({
+      at: Date.now(),
+      op,
+      messageId: m.id,
+      channelId: m.channelId,
+      forUser: m.forUser,
+      accent: container?.accent_color ?? null,
+      text: textOf(m),
+      buttons: findComponents(m.components, 2).map((b) => ({ label: b.label ?? '', style: b.style, disabled: !!b.disabled, ...(b.emoji?.name ? { emoji: b.emoji.name } : {}) })),
+      selects: [...findComponents(m.components, 3), ...findComponents(m.components, 5)].map((s) => s.placeholder ?? s.custom_id),
+      image: file?.data ? { filename: file.filename, data: file.data } : null,
+    });
   }
 
   private reject(problems: string[]): Result {
@@ -765,6 +806,7 @@ export function undiciLikeResponse(status: number, body?: unknown): Response {
 interface FakeFile {
   name: string;
   size: number;
+  data: Uint8Array;
 }
 
 async function readBody(body: unknown): Promise<{ json: Json; files: FakeFile[] }> {
@@ -779,7 +821,7 @@ async function readBody(body: unknown): Promise<{ json: Json; files: FakeFile[] 
       if (key === 'payload_json') json = JSON.parse(String(value));
       else if (value && typeof value === 'object' && 'arrayBuffer' in value) {
         const blob = value as Blob & { name?: string };
-        files.push({ name: blob.name ?? key, size: blob.size });
+        files.push({ name: blob.name ?? key, size: blob.size, data: new Uint8Array(await blob.arrayBuffer()) });
       }
     }
     return { json, files };

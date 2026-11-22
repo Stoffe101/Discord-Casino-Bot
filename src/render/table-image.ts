@@ -52,6 +52,12 @@ export function chip(cx: number, cy: number, r: number, amount: number): string 
   );
 }
 
+/** Soft gold halo behind the card that just arrived. */
+function freshGlow(x: number, y: number, w: number, h: number): string {
+  return `<rect x="${n(x - 5)}" y="${n(y - 5)}" width="${n(w + 10)}" height="${n(h + 10)}" rx="${n(w * 0.12)}" fill="#f2d78a" fill-opacity="0.55" filter="url(#glow)"/>` +
+    `<rect x="${n(x - 2.5)}" y="${n(y - 2.5)}" width="${n(w + 5)}" height="${n(h + 5)}" rx="${n(w * 0.1)}" fill="none" stroke="#f2d78a" stroke-width="2.5"/>`;
+}
+
 function handsLayout(hands: HandView[], areaW: number): { cardW: number; offset: number; handW: number[]; gap: number } {
   const gap = hands.length > 1 ? 12 : 0;
   let cardW = hands.length === 1 ? 84 : hands.length === 2 ? 70 : 54;
@@ -67,8 +73,10 @@ function handsLayout(hands: HandView[], areaW: number): { cardW: number; offset:
 function seatPanel(seat: SeatView, x: number, y: number, w: number, h: number, view: TableView): string {
   const parts: string[] = [];
   const occupied = seat.userId !== null;
-  const strokeColor = seat.active ? '#e8c565' : occupied ? 'rgba(232,197,101,0.28)' : 'rgba(255,255,255,0.12)';
-  const strokeWidth = seat.active ? 3.5 : 1.5;
+  // In the results view each seat is outlined by how it went: green won, red lost.
+  const outcome = view.mode === 'results' && seat.net !== null ? (seat.net > 0 ? '#34c27f' : seat.net < 0 ? '#d0505f' : 'rgba(232,217,168,0.55)') : null;
+  const strokeColor = seat.active ? '#e8c565' : (outcome ?? (occupied ? 'rgba(232,197,101,0.28)' : 'rgba(255,255,255,0.12)'));
+  const strokeWidth = seat.active ? 3.5 : outcome ? 3 : 1.5;
   if (seat.active) {
     parts.push(`<rect x="${n(x - 4)}" y="${n(y - 4)}" width="${n(w + 8)}" height="${n(h + 8)}" rx="20" fill="none" stroke="#e8c565" stroke-opacity="0.35" stroke-width="8" filter="url(#glow)"/>`);
   }
@@ -92,7 +100,8 @@ function seatPanel(seat: SeatView, x: number, y: number, w: number, h: number, v
     );
   }
   const areaTop = y + 50;
-  const areaH = h - 50 - 40;
+  // Results show a large net badge under the hands, so leave more room at the bottom.
+  const areaH = h - 50 - (view.mode === 'results' && seat.net !== null ? 64 : 40);
   if (seat.hands.length > 0) {
     const { cardW, offset, handW, gap } = handsLayout(seat.hands, w - 28);
     const cardH = (cardW * CARD_H) / CARD_W;
@@ -103,13 +112,27 @@ function seatPanel(seat: SeatView, x: number, y: number, w: number, h: number, v
       if (hand.active && seat.hands.length > 1) {
         parts.push(`<rect x="${n(hx - 5)}" y="${n(cy - 5)}" width="${n(handW[i]! + 10)}" height="${n(cardH + 10)}" rx="9" fill="none" stroke="#e8c565" stroke-width="2.5"/>`);
       }
-      hand.cards.forEach((card, c) => parts.push(cardFace(card, hx + c * offset, cy, cardW, { dim: hand.dim })));
-      const totalText = hand.total;
-      const badgeY = cy + cardH + 2;
+      hand.cards.forEach((card, c) => {
+        if (c === hand.fresh) parts.push(freshGlow(hx + c * offset, cy, cardW, cardH));
+        parts.push(cardFace(card, hx + c * offset, cy, cardW, { dim: hand.dim }));
+      });
+      // The hand total is the number players look for first: keep it large, gold on the hand to act.
+      const badgeY = cy + cardH + 4;
+      const small = seat.hands.length > 2;
       if (hand.badge) {
-        parts.push(badge(hand.badge, hx + handW[i]! / 2, badgeY + 12, seat.hands.length > 2 ? 10 : 12));
-      } else {
-        parts.push(pill({ x: hx + handW[i]! / 2, y: badgeY + 12, text: totalText, size: seat.hands.length > 2 ? 11 : 13, fill: '#0b241b', color: '#f6f1e3', stroke: '#c9a54e' }));
+        parts.push(badge(hand.badge, hx + handW[i]! / 2, badgeY + 13, small ? 12 : 15));
+      } else if (hand.total) {
+        parts.push(
+          pill({
+            x: hx + handW[i]! / 2,
+            y: badgeY + 13,
+            text: hand.total,
+            size: small ? 13 : 17,
+            fill: hand.active ? '#e8c565' : '#0b241b',
+            color: hand.active ? '#1d1405' : '#f6f1e3',
+            stroke: '#c9a54e',
+          }),
+        );
       }
       hx += handW[i]! + gap;
     });
@@ -128,7 +151,8 @@ function seatPanel(seat: SeatView, x: number, y: number, w: number, h: number, v
     );
   }
   if (seat.status) {
-    parts.push(badge(seat.status, x + w / 2, y + h - 18, 12));
+    const isNet = view.mode === 'results' && seat.net !== null;
+    parts.push(badge(seat.status, x + w / 2, y + h - (isNet ? 19 : 18), isNet ? 16 : 13));
   }
   void view;
   return parts.join('');
@@ -145,7 +169,7 @@ function dealerArea(view: TableView): string {
     `<text x="${TABLE_W / 2}" y="40" text-anchor="middle" font-family="Cinzel" font-weight="900" font-size="20" fill="#e8c565" letter-spacing="6">DEALER</text>`,
   );
   if (cards.length === 0) {
-    const message = view.mode === 'betting' ? 'BETS ARE OPEN' : 'PLACE YOUR BETS';
+    const message = view.mode === 'betting' ? 'BETS ARE OPEN' : view.mode === 'dealing' ? 'DEALING' : 'PLACE YOUR BETS';
     parts.push(
       `<text x="${TABLE_W / 2}" y="${cy + cardH / 2 + 4}" text-anchor="middle" font-family="Cinzel" font-weight="900" font-size="34" fill="rgba(246,241,227,0.92)" letter-spacing="4">${message}</text>`,
     );
@@ -156,12 +180,13 @@ function dealerArea(view: TableView): string {
     const totalW = cardW + (cards.length - 1) * offset;
     const startX = TABLE_W / 2 - totalW / 2;
     cards.forEach((card, i) => {
+      if (i === view.dealer.fresh && card) parts.push(freshGlow(startX + i * offset, cy, cardW, cardH));
       parts.push(card ? cardFace(card, startX + i * offset, cy, cardW) : cardBack(startX + i * offset, cy, cardW, view.cardBackId));
     });
     const badgeY = cy + cardH + 18;
-    if (view.dealer.badge) parts.push(badge(view.dealer.badge, TABLE_W / 2, badgeY, 14));
+    if (view.dealer.badge) parts.push(badge(view.dealer.badge, TABLE_W / 2, badgeY + 2, 17));
     else if (view.dealer.total) {
-      parts.push(pill({ x: TABLE_W / 2, y: badgeY, text: view.dealer.total, size: 15, fill: '#0b241b', color: '#f6f1e3', stroke: '#c9a54e' }));
+      parts.push(pill({ x: TABLE_W / 2, y: badgeY + 2, text: view.dealer.total, size: 18, fill: '#0b241b', color: '#f6f1e3', stroke: '#c9a54e' }));
     }
   }
   return parts.join('');

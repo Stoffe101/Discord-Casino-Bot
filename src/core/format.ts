@@ -68,3 +68,21 @@ export function ordinal(n: number): string {
       return `${n}th`;
   }
 }
+
+/**
+ * Parse a chip amount typed by a player: "1,000", "2k", "1.5k", "1m", and — when the caller says
+ * how much is available — "all" / "max" (as much as allowed) and "half". Returns null if the
+ * text isn't a whole number of chips.
+ */
+export function parseChipAmount(raw: string, context?: { available: number; max: number }): number | null {
+  const s = raw.trim().toLowerCase().replace(/[,_\s]/g, '');
+  if (context) {
+    if (s === 'all' || s === 'max' || s === 'allin') return Math.max(0, Math.min(context.available, context.max));
+    if (s === 'half') return Math.max(0, Math.min(Math.floor(context.available / 2), context.max));
+  }
+  const m = /^(-?\d+(?:\.\d+)?)([km]?)$/.exec(s);
+  if (!m) return null;
+  const value = Number(m[1]) * (m[2] === 'k' ? 1_000 : m[2] === 'm' ? 1_000_000 : 1);
+  const rounded = Math.round(value);
+  return Number.isSafeInteger(rounded) && Math.abs(value - rounded) < 1e-9 ? rounded : null;
+}

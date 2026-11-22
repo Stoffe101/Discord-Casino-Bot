@@ -13,6 +13,43 @@ This report keeps four kinds of evidence apart:
 | **C. Simulated players** | Behaviour of the real bot code under player actions | The full-stack harness: real discord.js, guard, router and panel sync against an in-memory Discord (`tests/harness/`). Its payload rules are *a model* of Discord's |
 | **D. Real human clicks** | Real players pressing buttons in the client | **Not verified.** The bot can't press its own buttons, and the owner's account was deliberately not automated |
 
+## Round 3: game feel (owner feedback: "a bit janky")
+
+**How it was reviewed.** `npm run record` plays short sessions through the full stack with the bot's production animation timings, simulated network latency and human-paced clicks. It writes an HTML replay of every message change for each game, plus the frame images. I reviewed every frame before and after the changes. A web survey of other Discord casino bots fed into the priorities:
+- OwO bot stops its slot reels in stages of about 1 s, 0.7 s and 1 s, and flips its coin after 2 s;
+- totals appear as text, with soft hands marked;
+- the newest card is highlighted;
+- whole animations stay under about 3 s.
+
+**Problems found in the recordings, all fixed:**
+- **Spoilers during the dealer's reveal.** The activity log already said "Dealer busts · Alex wins 200" while the cards were still turning. Animation frames now show no log and no controls.
+- **No dealing.** The table jumped from bets straight to every card dealt. Now:
+  - the first card goes out to each player, plus the dealer's up card;
+  - about 0.5 s later the second cards arrive with totals and the turn controls.
+- **Hands hard to read.** Only the active player's hand was in text. Now:
+  - the active hand is shown large ("8♠ 8♥ → 16") with the dealer's up card next to it;
+  - a one-line summary lists every player's hands and totals.
+- **Tiny totals and outcomes in the image.** Totals are now larger, gold on the hand to act. Results outline each seat green or red with a larger net amount. The dealer's bust total stays visible. The newest card glows.
+- **Roulette, slots and coin flip jumped straight to the result.** Now:
+  - roulette shows "no more bets" with the ball rolling, then slowing, then landing;
+  - the slot reels spin and stop in turn, with controls locked and the balance unchanged until they settle, and the winning symbols glow;
+  - the coin goes up, then lands.
+- **Repeated slot results looked identical.** There's now a spin counter.
+
+**Also new:** bets typed as `2k`, `1.5k`, `all`, `max` or `half` in the bet, roulette and coinflip boxes.
+
+**Timings now** (per step, before network latency):
+- deal pass 450 ms;
+- each dealer card 700 ms;
+- roulette and slot frames 650 ms;
+- coin 1 s.
+
+A full dealer reveal with two extra cards takes about 2–3 s.
+
+**Verified:**
+- 298 tests pass; `tests/integration/animations.test.ts` covers frame order, no spoilers, locked controls, the newest-card marker and amount parsing.
+- **Live Discord:** all 37 screens were accepted, including the four new animation frames.
+- **Live table threads:** 2 tables × 2 hands with the new deal and reveal frames, 0 rate-limited, 0 blocked.
 ## 0. Round 2: table threads under #casino
 
 The owner then authorised threads whose parent is the verified #casino channel, in the same server. Nothing else changed.
@@ -159,7 +196,7 @@ The running bot now logs Discord API timings by request kind every 10 minutes an
   - A "Table 01 — closed" panel, re-posted from the thread when test mode started, then closed by the idle sweep.
   - The bench message was deleted at the end of testing.
   - The thread from the earlier unguarded run was closed, locked and archived in round 2.
-  - Round 2 left **8 archived, locked bench threads** under #casino. Three are private, and they are named like real tables (`blackjack-table-NN`). The guard deliberately can't delete threads, so remove them by hand if you want them gone.
+  - Rounds 2–3 left **10 archived, locked bench threads** under #casino. Four are private, and they are named like real tables (`blackjack-table-NN`). The guard deliberately can't delete threads, so remove them by hand if you want them gone.
 
 ## 7. Remaining limitations and unverified behaviour
 

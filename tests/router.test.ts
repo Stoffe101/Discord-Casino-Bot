@@ -244,14 +244,15 @@ describe('InteractionRouter (headless)', () => {
     app.economy.ensurePlayer(GUILD, userId(1), 'Player 1');
     const t = await app.blackjack.createTable({ guildId: GUILD, ownerId: userId(1), ownerName: 'Player 1' });
     const bad = await run({ kind: 'modal', user: 1, customId: `m:bjbet:${t.record.id}`, fields: { amount: 'lots' } });
-    expect(textOf(bad.calls[0])).toContain('whole number');
+    expect(textOf(bad.calls[0])).toContain('number of chips');
     await run({ kind: 'modal', user: 1, customId: `m:bjbet:${t.record.id}`, fields: { amount: '1,25' } });
     expect(app.blackjack.peek(t.record.id)!.state.bets[userId(1)]).toBe(125);
   });
 
   it('slot spins update the private machine and ignore double-clicks', async () => {
     const first = await run({ kind: 'button', user: 1, customId: 'sl:spin:10:0', ephemeralSource: true });
-    expect(kinds(first.calls)).toEqual(['update']);
+    // The click answers with spinning reels, then two edits stop the reels in turn.
+    expect(kinds(first.calls)).toEqual(['update', 'editReply', 'editReply']);
     const dupe = await run({ kind: 'button', user: 1, customId: 'sl:spin:10:0', ephemeralSource: true });
     expect(textOf(dupe.calls[0])).toContain('Already handled');
     expect(app.slots.spinCount(GUILD, userId(1))).toBe(1);

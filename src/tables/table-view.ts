@@ -19,6 +19,8 @@ export interface HandView {
   doubled: boolean;
   badge: Badge | null;
   dim: boolean;
+  /** Index of the card that just arrived (highlighted), if any. */
+  fresh?: number;
 }
 
 export interface SeatView {
@@ -37,9 +39,11 @@ export interface DealerView {
   cards: (Card | null)[];
   total: string | null;
   badge: Badge | null;
+  /** Index of the dealer card that was just turned or drawn (highlighted), if any. */
+  fresh?: number;
 }
 
-export type TableViewMode = 'waiting' | 'betting' | 'insurance' | 'playing' | 'reveal' | 'results';
+export type TableViewMode = 'waiting' | 'betting' | 'dealing' | 'insurance' | 'playing' | 'reveal' | 'results';
 
 export interface TableView {
   id: string;
@@ -86,11 +90,12 @@ export function rulesArcText(rules: Pick<BlackjackRules, 'blackjackPayout' | 'de
 /**
  * Build the presentation model for a table. `revealStep` renders an intermediate frame of the
  * dealer's reveal (0 = hole card turned, 1 = first extra card, ...) from the last result.
+ * `dealStep` 0 renders the first pass of the deal: one card per player and the dealer's up card.
  */
 export function buildTableView(
   snapshot: Readonly<TableSnapshot>,
   rules: Pick<BlackjackRules, 'blackjackPayout' | 'dealerHitsSoft17' | 'insurance'>,
-  options: { revealStep?: number } = {},
+  options: { revealStep?: number; dealStep?: number } = {},
 ): TableView {
   const { record, state } = snapshot;
   const base = {
@@ -117,10 +122,41 @@ export function buildTableView(
   });
   const seats: SeatView[] = Array.from({ length: record.config.maxSeats }, (_, i) => emptySeat(i));
 
+  // ── First pass of the deal (one card each, dealer's up card), for the deal animation ──
+  if (options.dealStep !== undefined) {
+    const dealt = state.round
+      ? { players: state.round.seats.map((s) => ({ userId: s.userId, first: s.hands[0]!.cards[0]!, bet: s.hands[0]!.bet })), up: state.round.dealer[0]! }
+      : state.lastResult
+        ? { players: state.lastResult.seats.map((s) => ({ userId: s.userId, first: s.hands[0]!.cards[0]!, bet: s.wagered })), up: state.lastResult.dealerCards[0]! }
+        : null;
+    if (dealt) {
+      for (const p of dealt.players) {
+        const seat = state.seats.find((s) => s.userId === p.userId);
+        const view = seat ? seats[seat.seatIndex] : undefined;
+        if (!seat || !view) continue;
+        view.userId = seat.userId;
+        view.name = seat.displayName;
+        view.bet = p.bet;
+        view.hands = [{ cards: [p.first], total: '', bet: p.bet, active: false, doubled: false, badge: null, dim: false }];
+      }
+      for (const seat of state.seats) {
+        const view = seats[seat.seatIndex];
+        if (!view || view.userId) continue;
+        view.userId = seat.userId;
+        view.name = seat.displayName;
+        view.status = seat.sittingOut ? { text: 'SITTING OUT', tone: 'neutral' } : { text: 'NEXT HAND', tone: 'info' };
+      }
+      return { ...base, mode: 'dealing', roundNumber: state.roundNumber, dealer: { cards: [dealt.up], total: null, badge: null }, seats, activeUserId: null };
+    }
+  }
+
   // ── A round is in progress ──
   if ((state.phase === 'playing' || state.phase === 'insurance') && state.round) {
     const round = state.round;
     const activeUser = round.turn ? round.seats[round.turn.seat]!.userId : null;
+    // The card that just arrived: the latest hit / double / bust (an automatic stand on 21 doesn't count).
+    const latest = [...round.events].reverse().find((e) => !(e.t === 'stand' && e.reason === 'twentyone'));
+    const fresh = latest && (latest.t === 'hit' || latest.t === 'double' || latest.t === 'bust') ? { userId: latest.userId, hand: latest.hand } : null;
     for (const seat of state.seats) {
       if (seat.seatIndex >= seats.length) continue;
       const rs = round.seats.find((r) => r.userId === seat.userId);
@@ -150,6 +186,7 @@ export function buildTableView(
           doubled: hand.doubled,
           badge,
           dim: total > 21 || hand.surrendered,
+          ...(fresh && fresh.userId === rs.userId && fresh.hand === index ? { fresh: hand.cards.length - 1 } : {}),
         };
       });
       if (state.phase === 'insurance') {
@@ -217,13 +254,13 @@ export function buildTableView(
       : result.dealerBlackjack
         ? { text: 'BLACKJACK', tone: 'bad' }
         : result.dealerBust
-          ? { text: 'DEALER BUSTS', tone: 'good' }
+          ? { text: `DEALER BUSTS · ${result.dealerTotal}`, tone: 'good' }
           : null;
     return {
       ...base,
       mode: revealing ? 'reveal' : 'results',
       roundNumber: result.roundNumber,
-      dealer: { cards: shownDealer, total: dealerTotal, badge: dealerBadge },
+      dealer: { cards: shownDealer, total: dealerTotal, badge: dealerBadge, ...(revealing ? { fresh: shownDealer.length - 1 } : {}) },
       seats,
       activeUserId: null,
     };

@@ -63,35 +63,54 @@ export function gamesHubScreen(app: CasinoApp, viewer: Viewer): Screen {
 
 const SLOT_BETS = [5, 10, 25, 50, 100, 250, 500, 1000];
 
-export async function slotsScreen(app: CasinoApp, viewer: Viewer, bet: number): Promise<Screen> {
+/**
+ * The player's private slot machine. `stopped` (0–2) renders an in-motion frame of the last spin:
+ * only the first reels have stopped, nothing about the outcome (or the new balance) is shown yet,
+ * and every control is disabled until the reels settle.
+ */
+export async function slotsScreen(app: CasinoApp, viewer: Viewer, bet: number, options: { stopped?: number } = {}): Promise<Screen> {
   app.economy.ensurePlayer(viewer.guildId, viewer.userId, viewer.displayName);
   const s = app.settings.get(viewer.guildId).slots;
   const amount = Math.min(s.maxBet, Math.max(s.minBet, bet));
   const last = app.slots.lastSpin(viewer.guildId, viewer.userId);
-  const balance = app.economy.getPlayer(viewer.guildId, viewer.userId)!.balance;
+  const spinning = options.stopped !== undefined && last !== undefined && last !== null;
+  const settled = app.economy.getPlayer(viewer.guildId, viewer.userId)!.balance;
+  const balance = spinning ? settled - last.payout : settled;
   const count = app.slots.spinCount(viewer.guildId, viewer.userId);
-  const svg = slotsSvg({ rows: last?.spin.rows ?? null, win: (last?.payout ?? 0) > 0, label: last?.spin.label ?? '', bet: last?.bet ?? amount, payout: last?.payout ?? 0 });
+  const line = last?.spin.line ?? [];
+  const paying = !spinning && last && last.payout > 0 ? (line.every((sym) => sym === line[0]) ? [0, 1, 2] : line.flatMap((sym, i) => (sym === 'cherry' ? [i] : []))) : [];
+  const svg = slotsSvg({
+    rows: last?.spin.rows ?? null,
+    win: !spinning && (last?.payout ?? 0) > 0,
+    label: last?.spin.label ?? '',
+    bet: last?.bet ?? amount,
+    payout: last?.payout ?? 0,
+    ...(spinning ? { stopped: options.stopped } : {}),
+    paying,
+  });
   const { key, png } = await app.images.render(svg, 640);
   const file = `slots-${key}.png`;
-  const options = [...new Set([s.minBet, ...SLOT_BETS.filter((b) => b > s.minBet && b < s.maxBet), s.maxBet])].slice(0, 5);
-  const resultText = last
-    ? last.payout > 0
-      ? `### ${last.spin.label}! **+${chips(last.net)}**\n-# Bet ${chips(last.bet)} × ${last.spin.multiplier}${last.recorded?.achievements.length ? ` · ✦ unlocked ${last.recorded.achievements.map((a) => a.name).join(', ')}` : ''}`
-      : `### No win this time\n-# Bet ${chips(last.bet)} · ${signedChips(last.net)}`
-    : '### Pull the lever\n-# Line up three of a kind on the middle row. Two cherries pay double.';
+  const betOptions = [...new Set([s.minBet, ...SLOT_BETS.filter((b) => b > s.minBet && b < s.maxBet), s.maxBet])].slice(0, 5);
+  const resultText = spinning
+    ? `### Spinning…\n-# Bet ${chips(last.bet)} · spin #${count}`
+    : last
+      ? last.payout > 0
+        ? `### ${last.spin.label}! **+${chips(last.net)}**\n-# Bet ${chips(last.bet)} × ${last.spin.multiplier} · spin #${count}${last.recorded?.achievements.length ? ` · ✦ unlocked ${last.recorded.achievements.map((a) => a.name).join(', ')}` : ''}`
+        : `### No win this time\n-# Bet ${chips(last.bet)} · ${signedChips(last.net)} · spin #${count}`
+      : '### Pull the lever\n-# Line up three of a kind on the middle row. Two cherries pay double.';
   return {
-    files: [{ name: file, data: png, description: last ? `Slot reels showing ${last.spin.line.join(', ')}` : 'Slot machine' }],
+    files: [{ name: file, data: png, description: spinning ? 'The reels are spinning' : last ? `Slot reels showing ${last.spin.line.join(', ')}` : 'Slot machine' }],
     components: [
-      container(last && last.payout > 0 ? COLORS.gold : COLORS.emerald, [
+      container(!spinning && last && last.payout > 0 ? COLORS.gold : COLORS.emerald, [
         text(`## ${ICONS.slots} Emerald Slots\n-# Balance **${chips(balance)}** chips · bet **${chips(amount)}**`),
         gallery([{ url: `attachment://${file}`, description: 'Slot machine reels' }]),
         text(resultText),
-        row(...options.map((b) => button({ id: cid('nav', 'slots', b), label: chips(b), tone: b === amount ? 'primary' : 'secondary', disabled: b === amount }))),
+        row(...betOptions.map((b) => button({ id: cid('nav', 'slots', b), label: chips(b), tone: b === amount ? 'primary' : 'secondary', disabled: spinning || b === amount }))),
         row(
-          button({ id: cid('sl', 'spin', amount, count), label: `Spin ${chips(amount)}`, tone: 'success', disabled: balance < amount }),
-          button({ id: cid('sl', 'pay', amount), label: 'Paytable' }),
-          button({ id: NAV.games, label: 'Games', emoji: ICONS.games }),
-          button({ id: NAV.home, label: 'Home', emoji: ICONS.home }),
+          button({ id: cid('sl', 'spin', amount, count), label: `Spin ${chips(amount)}`, tone: 'success', disabled: spinning || balance < amount }),
+          button({ id: cid('sl', 'pay', amount), label: 'Paytable', disabled: spinning }),
+          button({ id: NAV.games, label: 'Games', emoji: ICONS.games, disabled: spinning }),
+          button({ id: NAV.home, label: 'Home', emoji: ICONS.home, disabled: spinning }),
         ),
       ]),
     ],
@@ -116,10 +135,30 @@ export function paytableScreen(bet: number): Screen {
 
 const COLOR_DOT = { red: '🔴', black: '⚫', green: '🟢' } as const;
 
-export async function roulettePanel(app: CasinoApp, wheel: Readonly<WheelSnapshot>): Promise<Screen> {
+export async function roulettePanel(app: CasinoApp, wheel: Readonly<WheelSnapshot>, options: { spinFrame?: number } = {}): Promise<Screen> {
   const { record, state } = wheel;
   const s = app.settings.get(record.guildId).roulette;
   const result = state.lastResult;
+  // In-motion frames between "no more bets" and the result: the outcome is already settled, but
+  // nothing about it is shown until the ball lands.
+  if (options.spinFrame !== undefined && result) {
+    const { key, png } = await app.images.render(
+      rouletteSvg({ result: null, history: state.history, spinNumber: result.spinNumber, spin: { frame: options.spinFrame, target: result.number } }),
+      760,
+    );
+    const file = `wheel-${key}.png`;
+    const bets = result.players.map((p) => `**${escapeMarkdown(p.displayName)}** ${p.bets.map((b) => `${b.label} ${chips(b.amount)}`).join(' · ')}`);
+    return {
+      files: [{ name: file, data: png, description: 'The roulette wheel is spinning' }],
+      components: [
+        container(COLORS.emerald, [
+          text(`## ${ICONS.roulette} Roulette\n-# Spin ${result.spinNumber} · no more bets`),
+          gallery([{ url: `attachment://${file}`, description: 'The roulette wheel is spinning' }]),
+          text(`### ${options.spinFrame === 0 ? 'No more bets — the ball is rolling…' : 'The ball is slowing down…'}\n${bets.join('\n')}`),
+        ]),
+      ],
+    };
+  }
   const { key, png } = await app.images.render(
     rouletteSvg({ result: result?.number ?? null, history: state.history, spinNumber: result?.spinNumber ?? 0 }),
     760,
@@ -171,7 +210,7 @@ export async function roulettePanel(app: CasinoApp, wheel: Readonly<WheelSnapsho
 export function rouletteBetModal(wheelId: string, type: RouletteBetType, min: number, max: number): ModalSpec {
   const info = BET_TYPES.find((b) => b.type === type)!;
   const components = [
-    textInputLabel({ id: 'amount', label: 'Bet amount', description: `${chips(min)}–${chips(max)} chips · ${info.description}`, value: String(min), max: 12 }),
+    textInputLabel({ id: 'amount', label: 'Bet amount', description: `${chips(min)}–${chips(max)} chips · ${info.description}`, value: String(min), max: 12, placeholder: 'e.g. 50, 1k or all' }),
   ];
   if (type === 'straight') {
     components.unshift(textInputLabel({ id: 'number', label: 'Number (0–36)', description: 'A straight-up bet pays 35:1', max: 2, placeholder: '17' }));
@@ -195,7 +234,7 @@ export function rouletteHelpScreen(): Screen {
 
 export function coinflipModal(opponentId: string, opponentName: string, min: number, max: number): ModalSpec {
   return modal(cid('m', 'cf', opponentId), `Challenge ${opponentName}`.slice(0, 45), [
-    textInputLabel({ id: 'amount', label: 'Stake (each)', description: `${chips(min)}–${chips(max)} chips — the winner takes both`, value: String(min), max: 12 }),
+    textInputLabel({ id: 'amount', label: 'Stake (each)', description: `${chips(min)}–${chips(max)} chips — the winner takes both`, value: String(min), max: 12, placeholder: 'e.g. 100, 1k or half' }),
     selectLabel({
       id: 'call',
       label: 'Your call',
@@ -204,10 +243,25 @@ export function coinflipModal(opponentId: string, opponentName: string, min: num
   ]);
 }
 
-export async function coinflipMessage(app: CasinoApp, challenge: Challenge, names: { challenger: string; opponent: string }): Promise<Screen> {
+export async function coinflipMessage(app: CasinoApp, challenge: Challenge, names: { challenger: string; opponent: string }, options: { flipping?: boolean } = {}): Promise<Screen> {
   const c = escapeMarkdown(names.challenger);
   const o = escapeMarkdown(names.opponent);
   const pot = challenge.amount * 2;
+  if (options.flipping && challenge.status === 'resolved') {
+    // The moment between "accepted" and the result: nothing about the outcome is shown yet.
+    const { key, png } = await app.images.render(coinSvg('flip'), 420);
+    const file = `coin-${key}.png`;
+    return {
+      files: [{ name: file, data: png, description: 'The coin is in the air' }],
+      components: [
+        container(COLORS.gold, [
+          text(`## ${ICONS.coinflip} The coin is in the air…`),
+          gallery([{ url: `attachment://${file}`, description: 'The coin is in the air' }]),
+          text(`**${c}** called **${challenge.call === 'heads' ? 'Heads' : 'Tails'}** · **${o}** has the other side · pot **${chips(pot)}**`),
+        ]),
+      ],
+    };
+  }
   if (challenge.status === 'pending') {
     return {
       components: [

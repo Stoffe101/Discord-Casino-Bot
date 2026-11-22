@@ -117,7 +117,12 @@ export interface TableSnapshot {
 }
 
 /** Why a render was requested — lets the presenter add tasteful transitions. */
-export type RenderHint = { kind: 'update' } | { kind: 'round_settled'; dealerSteps: number } | { kind: 'restored' };
+/**
+ * What changed, so the presenter can animate it: 'dealt' = a hand was just dealt (cards go out in
+ * passes); 'round_settled' = the dealer played and the hand settled (`dealt` if that happened at
+ * the deal itself, e.g. a dealer blackjack).
+ */
+export type RenderHint = { kind: 'update' } | { kind: 'dealt' } | { kind: 'round_settled'; dealerSteps: number; dealt?: boolean } | { kind: 'restored' };
 
 /** Notifications from the table service to whatever presents tables (Discord or tests). */
 export interface TableObserver {

@@ -13,7 +13,7 @@ import {
 } from 'discord.js';
 import type { CasinoApp } from '../app/casino-app.js';
 import { InsufficientFundsError, UserError, isUserError } from '../core/errors.js';
-import { chips, escapeMarkdown, signedChips } from '../core/format.js';
+import { chips, escapeMarkdown, signedChips, parseChipAmount } from '../core/format.js';
 import { shortCode } from '../core/random.js';
 import { getSpec, type SettingGroup } from '../config/settings.js';
 import { resetGuildData } from '../domain/dev-reset.js';
@@ -196,6 +196,20 @@ export class InteractionRouter {
       else await i.followUp(opts);
     } catch (e) {
       this.app.logger.debug('could not report error to user', { code: discordErrorCode(e) });
+    }
+  }
+
+  /**
+   * Show a short animation on the message the click came from: the first frame answers the click
+   * itself, later frames edit the same message `delayMs` apart. Frames are built lazily, so each
+   * one is rendered only when it is due.
+   */
+  private async playFrames(i: Component, frames: Array<() => Promise<Screen>>, delayMs: number): Promise<void> {
+    for (const [index, build] of frames.entries()) {
+      const screen = this.bot.checked(await build());
+      if (index === 0 && !i.deferred && !i.replied) await i.update(editOptions(screen));
+      else await i.editReply(editOptions(screen));
+      if (index < frames.length - 1) await new Promise((r) => setTimeout(r, delayMs));
     }
   }
 
@@ -729,8 +743,9 @@ export class InteractionRouter {
     if (action === 'spin') {
       this.requireOpen(viewer);
       const bet = intArg(args[0]);
+      // The spin is settled first (money is final); the reels then stop one after another.
       await this.app.slots.spin(viewer.guildId, viewer.userId, bet, intArg(args[1], -1));
-      return this.show(i, await slotsScreen(this.app, viewer, bet));
+      return this.playFrames(i, [() => slotsScreen(this.app, viewer, bet, { stopped: 0 }), () => slotsScreen(this.app, viewer, bet, { stopped: 2 }), () => slotsScreen(this.app, viewer, bet)], this.bot.timing.spinFrameMs);
     }
   }
 
@@ -759,6 +774,11 @@ export class InteractionRouter {
       else if (action === 'decline') challenge = await this.app.coinflip.decline(id, viewer.userId);
       else if (action === 'cancel') challenge = await this.app.coinflip.cancel(id, viewer.userId);
       else return;
+      if (action === 'accept' && challenge.status === 'resolved') {
+        // The coin goes up first, then lands.
+        await this.playFrames(i, [async () => (await this.bot.coinflipScreen(challenge.id, { flipping: true }))!, async () => (await this.bot.coinflipScreen(challenge.id))!], this.bot.timing.spinFrameMs * 1.6);
+        return;
+      }
       const screen = await this.bot.coinflipScreen(challenge.id);
       if (screen) await i.update(editOptions(screen));
     } finally {
@@ -866,11 +886,13 @@ export class InteractionRouter {
         return '';
       }
     };
-    const amount = (raw: string) => {
-      const n = Number(raw.replace(/[,_\s]/g, ''));
-      if (!Number.isSafeInteger(n)) throw new UserError('Please enter a whole number of chips.', 'bad_amount', 'Not a number');
+    // Accepts 1,000 · 2k · 1.5k and, where a wallet applies, all / max / half.
+    const amount = (raw: string, context?: { available: number; max: number }) => {
+      const n = parseChipAmount(raw, context);
+      if (n === null) throw new UserError(`Please enter a number of chips — e.g. 250, 2k${context ? ' or all' : ''}.`, 'bad_amount', 'Not a number');
       return n;
     };
+    const wallet = () => this.app.economy.getWallet(viewer.guildId, viewer.userId).balance;
     switch (action) {
       case 'tblcreate': {
         this.requireOpen(viewer);
@@ -898,8 +920,11 @@ export class InteractionRouter {
       case 'bjbet': {
         arm('update');
         this.requireOpen(viewer);
-        const tableId = this.table(viewer, args[0] ?? '').record.id;
-        await this.app.blackjack.placeBet(tableId, viewer.userId, amount(field('amount')), viewer.displayName, i);
+        const snap = this.table(viewer, args[0] ?? '');
+        const tableId = snap.record.id;
+        // A new bet replaces the current one, so its chips count as available.
+        const available = wallet() + (snap.state.bets[viewer.userId] ?? 0);
+        await this.app.blackjack.placeBet(tableId, viewer.userId, amount(field('amount'), { available, max: snap.record.config.maxBet }), viewer.displayName, i);
         return this.settle(i);
       }
       case 'rlbet': {
@@ -909,14 +934,14 @@ export class InteractionRouter {
         const wheelId = this.wheel(viewer, rawWheelId).record.id;
         if (!isBetType(type)) throw new UserError('Unknown bet type.');
         const number = type === 'straight' ? amount(field('number')) : undefined;
-        await this.app.roulette.placeBet(wheelId, { userId: viewer.userId, displayName: viewer.displayName, type, number, amount: amount(field('amount')) }, i);
+        await this.app.roulette.placeBet(wheelId, { userId: viewer.userId, displayName: viewer.displayName, type, number, amount: amount(field('amount'), { available: wallet(), max: this.app.settings.get(viewer.guildId).roulette.maxBet }) }, i);
         return this.settle(i);
       }
       case 'cf': {
         const opponentId = args[0] ?? '';
         const call = (selectValue('call') || 'heads') as CoinSide;
         const user = await this.bot.client.users.fetch(opponentId).catch(() => null);
-        return this.createChallenge(i, viewer, opponentId, user?.bot ?? false, amount(field('amount')), call);
+        return this.createChallenge(i, viewer, opponentId, user?.bot ?? false, amount(field('amount'), { available: wallet(), max: this.app.settings.get(viewer.guildId).coinflip.maxBet }), call);
       }
       case 'admset': {
         this.requireAdmin(viewer);

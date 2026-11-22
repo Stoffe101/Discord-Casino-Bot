@@ -62,6 +62,7 @@ export async function buildScreens(guildId: string, channelId: string): Promise<
   clock.advance(ALL_IN_DEAL_DELAY_MS);
   scheduler.runDue();
   await app.blackjack.idle();
+  await add('bj-dealing', blackjackPanel(app, app.blackjack.peek(t)!, { dealStep: 0 }));
   let round = app.blackjack.peek(t)!.state.round!;
   await app.blackjack.act(t, id(0), 'split', round.seq);
   round = app.blackjack.peek(t)!.state.round!;
@@ -86,6 +87,7 @@ export async function buildScreens(guildId: string, channelId: string): Promise<
   clock.advance(app.settings.get(guildId).roulette.bettingSeconds * 1000 + 100);
   scheduler.runDue();
   await app.roulette.idle();
+  await add('roulette-spinning', roulettePanel(app, app.roulette.peek(wheel.record.id)!, { spinFrame: 0 }));
   await add('roulette-spun', roulettePanel(app, app.roulette.peek(wheel.record.id)!));
 
   // Coinflip challenge, then accepted.
@@ -93,6 +95,7 @@ export async function buildScreens(guildId: string, channelId: string): Promise<
   const names = { challenger: NAMES[0]!, opponent: NAMES[1]! };
   await add('coinflip-pending', coinflipMessage(app, challenge, names));
   const accepted = await app.coinflip.accept(challenge.id, id(1));
+  await add('coinflip-flipping', coinflipMessage(app, accepted.challenge, names, { flipping: true }));
   await add('coinflip-result', coinflipMessage(app, accepted.challenge, names));
 
   await add('lobby', lobbyScreen(app, guildId));
@@ -108,6 +111,7 @@ export async function buildScreens(guildId: string, channelId: string): Promise<
   await add('tables', tablesScreen(app, viewer));
   await add('rules', rulesScreen(app, guildId, t));
   await add('games', gamesHubScreen(app, viewer));
+  await add('slots-spinning', slotsScreen(app, viewer, 25, { stopped: 1 }));
   await add('slots', slotsScreen(app, viewer, 25));
   await add('paytable', paytableScreen(25));
   await add('help', helpScreen(app, viewer, 'start'));

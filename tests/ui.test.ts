@@ -287,7 +287,10 @@ describe('UI payloads', () => {
     const pager = buttons(page0).filter((b) => b.custom_id?.startsWith('nav:lb:richest:all:'));
     expect(pager.find((b) => b.custom_id === 'nav:lb:richest:all:-1')?.disabled).toBe(true);
     expect(buttons(page2).some((b) => b.label === 'Page 3 of 4')).toBe(true);
-    expect(buttons(page2).find((b) => b.custom_id === 'nav:lb:richest:all:3')?.disabled).toBe(true);
+    // Asking for a page past the end clamps to the last page, whose "next" is disabled.
+    const last = leaderboardScreen(app, v, 'richest', 'all', 99);
+    expect(buttons(last).some((b) => b.label === 'Page 4 of 4')).toBe(true);
+    expect(buttons(last).find((b) => b.custom_id === 'nav:lb:richest:all:4')?.disabled).toBe(true);
   });
 
   it('slash command definitions are valid and guild-only', () => {

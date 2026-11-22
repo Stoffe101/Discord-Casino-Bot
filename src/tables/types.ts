@@ -121,7 +121,8 @@ export type RenderHint = { kind: 'update' } | { kind: 'round_settled'; dealerSte
 
 /** Notifications from the table service to whatever presents tables (Discord or tests). */
 export interface TableObserver {
-  tableChanged(tableId: string, hint: RenderHint): void;
+  /** `origin` is the opaque token passed by whoever triggered the change (e.g. a Discord click). */
+  tableChanged(tableId: string, hint: RenderHint, origin?: object): void;
   tableClosed(snapshot: TableSnapshot, reason: string): void;
 }
 

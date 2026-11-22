@@ -54,7 +54,7 @@ export interface WheelSnapshot {
 }
 
 export interface RouletteObserver {
-  wheelChanged(wheelId: string, spun: boolean): void;
+  wheelChanged(wheelId: string, spun: boolean, origin?: object): void;
   wheelClosed(snapshot: WheelSnapshot): void;
 }
 
@@ -175,8 +175,8 @@ export class RouletteService {
     });
   }
 
-  async placeBet(wheelId: string, input: { userId: string; displayName: string; type: RouletteBetType; number?: number; amount: number }): Promise<void> {
-    await this.mutate(wheelId, ({ record, state, now }) => {
+  async placeBet(wheelId: string, input: { userId: string; displayName: string; type: RouletteBetType; number?: number; amount: number }, origin?: object): Promise<void> {
+    await this.mutate(wheelId, origin, ({ record, state, now }) => {
       const limits = this.settings(record.guildId).roulette;
       if (!Number.isSafeInteger(input.amount) || input.amount < limits.minBet || input.amount > limits.maxBet) {
         throw new UserError(`Roulette bets are **${chips(limits.minBet)}–${chips(limits.maxBet)}** chips per spot.`, 'bet_limits');
@@ -209,9 +209,9 @@ export class RouletteService {
     });
   }
 
-  async clearBets(wheelId: string, userId: string): Promise<number> {
+  async clearBets(wheelId: string, userId: string, origin?: object): Promise<number> {
     let refunded = 0;
-    await this.mutate(wheelId, ({ record, state }) => {
+    await this.mutate(wheelId, origin, ({ record, state }) => {
       if (!state.bets.some((b) => b.userId === userId)) throw new UserError('You have no bets on this spin.', 'no_bets');
       state.opSeq++;
       refunded = this.economy.cancelHeld({
@@ -229,7 +229,7 @@ export class RouletteService {
 
   async handleDeadline(wheelId: string, deadline: number): Promise<void> {
     try {
-      await this.mutate(wheelId, (ctx) => {
+      await this.mutate(wheelId, undefined, (ctx) => {
         if (ctx.state.deadline !== deadline) return 'unchanged';
         if (ctx.state.bets.length === 0) {
           ctx.state.deadline = null;
@@ -369,6 +369,7 @@ export class RouletteService {
 
   private async mutate(
     wheelId: string,
+    origin: object | undefined,
     fn: (ctx: { record: WheelRecord; state: RouletteState; now: number }) => 'unchanged' | 'spun' | undefined,
   ): Promise<void> {
     await this.queue.run(wheelId, () => {
@@ -388,7 +389,7 @@ export class RouletteService {
       wheel.record = record;
       wheel.state = draft;
       this.arm(wheelId, draft);
-      this.observer.wheelChanged(wheelId, outcome === 'spun');
+      this.observer.wheelChanged(wheelId, outcome === 'spun', origin);
     });
   }
 

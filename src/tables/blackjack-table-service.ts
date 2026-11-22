@@ -371,8 +371,8 @@ export class BlackjackTableService {
 
   // ───────────────────────────── seats ─────────────────────────────
 
-  async join(tableId: string, userId: string, displayName: string, accessCode?: string): Promise<SeatInfo> {
-    return this.mutate(tableId, ({ record, state, now }) => {
+  async join(tableId: string, userId: string, displayName: string, accessCode?: string, origin?: object): Promise<SeatInfo> {
+    return this.mutate(tableId, origin, ({ record, state, now }) => {
       if (state.seats.some((s) => s.userId === userId)) {
         throw new UserError("You're already seated here.", 'already_here');
       }
@@ -407,8 +407,8 @@ export class BlackjackTableService {
    * Leave the table. Between rounds this is immediate (an open bet is refunded). During a
    * round the player's remaining hands stand and the seat frees up when the round ends.
    */
-  async leave(tableId: string, userId: string): Promise<'left' | 'leaving'> {
-    return this.mutate(tableId, (ctx) => {
+  async leave(tableId: string, userId: string, origin?: object): Promise<'left' | 'leaving'> {
+    return this.mutate(tableId, origin, (ctx) => {
       const { state, now } = ctx;
       const seat = state.seats.find((s) => s.userId === userId);
       if (!seat) throw new UserError("You aren't seated at this table.", 'not_seated');
@@ -428,8 +428,8 @@ export class BlackjackTableService {
     });
   }
 
-  async setSittingOut(tableId: string, userId: string, sittingOut: boolean): Promise<void> {
-    await this.mutate(tableId, (ctx) => {
+  async setSittingOut(tableId: string, userId: string, sittingOut: boolean, origin?: object): Promise<void> {
+    await this.mutate(tableId, origin, (ctx) => {
       const seat = ctx.state.seats.find((s) => s.userId === userId);
       if (!seat) throw new UserError("You aren't seated at this table.", 'not_seated');
       if (seat.sittingOut === sittingOut) return { value: undefined, unchanged: true };
@@ -444,8 +444,8 @@ export class BlackjackTableService {
   }
 
   /** Host removes a player between rounds (or after their current hand). */
-  async kick(tableId: string, hostId: string, targetId: string): Promise<void> {
-    await this.mutate(tableId, (ctx) => {
+  async kick(tableId: string, hostId: string, targetId: string, origin?: object): Promise<void> {
+    await this.mutate(tableId, origin, (ctx) => {
       if (ctx.record.ownerId !== hostId) throw new UserError('Only the table host can do that.', 'not_host');
       if (hostId === targetId) throw new UserError('Use Leave to leave your own table.', 'self_kick');
       const seat = ctx.state.seats.find((s) => s.userId === targetId);
@@ -463,8 +463,8 @@ export class BlackjackTableService {
 
   // ───────────────────────────── betting ─────────────────────────────
 
-  async placeBet(tableId: string, userId: string, amount: number, displayName?: string): Promise<number> {
-    return this.mutate(tableId, (ctx) => {
+  async placeBet(tableId: string, userId: string, amount: number, displayName?: string, origin?: object): Promise<number> {
+    return this.mutate(tableId, origin, (ctx) => {
       const { record, state } = ctx;
       if (state.phase !== 'betting') {
         throw new StaleActionError('Bets are closed for this hand — you can bet again when it finishes.');
@@ -503,8 +503,8 @@ export class BlackjackTableService {
     });
   }
 
-  async clearBet(tableId: string, userId: string): Promise<void> {
-    await this.mutate(tableId, (ctx) => {
+  async clearBet(tableId: string, userId: string, origin?: object): Promise<void> {
+    await this.mutate(tableId, origin, (ctx) => {
       if (ctx.state.phase !== 'betting') throw new StaleActionError('Bets are locked for this hand.');
       if (!ctx.state.bets[userId]) return { value: undefined, unchanged: true };
       this.cancelBet(ctx, userId);
@@ -514,8 +514,8 @@ export class BlackjackTableService {
   }
 
   /** Deal immediately (host only, when at least one bet is in). */
-  async dealNow(tableId: string, userId: string): Promise<void> {
-    await this.mutate(tableId, (ctx) => {
+  async dealNow(tableId: string, userId: string, origin?: object): Promise<void> {
+    await this.mutate(tableId, origin, (ctx) => {
       if (ctx.state.phase !== 'betting') throw new StaleActionError('The cards are already out.');
       if (ctx.record.ownerId !== userId) throw new UserError('Only the table host can deal early.', 'not_host');
       if (Object.keys(ctx.state.bets).length === 0) throw new UserError('Nobody has bet yet.', 'no_bets');
@@ -525,8 +525,8 @@ export class BlackjackTableService {
 
   // ───────────────────────────── play ─────────────────────────────
 
-  async decideInsurance(tableId: string, userId: string, take: boolean): Promise<void> {
-    await this.mutate(tableId, (ctx) => {
+  async decideInsurance(tableId: string, userId: string, take: boolean, origin?: object): Promise<void> {
+    await this.mutate(tableId, origin, (ctx) => {
       const { record, state } = ctx;
       const round = state.round;
       if (state.phase !== 'insurance' || !round) throw new StaleActionError('Insurance is no longer on offer.');
@@ -555,8 +555,8 @@ export class BlackjackTableService {
    * A player decision. `expectedSeq` is the round sequence the button was rendered for —
    * a double-click or an old message carries an outdated sequence and is rejected.
    */
-  async act(tableId: string, userId: string, action: PlayerAction, expectedSeq: number | null): Promise<void> {
-    await this.mutate(tableId, (ctx) => {
+  async act(tableId: string, userId: string, action: PlayerAction, expectedSeq: number | null, origin?: object): Promise<void> {
+    await this.mutate(tableId, origin, (ctx) => {
       const { record, state } = ctx;
       const round = state.round;
       if (state.phase !== 'playing' || !round) throw new StaleActionError('That hand is already over.');
@@ -592,7 +592,7 @@ export class BlackjackTableService {
   /** Called by the scheduler when a deadline passes. Stale deadlines are ignored. */
   async handleDeadline(tableId: string, deadline: number): Promise<void> {
     try {
-      await this.mutate(tableId, (ctx) => {
+      await this.mutate(tableId, undefined, (ctx) => {
         const { state, now } = ctx;
         if (state.deadline !== deadline) return { value: undefined, unchanged: true };
         if (state.phase === 'betting') {
@@ -764,6 +764,7 @@ export class BlackjackTableService {
 
   private async mutate<T>(
     tableId: string,
+    origin: object | undefined,
     fn: (ctx: { record: TableRecord; state: BlackjackTableState; now: number }) => MutationResult<T>,
   ): Promise<T> {
     return this.queue.run(tableId, () => {
@@ -782,7 +783,7 @@ export class BlackjackTableService {
       rt.record = record;
       rt.state = draft;
       this.armTimer(tableId, draft);
-      this.observer.tableChanged(tableId, result.hint ?? { kind: 'update' });
+      this.observer.tableChanged(tableId, result.hint ?? { kind: 'update' }, origin);
       return result.value;
     });
   }

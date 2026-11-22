@@ -30,7 +30,9 @@ async function main(): Promise<void> {
   console.log(`panel renders ${panels.renders} · via click ${panels.viaInteraction} · via REST ${panels.viaRest} · image reused ${panels.reusedImage} · failures ${panels.failures}`);
   console.log(`Discord requests ${report.requests}: ${Object.entries(report.requestsByKind).map(([k, v]) => `${k} ×${v}`).join(' · ')}`);
   console.log(`peak channel writes in any 5 s window: ${report.peakChannelWritesPer5s} (all tables share one channel in test mode)`);
-  console.log(`memory rss ${report.rssMb.before} → ${report.rssMb.after} MB`);
+  const mem = process.memoryUsage();
+  const mb = (n: number) => Math.round(n / 1048576);
+  console.log(`memory rss ${report.rssMb.before} → ${report.rssMb.after} MB · heap used ${mb(mem.heapUsed)} MB · external ${mb(mem.external)} MB · array buffers ${mb(mem.arrayBuffers)} MB`);
   console.log(`ledger ${report.reconcile.length ? `${report.reconcile.length} PROBLEMS` : 'OK'} · chips ${report.conserved ? 'conserved' : 'MISMATCH'} · open escrows ${report.openEscrows} · isolation ${report.tableIsolation ? 'OK' : 'BROKEN'}`);
   console.log(`payload problems ${report.problems.length} · interaction errors ${report.interactionErrors.length}`);
   for (const p of [...report.problems, ...report.interactionErrors].slice(0, 10)) console.log(`  ! ${p}`);

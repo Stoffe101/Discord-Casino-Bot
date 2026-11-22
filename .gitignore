@@ -32,3 +32,4 @@ Thumbs.db
 !.vscode/extensions.json
 .idea/
 .claude/settings.local.json
+*.db.lock

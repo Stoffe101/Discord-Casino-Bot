@@ -21,6 +21,10 @@ while ($true) {
     $code = $LASTEXITCODE
     Add-Content -Path $log -Value "[$((Get-Date).ToString('s'))] bot exited with code $code"
     if ($code -eq 0) { break }               # graceful shutdown (Ctrl+C / SIGTERM)
+    if ($code -eq 2) {                      # configuration problem or another bot already running
+        Write-Host 'The bot refused to start (configuration problem or another instance is running). See logs\runner.log.'
+        break
+    }
     if (((Get-Date) - $started).TotalMinutes -gt 5) { $delay = 5 } else { $delay = [Math]::Min($delay * 2, 300) }
     Start-Sleep -Seconds $delay
 }

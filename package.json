@@ -23,6 +23,7 @@
     "render-preview": "tsx src/scripts/render-preview.ts",
     "test:allowlist": "tsx src/scripts/test-allowlist.ts",
     "live-bench": "tsx src/scripts/live-bench.ts",
+    "reconcile": "tsx src/scripts/reconcile.ts",
     "check": "npm run typecheck && npm run lint && npm test && npm run build"
   },
   "dependencies": {

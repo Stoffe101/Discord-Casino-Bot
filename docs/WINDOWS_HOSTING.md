@@ -19,6 +19,11 @@ npm start
 `scripts/start-casino.ps1` builds nothing; it runs the compiled bot and restarts it if it exits
 unexpectedly (with a short back-off), appending output to `logs/runner.log`.
 
+Exit codes: `0` graceful stop (the runner stops), `1` crash or failed login (the runner restarts),
+`2` configuration problem or **another copy already running against the same database** (the runner
+stops; fix it first). Only one bot can use a database at a time: a second copy started from another
+terminal or by `npm run dev` refuses to start rather than conflicting.
+
 Nothing is registered for you. If you want the bot to start when you log in:
 
 1. Build once: `npm run build`.

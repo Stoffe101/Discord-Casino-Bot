@@ -1,6 +1,7 @@
 import { ConfigError, loadEnvFile, readEnv } from './config/env.js';
 import { Logger } from './core/logger.js';
 import { openDatabase, type Database } from './db/database.js';
+import { InstanceLockError, acquireInstanceLock, type InstanceLock } from './db/instance-lock.js';
 import { CasinoApp } from './app/casino-app.js';
 import { CasinoBot } from './discord/bot.js';
 import { OutboundGuard, allowlistFromEnv } from './discord/outbound-guard.js';
@@ -9,13 +10,14 @@ import { OutboundGuard, allowlistFromEnv } from './discord/outbound-guard.js';
  * Entry point: load configuration, open (and migrate) the database, restore every game,
  * connect to Discord. Shuts down cleanly on Ctrl+C / SIGTERM.
  *
- * Exit codes: 0 = graceful shutdown; 1 = configuration problem, failed login or crash
- * (scripts/start-casino.ps1 restarts on any non-zero code).
+ * Exit codes: 0 = graceful shutdown; 1 = failed login or crash (scripts/start-casino.ps1 restarts);
+ * 2 = configuration problem or another bot already using the database (no restart — fix it first).
  */
 let logger: Logger = new Logger({ level: 'info' });
 let db: Database | undefined;
 let bot: CasinoBot | undefined;
 let app: CasinoApp | undefined;
+let lock: InstanceLock | null = null;
 let shuttingDown = false;
 
 async function shutdown(reason: string, exitCode: number): Promise<void> {
@@ -34,6 +36,7 @@ async function shutdown(reason: string, exitCode: number): Promise<void> {
     logger.error('error during shutdown', { error });
   } finally {
     db?.close();
+    lock?.release();
     logger.info('goodbye');
     process.exit(exitCode);
   }
@@ -50,6 +53,13 @@ async function main(): Promise<void> {
   } catch (error) {
     throw new ConfigError(error instanceof Error ? error.message : String(error));
   }
+  try {
+    lock = acquireInstanceLock(env.databasePath);
+  } catch (error) {
+    if (error instanceof InstanceLockError) throw new ConfigError(error.message);
+    throw error;
+  }
+  process.on('exit', () => lock?.release());
   db = openDatabase(env.databasePath);
   app = new CasinoApp({ db, logger });
   bot = new CasinoBot(app, logger, { guard: allowlist ? new OutboundGuard(allowlist, logger) : null });
@@ -68,7 +78,7 @@ async function main(): Promise<void> {
 main().catch((error: unknown) => {
   if (error instanceof ConfigError) {
     console.error(`\n${error.message}\n`);
-    process.exit(1);
+    process.exit(2);
   }
   const code = (error as { code?: unknown } | null)?.code;
   const hint =
@@ -86,6 +96,7 @@ main().catch((error: unknown) => {
     await app?.shutdown().catch(() => undefined);
     await bot?.client.destroy().catch(() => undefined);
     db?.close();
+    lock?.release();
     setTimeout(() => process.exit(1), 2_000).unref();
   })();
 });

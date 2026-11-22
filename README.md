@@ -31,6 +31,7 @@ cards, felt, chips, wheel, reels — is original vector art; fonts are Cinzel an
 - [Using the casino](#using-the-casino)
 - [Commands](#commands)
 - [Configuration](#configuration)
+- [Test mode (one-channel allowlist)](#test-mode-one-channel-allowlist)
 - [Multiplayer blackjack](#multiplayer-blackjack)
 - [Blackjack house rules](#blackjack-house-rules)
 - [Economy](#economy)
@@ -42,7 +43,7 @@ cards, felt, chips, wheel, reels — is original vector art; fonts are Cinzel an
 
 Further reading: [Discord setup guide](docs/DISCORD_SETUP.md) · [Architecture](docs/ARCHITECTURE.md) ·
 [Adding a game](docs/ADDING_A_GAME.md) · [Windows hosting](docs/WINDOWS_HOSTING.md) ·
-[Feature checklist](docs/FEATURES.md) · [Compliance notes](docs/COMPLIANCE.md)
+[Feature checklist](docs/FEATURES.md) · [Compliance notes](docs/COMPLIANCE.md) · [Testing report](docs/TESTING_REPORT.md)
 
 ## Features
 
@@ -107,7 +108,11 @@ Then, in your server, run **`/casinoadmin setup`** in the channel you want as th
 | `npm run typecheck` / `npm run lint` | Static checks |
 | `npm run check` | typecheck + lint + test + build |
 | `npm run simulate` | Headless multi-table simulation with timings and ledger audit |
+| `npm run simulate:discord` | Multi-table run through the full Discord stack (in-memory Discord) |
 | `npm run render-preview` | Render sample artwork to `render-preview/` |
+| `npm run test:allowlist` | Find your dev server's `#casino` channel for [test mode](#test-mode-one-channel-allowlist) |
+| `npm run live-bench` | Test mode only: validate every screen against the real Discord API in the allowlisted channel |
+| `npm run reconcile` | Read-only ledger check of the database (run while the bot is stopped) |
 
 > npm 11 may print an `allow-scripts` warning for `esbuild` (used by the dev runner). It is safe to
 > ignore; nothing in this project needs install scripts.
@@ -187,6 +192,36 @@ changes needed. Defaults:
 | Tables | Max 6 open tables · threads on · close empty tables after 10 min · close tables without bets after 30 min |
 | Other games | Coinflip 10–1,000, 120 s expiry · Roulette 10–500 per spot, 25 s window · Slots 5–250 |
 
+## Test mode (one-channel allowlist)
+
+For testing against a real server without risk to other channels, test mode restricts **every**
+outgoing Discord action to one text channel:
+
+```powershell
+npm run test:allowlist -- --write   # finds the single #casino channel of DISCORD_DEV_GUILD_ID
+```
+
+This stores `CASINO_TEST_MODE=true`, `CASINO_TEST_GUILD_ID` and `CASINO_TEST_CHANNEL_ID` in `.env`. It refuses
+to pick when there are zero or several matching channels. With test mode on:
+
+- An outbound guard wraps the HTTP layer of the Discord client, so nothing can bypass it:
+  handlers, panel updates, background jobs and scripts all go through it. It allows only:
+  - messages in the allowlisted channel;
+  - answers to interactions that came from that channel;
+  - command registration for that server.
+  
+  Everything else is refused before it reaches the network, and the refusal is logged locally: other channels,
+  threads, DMs, reactions, pins, channel or server settings, global commands, and any payload that
+  could ping someone.
+- Interactions from other channels or threads get no response at all.
+- Threads are not used: table and roulette panels are posted in the allowlisted channel. Panels
+  that already live in a thread are re-posted there on startup.
+- `/casinoadmin setup` only works in the allowlisted channel.
+- `npm run live-bench` shows every screen once through a single bot message, letting Discord's own API validate
+  each payload, then deletes the message (`--keep` / `--cleanup` / `--only name`).
+
+Remove the three lines from `.env` (or set `CASINO_TEST_MODE=false`) to return to normal operation.
+
 ## Multiplayer blackjack
 
 - Every table has its **own** players, dealer, shoe, phase, timers, panel and thread. Tables never
@@ -265,16 +300,31 @@ exactly-once (round id primary key). What happens if the process stops:
 Panels are re-rendered on startup; missing table messages or threads are recreated, and the lobby
 message is edited in place (or re-posted if it was deleted). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-> **Single process only.** The bot is designed for one running instance (one SQLite database). Do
-> not run two copies against the same database or the same Discord application.
+> **Single process only — enforced.** The bot holds a lock file next to the database
+> (`data/casino.db.lock`) and a second copy refuses to start (exit code 2) instead of running two
+> bots against one database. A lock left by a crashed process is taken over automatically.
 
 ## Testing
 
 ```powershell
-npm test            # 160 tests, ~3 s, fully headless
-npm run check       # typecheck + lint + tests + build
-npm run simulate    # e.g. -- --tables 12 --players 5 --rounds 15 --crash
+npm test                  # 239 tests, ~15 s, fully headless (never connects to Discord)
+npm run check             # typecheck + lint + tests + build
+npm run simulate          # engine level, e.g. -- --tables 12 --players 5 --rounds 15 --crash
+npm run simulate:discord  # full Discord stack, e.g. -- --tables 12 --players 5 --rounds 3 --latency 40
 ```
+
+**Full-stack harness.** `tests/harness/` runs the real bot — discord.js client, outbound guard,
+router, panel sync — against an in-memory Discord (`FakeDiscord`). Interactions are injected as raw
+gateway payloads through discord.js itself, and simulated players can only press buttons that are
+visible and enabled on messages they can see. The fake enforces the 3-second acknowledgement
+deadline, one acknowledgement per interaction, ephemeral visibility and modal field rules, and
+rejects invalid payloads (Components V2 limits, duplicate custom ids, `attachment://` references
+that don't resolve). Scenarios cover blackjack end to end (controls per turn, wrong-turn and
+double/stale clicks, split, surrender, naturals, insurance, timeouts, leaving mid-hand, private
+tables, host-only controls), the economy, slots, roulette, coinflip, crash-and-resume on the same
+message, render ordering under latency, deleted panels, Discord 5xx errors, two servers on one bot,
+and 10/2 and 20/4 player/table runs. The harness's validation is a model of Discord's rules, so
+real acceptance is checked separately with `npm run live-bench` (test mode).
 
 The suite covers card values, every rule and payout (including a 3,000-round randomised invariant
 test), shoe exhaustion, ten players on two concurrent tables with simultaneous clicks, double-clicks
@@ -291,14 +341,19 @@ Local measurements (Windows 11, Node 24.13):
 | `simulate -- --tables 2 --players 5 --rounds 20` (10 players) | 40 hands; service actions avg ~2 ms (p95 ~6 ms); panel render incl. image avg ~65 ms |
 | `simulate -- --tables 12 --players 5 --rounds 15 --crash` (60 players, crash + recovery mid-run) | 180 hands settled in 35 s; ledger reconciled; chips conserved; 0 open escrows. With all 12 tables acting at the same instant: actions avg 13 ms (p95 32 ms, includes queueing), panel renders avg 132 ms (p95 233 ms — renders share libuv's default 4-thread pool) |
 
-Table images are ~150–190 KB. Discord network latency comes on top and was not measured —
-**no live Discord session has been run for this release**; see the smoke-test checklist in the PR.
+| `simulate:discord -- --tables 12 --players 5 --rounds 3 --latency 40` (full Discord stack) | 36 hands, 472 interactions, all acknowledged (p95 440 ms with 40 ms simulated latency per request); ledger reconciled; chips conserved |
+| `live-bench` against the real Discord API (33 screens, one message edited) | All accepted; median request 429 ms; edits in one channel are rate-limited by Discord to about 5 per 5 s |
+
+Table images are ~150–190 KB. Real-client behaviour that needs a human (pressing buttons as a
+player, mobile rendering) is listed as unverified in [docs/TESTING_REPORT.md](docs/TESTING_REPORT.md).
 
 ## Troubleshooting
 
 | Symptom | Fix |
 | --- | --- |
 | `Configuration problem: DISCORD_TOKEN is not set` | Copy `.env.example` to `.env` and fill it in |
+| `Another casino bot (process …) is already using ./data/casino.db` | A copy is already running (another terminal, `npm run dev`, or the Windows runner). Stop it first |
+| Nothing happens outside one channel | Test mode is on (`CASINO_TEST_MODE=true`); see [Test mode](#test-mode-one-channel-allowlist) |
 | Slash commands don't appear | Run `npm run register-commands`; set `DISCORD_DEV_GUILD_ID` for instant registration; global commands can take up to an hour |
 | "Missing permissions" on setup | Grant the permissions listed above in the casino channel (check channel overrides) |
 | Tables are posted as channel messages, not threads | The bot lacks Create Public/Private Threads or Send Messages in Threads in that channel |

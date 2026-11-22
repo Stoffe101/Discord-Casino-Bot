@@ -125,7 +125,7 @@ describe('InteractionRouter (headless)', () => {
     clock = new ManualClock(Date.now());
     scheduler = new ManualScheduler(clock);
     app = new CasinoApp({ db, logger: silentLogger, clock, scheduler, rng: seededRng(5) });
-    bot = new CasinoBot(app, silentLogger);
+    bot = new CasinoBot(app, silentLogger, { animations: false }); // routing, not animation, is under test here
   });
 
   afterEach(async () => {

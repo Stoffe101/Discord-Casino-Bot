@@ -23,7 +23,7 @@ const TONES: Record<Badge['tone'], { fill: string; color: string; stroke?: strin
   info: { fill: '#16362b', color: '#d8e6dd', stroke: '#4f7a68' },
 };
 
-function badge(b: Badge, x: number, y: number, size: number, anchor: 'start' | 'middle' | 'end' = 'middle'): string {
+export function badge(b: Badge, x: number, y: number, size: number, anchor: 'start' | 'middle' | 'end' = 'middle'): string {
   const t = TONES[b.tone];
   return pill({ x, y, text: b.text, size, fill: t.fill, color: t.color, stroke: t.stroke, anchor });
 }
@@ -70,6 +70,32 @@ function handsLayout(hands: HandView[], areaW: number): { cardW: number; offset:
   }
 }
 
+export interface CardSpot {
+  x: number;
+  y: number;
+}
+
+/** Results show a large net badge under the hands, so leave more room at the bottom. */
+function handAreaHeight(seat: SeatView, h: number, view: TableView): number {
+  return h - 50 - (view.mode === 'results' && seat.net !== null ? 64 : 40);
+}
+
+/** Where every card of a seat's hands sits (always laid out for the full hand, even mid-animation). */
+export function seatHandLayout(seat: SeatView, x: number, y: number, w: number, h: number, view: TableView) {
+  const { cardW, offset, handW, gap } = handsLayout(seat.hands, w - 28);
+  const cardH = (cardW * CARD_H) / CARD_W;
+  const totalW = handW.reduce((a, b) => a + b, 0) + gap * (seat.hands.length - 1);
+  const areaTop = y + 50;
+  const cy = areaTop + (handAreaHeight(seat, h, view) - cardH) / 2;
+  let hx = x + (w - totalW) / 2;
+  const hands = seat.hands.map((hand, i) => {
+    const spot = { x: hx, y: cy, width: handW[i]!, cards: hand.cards.map((_, c) => ({ x: hx + c * offset, y: cy })) };
+    hx += handW[i]! + gap;
+    return spot;
+  });
+  return { cardW, cardH, hands };
+}
+
 function seatPanel(seat: SeatView, x: number, y: number, w: number, h: number, view: TableView): string {
   const parts: string[] = [];
   const occupied = seat.userId !== null;
@@ -100,31 +126,31 @@ function seatPanel(seat: SeatView, x: number, y: number, w: number, h: number, v
     );
   }
   const areaTop = y + 50;
-  // Results show a large net badge under the hands, so leave more room at the bottom.
-  const areaH = h - 50 - (view.mode === 'results' && seat.net !== null ? 64 : 40);
+  const areaH = handAreaHeight(seat, h, view);
   if (seat.hands.length > 0) {
-    const { cardW, offset, handW, gap } = handsLayout(seat.hands, w - 28);
-    const cardH = (cardW * CARD_H) / CARD_W;
-    const totalW = handW.reduce((a, b) => a + b, 0) + gap * (seat.hands.length - 1);
-    let hx = x + (w - totalW) / 2;
-    const cy = areaTop + (areaH - cardH) / 2;
+    const layout = seatHandLayout(seat, x, y, w, h, view);
     seat.hands.forEach((hand, i) => {
+      const hl = layout.hands[i]!;
+      const shown = hand.visible ?? hand.cards.length;
       if (hand.active && seat.hands.length > 1) {
-        parts.push(`<rect x="${n(hx - 5)}" y="${n(cy - 5)}" width="${n(handW[i]! + 10)}" height="${n(cardH + 10)}" rx="9" fill="none" stroke="#e8c565" stroke-width="2.5"/>`);
+        parts.push(`<rect x="${n(hl.x - 5)}" y="${n(hl.y - 5)}" width="${n(hl.width + 10)}" height="${n(layout.cardH + 10)}" rx="9" fill="none" stroke="#e8c565" stroke-width="2.5"/>`);
       }
-      hand.cards.forEach((card, c) => {
-        if (c === hand.fresh) parts.push(freshGlow(hx + c * offset, cy, cardW, cardH));
-        parts.push(cardFace(card, hx + c * offset, cy, cardW, { dim: hand.dim }));
+      hand.cards.slice(0, shown).forEach((card, c) => {
+        const at = hl.cards[c]!;
+        if (c === hand.fresh) parts.push(freshGlow(at.x, at.y, layout.cardW, layout.cardH));
+        parts.push(cardFace(card, at.x, at.y, layout.cardW, { dim: hand.dim }));
       });
       // The hand total is the number players look for first: keep it large, gold on the hand to act.
-      const badgeY = cy + cardH + 4;
+      // (Hidden while cards of this hand are still in flight.)
+      if (shown < hand.cards.length) return;
+      const badgeY = hl.y + layout.cardH + 4;
       const small = seat.hands.length > 2;
       if (hand.badge) {
-        parts.push(badge(hand.badge, hx + handW[i]! / 2, badgeY + 13, small ? 12 : 15));
+        parts.push(badge(hand.badge, hl.x + hl.width / 2, badgeY + 13, small ? 12 : 15));
       } else if (hand.total) {
         parts.push(
           pill({
-            x: hx + handW[i]! / 2,
+            x: hl.x + hl.width / 2,
             y: badgeY + 13,
             text: hand.total,
             size: small ? 13 : 17,
@@ -134,7 +160,6 @@ function seatPanel(seat: SeatView, x: number, y: number, w: number, h: number, v
           }),
         );
       }
-      hx += handW[i]! + gap;
     });
   } else if (occupied) {
     // Empty card outlines to show the seat is ready for the next deal.
@@ -158,11 +183,38 @@ function seatPanel(seat: SeatView, x: number, y: number, w: number, h: number, v
   return parts.join('');
 }
 
+/** Where the dealer's cards sit, centred for the full hand. */
+export function dealerLayout(count: number): { cardW: number; cardH: number; cards: CardSpot[] } {
+  const cardW = 96;
+  const offset = 46;
+  const totalW = cardW + Math.max(0, count - 1) * offset;
+  const startX = TABLE_W / 2 - totalW / 2;
+  return { cardW, cardH: (cardW * CARD_H) / CARD_W, cards: Array.from({ length: count }, (_, i) => ({ x: startX + i * offset, y: 50 })) };
+}
+
+/** The card shoe (where dealt cards come from) and the dealer's chip tray (where lost bets go). */
+export const SHOE = { x: TABLE_W - 110, y: 36, w: 58 };
+export const TRAY = { x: TABLE_W / 2 - 200, y: 112 };
+
+/** Each seat panel's rectangle, by seat index. */
+export function seatRects(view: TableView): Array<{ x: number; y: number; w: number; h: number }> {
+  const perRow = view.maxSeats <= 3 ? view.maxSeats : view.maxSeats === 4 ? 2 : view.maxSeats <= 6 ? 3 : 4;
+  const rows = Math.ceil(view.maxSeats / perRow);
+  const panelW = (TABLE_W - MARGIN * 2 - GAP * (perRow - 1)) / perRow;
+  const rects: Array<{ x: number; y: number; w: number; h: number }> = [];
+  for (let r = 0; r < rows; r++) {
+    const count = Math.min(perRow, view.maxSeats - r * perRow);
+    const rowW = count * panelW + (count - 1) * GAP;
+    const startX = (TABLE_W - rowW) / 2;
+    for (let i = 0; i < count; i++) rects.push({ x: startX + i * (panelW + GAP), y: DEALER_H + r * (ROW_H + GAP), w: panelW, h: ROW_H });
+  }
+  return rects;
+}
+
 function dealerArea(view: TableView): string {
   const parts: string[] = [];
   const cardW = 96;
   const cardH = (cardW * CARD_H) / CARD_W;
-  const offset = 46;
   const cards = view.dealer.cards;
   const cy = 50;
   parts.push(
@@ -177,12 +229,14 @@ function dealerArea(view: TableView): string {
       `<text x="${TABLE_W / 2}" y="${cy + cardH / 2 + 36}" text-anchor="middle" font-family="Manrope" font-weight="700" font-size="16" fill="rgba(232,217,168,0.8)" letter-spacing="1">${esc(`Bets ${view.minBet.toLocaleString('en-US')} – ${view.maxBet.toLocaleString('en-US')}`)}</text>`,
     );
   } else {
-    const totalW = cardW + (cards.length - 1) * offset;
-    const startX = TABLE_W / 2 - totalW / 2;
-    cards.forEach((card, i) => {
-      if (i === view.dealer.fresh && card) parts.push(freshGlow(startX + i * offset, cy, cardW, cardH));
-      parts.push(card ? cardFace(card, startX + i * offset, cy, cardW) : cardBack(startX + i * offset, cy, cardW, view.cardBackId));
+    const spots = dealerLayout(cards.length);
+    const shown = view.dealer.visible ?? cards.length;
+    cards.slice(0, shown).forEach((card, i) => {
+      const at = spots.cards[i]!;
+      if (i === view.dealer.fresh && card) parts.push(freshGlow(at.x, at.y, cardW, cardH));
+      parts.push(card ? cardFace(card, at.x, at.y, cardW) : cardBack(at.x, at.y, cardW, view.cardBackId));
     });
+    if (shown < cards.length) return parts.join(''); // cards still arriving: no total yet
     const badgeY = cy + cardH + 18;
     if (view.dealer.badge) parts.push(badge(view.dealer.badge, TABLE_W / 2, badgeY + 2, 17));
     else if (view.dealer.total) {
@@ -201,7 +255,8 @@ function shoeDecor(view: TableView): string {
   return parts.join('');
 }
 
-export function renderTableSvg(view: TableView): string {
+/** `overlay` is drawn on top of everything (cards and chips in motion, for animations). */
+export function renderTableSvg(view: TableView, overlay = ''): string {
   const felt = FELTS[view.feltId] ?? FELTS.emerald!;
   const perRow = view.maxSeats <= 3 ? view.maxSeats : view.maxSeats === 4 ? 2 : view.maxSeats <= 6 ? 3 : 4;
   const rows = Math.ceil(view.maxSeats / perRow);
@@ -229,13 +284,11 @@ export function renderTableSvg(view: TableView): string {
   }
   parts.push(shoeDecor(view));
   parts.push(dealerArea(view));
-  const panelW = (TABLE_W - MARGIN * 2 - GAP * (perRow - 1)) / perRow;
-  for (let r = 0; r < rows; r++) {
-    const rowSeats = view.seats.slice(r * perRow, (r + 1) * perRow);
-    const rowW = rowSeats.length * panelW + (rowSeats.length - 1) * GAP;
-    const startX = (TABLE_W - rowW) / 2;
-    const y = DEALER_H + r * (ROW_H + GAP);
-    rowSeats.forEach((seat, i) => parts.push(seatPanel(seat, startX + i * (panelW + GAP), y, panelW, ROW_H, view)));
-  }
+  const rects = seatRects(view);
+  view.seats.forEach((seat, i) => {
+    const r = rects[i];
+    if (r) parts.push(seatPanel(seat, r.x, r.y, r.w, r.h, view));
+  });
+  parts.push(overlay);
   return svgDoc(TABLE_W, height, parts.join(''), defs);
 }

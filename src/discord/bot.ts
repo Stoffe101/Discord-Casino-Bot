@@ -36,6 +36,8 @@ export interface BotTiming {
   dealFrameMs: number;
   /** Delay between roulette spin frames. */
   spinFrameMs: number;
+  /** Multiplier for animated frames' own length (1 = real time; 0 in fast tests). */
+  animationScale: number;
   /** Minimum gap between two edits of the same table/wheel panel (when no click is waiting). */
   tableMinIntervalMs: number;
   wheelMinIntervalMs: number;
@@ -43,7 +45,7 @@ export interface BotTiming {
   lobbyDebounceMs: number;
 }
 
-export const DEFAULT_TIMING: BotTiming = { frameDelayMs: 700, dealFrameMs: 450, spinFrameMs: 650, tableMinIntervalMs: 350, wheelMinIntervalMs: 500, lobbyDebounceMs: 2_500 };
+export const DEFAULT_TIMING: BotTiming = { frameDelayMs: 700, dealFrameMs: 450, spinFrameMs: 650, animationScale: 1, tableMinIntervalMs: 350, wheelMinIntervalMs: 500, lobbyDebounceMs: 2_500 };
 
 /** Which animation frame of a table panel to draw for a given render hint. */
 export function tableFrame(frame: number | undefined, hint: RenderHint | undefined): { revealStep?: number; dealStep?: number } {
@@ -58,6 +60,8 @@ export function tableFrame(frame: number | undefined, hint: RenderHint | undefin
 
 export interface CasinoBotOptions {
   guard?: OutboundGuard | null;
+  /** Animated GIFs for dealing, draws, reveals and spins (default true; fast tests turn it off). */
+  animations?: boolean;
   /** Replace the HTTP layer (tests use an in-memory Discord). */
   makeRequest?: NonNullable<ClientOptions['rest']>['makeRequest'];
   timing?: Partial<BotTiming>;
@@ -106,6 +110,7 @@ export class CasinoBot {
   readonly guard: OutboundGuard | null;
   readonly timing: BotTiming;
   readonly restMetrics = new RestMetrics();
+  readonly animations: boolean;
 
   constructor(
     readonly app: CasinoApp,
@@ -113,6 +118,7 @@ export class CasinoBot {
     options: CasinoBotOptions = {},
   ) {
     this.guard = options.guard ?? null;
+    this.animations = options.animations ?? true;
     const timing = { ...DEFAULT_TIMING, ...options.timing };
     this.timing = timing;
     // Only the Guilds intent: no message content, no member lists, no presences.
@@ -132,16 +138,21 @@ export class CasinoBot {
       render: async (id, frame, hint) => {
         const snap = app.blackjack.peek(id);
         if (!snap) return null;
+        // Animated GIF of the change (cards dealt / drawn / revealed, chips paid); still frames otherwise.
+        if (frame !== undefined && hint && this.animations) return this.checked(await blackjackPanel(app, snap, { animation: hint }));
         return this.checked(await blackjackPanel(app, snap, tableFrame(frame, hint)));
       },
-      // Dealing goes out in passes and the dealer turns cards one at a time (if animation is on).
+      // With animations: one GIF per change, then the final still. Without: still frames for the
+      // deal pass and each dealer card.
       frames: (id, hint) => {
         const snap = app.blackjack.peek(id);
-        if (!snap || !app.settings.get(snap.record.guildId).blackjack.dealerAnimation) return 0;
-        if (hint?.kind === 'dealt') return 1;
-        if (hint?.kind === 'round_settled') return (hint.dealt ? 1 : 0) + Math.min(hint.dealerSteps, 5);
+        if (!snap || !hint || !app.settings.get(snap.record.guildId).blackjack.dealerAnimation) return 0;
+        if (this.animations) return hint.kind === 'dealt' || hint.kind === 'drawn' || hint.kind === 'round_settled' ? 1 : 0;
+        if (hint.kind === 'dealt') return 1;
+        if (hint.kind === 'round_settled') return (hint.dealt ? 1 : 0) + Math.min(hint.dealerSteps, 5);
         return 0;
       },
+      holdScale: timing.animationScale,
       frameDelayMs: (hint) => (hint?.kind === 'dealt' ? timing.dealFrameMs : timing.frameDelayMs),
       minIntervalMs: timing.tableMinIntervalMs,
       onMissing: (id) => this.recreateTablePanel(id),
@@ -156,10 +167,13 @@ export class CasinoBot {
       },
       render: async (id, frame) => {
         const w = app.roulette.peek(id);
-        return w ? this.checked(await roulettePanel(app, w, frame === undefined ? {} : { spinFrame: frame })) : null;
+        if (!w) return null;
+        if (frame === undefined) return this.checked(await roulettePanel(app, w));
+        return this.checked(await roulettePanel(app, w, this.animations ? { animate: true } : { spinFrame: frame }));
       },
-      // A spin shows the ball rolling, then slowing, before the result lands.
-      frames: (_id, spun) => (spun ? 2 : 0),
+      // A spin plays the wheel turning and the ball dropping (one GIF), or two stills without animations.
+      frames: (_id, spun) => (spun ? (this.animations ? 1 : 2) : 0),
+      holdScale: timing.animationScale,
       frameDelayMs: timing.spinFrameMs,
       minIntervalMs: timing.wheelMinIntervalMs,
       onMissing: (id) => this.recreateWheelPanel(id),
@@ -510,7 +524,7 @@ export class CasinoBot {
     }
   }
 
-  async coinflipScreen(challengeId: string, options: { flipping?: boolean } = {}): Promise<Screen | null> {
+  async coinflipScreen(challengeId: string, options: { flipping?: boolean; animate?: boolean } = {}): Promise<Screen | null> {
     const c = this.app.coinflip.get(challengeId);
     if (!c) return null;
     const names = {

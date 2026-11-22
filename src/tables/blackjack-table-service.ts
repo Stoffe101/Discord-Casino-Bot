@@ -961,8 +961,12 @@ export class BlackjackTableService {
       if (!seat?.leaving) break;
       round = standAllHands(round, seat.userId, 'leaving');
     }
-    this.logEvents(state, round.events.slice(previousEvents), now);
+    const newEvents = round.events.slice(previousEvents);
+    this.logEvents(state, newEvents, now);
     state.round = round;
+    // The card a player just drew, so the presenter can deal it in.
+    const draw = fromDeal ? undefined : [...newEvents].reverse().find((e) => e.t === 'hit' || e.t === 'double' || e.t === 'bust');
+    const lastDraw = draw && 'userId' in draw && 'hand' in draw ? { userId: draw.userId, hand: draw.hand } : undefined;
     const settings = this.settings(ctx.record.guildId).blackjack;
     if (round.phase === 'insurance') {
       state.phase = 'insurance';
@@ -972,7 +976,7 @@ export class BlackjackTableService {
     if (round.phase === 'playing') {
       state.phase = 'playing';
       state.deadline = now + settings.turnSeconds * 1000;
-      return { kind: 'update' };
+      return lastDraw ? { kind: 'drawn', ...lastDraw } : { kind: 'update' };
     }
     // Dealer's turn and settlement happen atomically with the action that finished the round.
     const before = round.dealer.length;
@@ -980,7 +984,7 @@ export class BlackjackTableService {
     this.logEvents(state, finished.events.slice(round.events.length), now);
     const dealerSteps = 1 + Math.max(0, finished.dealer.length - before);
     this.settle(ctx, finished);
-    return { kind: 'round_settled', dealerSteps };
+    return { kind: 'round_settled', dealerSteps, ...(lastDraw ? { lastDraw } : {}) };
   }
 
   private settle(ctx: { record: TableRecord; state: BlackjackTableState; now: number }, finished: RoundState): void {

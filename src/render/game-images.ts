@@ -46,7 +46,7 @@ const POCKET_FILL = { red: '#b3263a', black: '#16181b', green: '#13784f' } as co
  * `spin` draws an in-motion frame instead: the wheel short of its final position and the ball still
  * running round the rim (frame 0 = just launched, 1 = slowing down), with no result shown yet.
  */
-export function rouletteSvg(options: { result: number | null; history: number[]; spinNumber: number; spin?: { frame: number; wheelAngle: number; ballAngle: number } }): string {
+export function rouletteSvg(options: { result: number | null; history: number[]; spinNumber: number; spin?: { frame: number; wheelAngle: number; ballAngle: number; ballRadius?: number; trail?: boolean } }): string {
   const W = 900;
   const H = 420;
   const cx = 220;
@@ -90,9 +90,10 @@ export function rouletteSvg(options: { result: number | null; history: number[];
   if (spinning) {
     // The ball runs on the outer track, ahead of the pointer, with a short motion trail.
     const ballAngle = options.spin!.ballAngle - 90;
-    for (let t = 3; t >= 0; t--) {
-      const a = ((ballAngle - t * 7) * Math.PI) / 180;
-      parts.push(`<circle cx="${n(cx + (R + 6) * Math.cos(a))}" cy="${n(cy + (R + 6) * Math.sin(a))}" r="${9 - t * 1.5}" fill="#fdfcf8" opacity="${t === 0 ? 1 : 0.18 * (4 - t)}"/>`);
+    const radius = options.spin!.ballRadius ?? R + 6;
+    for (let t = options.spin!.trail === false ? 0 : 3; t >= 0; t--) {
+      const a = ((ballAngle + t * 7) * Math.PI) / 180;
+      parts.push(`<circle cx="${n(cx + radius * Math.cos(a))}" cy="${n(cy + radius * Math.sin(a))}" r="${9 - t * 1.5}" fill="#fdfcf8" opacity="${t === 0 ? 1 : 0.18 * (4 - t)}"/>`);
     }
   } else if (options.result !== null) parts.push(`<circle cx="${cx}" cy="${cy - R + 40}" r="9" fill="#fdfcf8" stroke="#9aa0a6" stroke-width="1"/>`);
 
@@ -188,7 +189,7 @@ const REEL_BLUR: SlotSymbol[] = ['cherry', 'bell', 'seven', 'lemon', 'gem', 'clo
  * The slot machine. `stopped` (0–3) draws an in-motion frame where only the first reels have
  * stopped; the others are a blur. `paying` marks middle-row positions that pay (glow on a win).
  */
-export function slotsSvg(options: { rows: SlotSymbol[][] | null; win: boolean; label: string; bet: number; payout: number; stopped?: number; paying?: number[] }): string {
+export function slotsSvg(options: { rows: SlotSymbol[][] | null; win: boolean; label: string; bet: number; payout: number; stopped?: number; paying?: number[]; phase?: number; bounce?: number[] }): string {
   const stopped = options.stopped ?? 3;
   const W = 720;
   const H = 400;
@@ -203,9 +204,11 @@ export function slotsSvg(options: { rows: SlotSymbol[][] | null; win: boolean; l
     if (options.rows && r >= stopped) {
       // Still spinning: stretched, faded symbols between rows plus speed lines.
       parts.push(`<g clip-path="url(#reelclip${r})">`);
-      for (let k = 0; k < 4; k++) {
-        const symbol = REEL_BLUR[(r * 3 + k + stopped) % REEL_BLUR.length]!;
-        const cy = 64 + k * 84;
+      // `phase` scrolls the strip (animation frames); each reel runs slightly out of step.
+      const scroll = (options.phase ?? 0) + r * 29;
+      for (let k = -1; k < 4; k++) {
+        const symbol = REEL_BLUR[(r * 3 + k + 7 + stopped + Math.floor(scroll / 84)) % REEL_BLUR.length]!;
+        const cy = 64 + k * 84 + (scroll % 84);
         parts.push(`<g opacity="0.32" transform="translate(0 ${n(cy)}) scale(1 1.35) translate(0 ${n(-cy)})">${slotSymbol(symbol, x + reelW / 2, cy, 70)}</g>`);
       }
       for (let k = 0; k < 5; k++) parts.push(`<rect x="${n(x + 18 + k * 30)}" y="70" width="2" height="${reelH - 12}" fill="#8a6420" opacity="0.12"/>`);
@@ -217,7 +220,7 @@ export function slotsSvg(options: { rows: SlotSymbol[][] | null; win: boolean; l
     }
     for (let row = 0; row < 3; row++) {
       const symbol = options.rows?.[row]?.[r];
-      const cy = 64 + 42 + row * 84;
+      const cy = 64 + 42 + row * 84 + (options.bounce?.[r] ?? 0);
       if (symbol) {
         const g = slotSymbol(symbol, x + reelW / 2, cy, 70);
         parts.push(row === 1 ? g : `<g opacity="0.4">${g}</g>`);
@@ -250,7 +253,7 @@ function row1Pays(paying: number[] | undefined, reel: number): boolean {
 
 // ───────────────────────────── coin ─────────────────────────────
 
-export function coinSvg(side: 'heads' | 'tails' | null | 'flip'): string {
+export function coinSvg(side: 'heads' | 'tails' | null | 'flip', motion: { lift?: number; squash?: number; scale?: number } = {}): string {
   const W = 520;
   const H = 300;
   const cx = 260;
@@ -273,10 +276,12 @@ export function coinSvg(side: 'heads' | 'tails' | null | 'flip'): string {
         : '<text x="0" y="18" text-anchor="middle" font-family="Cinzel" font-weight="900" font-size="48" fill="#6b4a14">?</text>';
   const body =
     `<rect width="${W}" height="${H}" fill="url(#cfelt)"/>` +
-    `<ellipse cx="${cx}" cy="${cy + 112}" rx="90" ry="12" fill="#000" opacity="0.35"/>` +
+    `<ellipse cx="${cx}" cy="${cy + 112}" rx="${n(90 * (1 - (motion.lift ?? 0) / 60))}" ry="12" fill="#000" opacity="${n(0.35 - (motion.lift ?? 0) / 120)}"/>` +
+    // In the air the coin rises (`lift`) and turns (`squash` = how much of the face shows).
+    `<g transform="translate(0 ${n(-(motion.lift ?? 0))}) translate(${cx} ${cy}) scale(${n(motion.scale ?? 1)} ${n((motion.squash ?? 1) * (motion.scale ?? 1))}) translate(${-cx} ${-cy})">` +
     `<circle cx="${cx}" cy="${cy}" r="112" fill="url(#gold)" stroke="#7a5a1c" stroke-width="4"/>` +
     `<circle cx="${cx}" cy="${cy}" r="96" fill="none" stroke="#7a5a1c" stroke-width="2" stroke-dasharray="4 5"/>` +
-    `<g transform="translate(${cx} ${cy})">${face}</g>`;
+    `<g transform="translate(${cx} ${cy})">${face}</g></g>`;
   const defs =
     cardDefs() +
     '<radialGradient id="cfelt" cx="50%" cy="45%" r="75%"><stop offset="0" stop-color="#17704f"/><stop offset="1" stop-color="#05261a"/></radialGradient>';
@@ -301,4 +306,72 @@ export function stylePreviewSvg(feltId: string, cardBackId: string): string {
     cardDefs() +
     `<radialGradient id="pfelt" cx="50%" cy="35%" r="80%"><stop offset="0" stop-color="${felt.inner}"/><stop offset="1" stop-color="${felt.outer}"/></radialGradient>`;
   return svgDoc(W, H, body, defs);
+}
+
+// ───────────────────────────── animations (GIF frames) ─────────────────────────────
+
+const easeOut = (t: number) => 1 - (1 - t) ** 3;
+
+/**
+ * A full roulette spin: the wheel turns clockwise and slows, the ball runs the other way round the
+ * rim, spirals in and drops into the winning pocket under the pointer; the last frame is the result.
+ */
+export function rouletteSpinFrames(options: { result: number; history: number[]; spinNumber: number; frames?: number; frameMs?: number }): Array<{ svg: string; delayMs: number }> {
+  const count = options.frames ?? 24;
+  const frameMs = options.frameMs ?? 60;
+  const step = 360 / WHEEL_ORDER.length;
+  const final = -WHEEL_ORDER.indexOf(options.result) * step;
+  const out: Array<{ svg: string; delayMs: number }> = [];
+  for (let f = 0; f < count; f++) {
+    const t = f / count;
+    const e = easeOut(t);
+    const wheelAngle = final - 540 * (1 - e);
+    const ballAngle = 1080 * (1 - e); // counter-clockwise relative to the pointer, ending at the top
+    // The ball rides the rim, then spirals into the pocket ring for the last quarter.
+    const drop = Math.max(0, (t - 0.72) / 0.28);
+    const ballRadius = 186 - 46 * easeOut(drop);
+    out.push({
+      svg: rouletteSvg({ result: null, history: options.history, spinNumber: options.spinNumber, spin: { frame: t < 0.5 ? 0 : 1, wheelAngle, ballAngle, ballRadius, trail: t < 0.8 } }),
+      delayMs: frameMs + (t > 0.8 ? 25 : 0),
+    });
+  }
+  out.push({ svg: rouletteSvg({ result: options.result, history: options.history, spinNumber: options.spinNumber }), delayMs: 900 });
+  return out;
+}
+
+/**
+ * The slot reels in motion: each reel scrolls, then stops on its real symbols with a small bounce,
+ * left to right. The last frame is the settled result (with the win highlight).
+ */
+export function slotsSpinFrames(base: Parameters<typeof slotsSvg>[0], options: { frames?: number; frameMs?: number } = {}): Array<{ svg: string; delayMs: number }> {
+  const count = options.frames ?? 20;
+  const frameMs = options.frameMs ?? 55;
+  const stops = [Math.round(count * 0.45), Math.round(count * 0.68), count - 2];
+  const out: Array<{ svg: string; delayMs: number }> = [];
+  for (let f = 0; f < count; f++) {
+    const stopped = stops.filter((s) => f >= s).length;
+    const bounce = stops.map((s) => (f === s ? 10 : f === s + 1 ? -4 : 0));
+    out.push({ svg: slotsSvg({ ...base, win: false, stopped, paying: [], phase: f * 31, bounce }), delayMs: frameMs });
+  }
+  out.push({ svg: slotsSvg(base), delayMs: 900 });
+  return out;
+}
+
+/** A coin tossed up, tumbling, and landing on ``side``. */
+export function coinTossFrames(side: 'heads' | 'tails', options: { frames?: number; frameMs?: number } = {}): Array<{ svg: string; delayMs: number }> {
+  const count = options.frames ?? 16;
+  const frameMs = options.frameMs ?? 55;
+  const out: Array<{ svg: string; delayMs: number }> = [];
+  for (let f = 0; f < count; f++) {
+    const t = f / count;
+    // Tossed towards the viewer: it rises a little and grows, so it never leaves the picture.
+    const lift = 18 * Math.sin(Math.PI * t);
+    const scale = 1 + 0.09 * Math.sin(Math.PI * t);
+    const theta = t * 5 * Math.PI; // two and a half turns: lands showing the final side
+    const sy = Math.abs(Math.cos(theta));
+    const showing = Math.cos(theta) >= 0 ? side : side === 'heads' ? 'tails' : 'heads';
+    out.push({ svg: coinSvg(showing, { lift, scale, squash: Math.max(0.06, sy) }), delayMs: frameMs });
+  }
+  out.push({ svg: coinSvg(side), delayMs: 900 });
+  return out;
 }

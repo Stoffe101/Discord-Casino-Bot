@@ -21,6 +21,8 @@ export interface HarnessOptions {
   allowThreads?: boolean;
   /** 'real' keeps the bot's production animation timings (recordings); default 'instant'. */
   timing?: 'real' | 'instant';
+  /** Animated GIFs (default: on with real timing, off for instant tests). */
+  animations?: boolean;
   /** Database file (default in-memory); pass the same path to simulate a restart. */
   dbPath?: string;
   seed?: number;
@@ -63,8 +65,9 @@ export class CasinoHarness {
     this.guard = options.guard === false ? null : new OutboundGuard({ guildId: this.guildId, channelId: this.casino, applicationId: this.fd.appId, allowThreads: options.allowThreads ?? false }, logger);
     this.bot = new CasinoBot(this.app, logger, {
       guard: this.guard,
+      animations: options.animations ?? options.timing === 'real',
       makeRequest: this.fd.makeRequest as never,
-      ...(options.timing === 'real' ? {} : { timing: { frameDelayMs: 0, dealFrameMs: 0, spinFrameMs: 0, tableMinIntervalMs: 0, wheelMinIntervalMs: 0, lobbyDebounceMs: 0 } }),
+      ...(options.timing === 'real' ? {} : { timing: { frameDelayMs: 0, dealFrameMs: 0, spinFrameMs: 0, animationScale: 0, tableMinIntervalMs: 0, wheelMinIntervalMs: 0, lobbyDebounceMs: 0 } }),
     });
     this.fd.attach(this.bot.client);
   }

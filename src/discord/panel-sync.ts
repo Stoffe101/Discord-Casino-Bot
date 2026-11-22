@@ -24,6 +24,8 @@ export interface PanelSyncOptions<Hint> {
   frames?(key: string, hint: Hint | undefined): number;
   /** Pause after each animation frame (may depend on what is being animated). */
   frameDelayMs?: number | ((hint: Hint | undefined) => number);
+  /** Multiplier for a frame's own `holdMs` (animated GIFs); 0 in fast tests. */
+  holdScale?: number;
   /** Minimum time between two edits of the same message. */
   minIntervalMs?: number;
   /** Called when the panel message or its channel no longer exists. */
@@ -99,9 +101,11 @@ export class PanelSync<Hint = unknown> {
           // Pace by cadence: the time Discord took to show this frame counts towards its slot, so
           // a slow connection doesn't stretch the animation (a short minimum hold keeps it readable).
           const shown = Date.now();
-          await this.renderAndSend(key, slot, frame, carriers, job.hint);
+          const hold = await this.renderAndSend(key, slot, frame, carriers, job.hint);
           carriers = [];
-          await sleep(Math.max(delay > 0 ? MIN_FRAME_HOLD_MS : 0, delay - (Date.now() - shown)));
+          // An animated frame stays up for its own length; a still frame for the cadence.
+          const target = hold !== undefined ? hold * (this.options.holdScale ?? 1) : delay;
+          await sleep(Math.max(target > 0 ? MIN_FRAME_HOLD_MS : 0, target - (Date.now() - shown)));
         }
         await this.renderAndSend(key, slot, undefined, carriers, job.hint);
       }
@@ -113,7 +117,8 @@ export class PanelSync<Hint = unknown> {
     }
   }
 
-  private async renderAndSend(key: string, slot: Slot<Hint>, frame: number | undefined, carriers: Carrier[], hint?: Hint): Promise<void> {
+  /** Returns the rendered frame's own hold time (animated frames), if any. */
+  private async renderAndSend(key: string, slot: Slot<Hint>, frame: number | undefined, carriers: Carrier[], hint?: Hint): Promise<number | undefined> {
     const spacing = (this.options.minIntervalMs ?? 300) - (Date.now() - slot.lastSentAt);
     if (spacing > 0 && carriers.length === 0 && frame === undefined) await sleep(spacing);
     let screen: Screen | null = null;
@@ -127,7 +132,7 @@ export class PanelSync<Hint = unknown> {
     for (const c of carriers) {
       if (c !== chosen && !c.deferred && !c.replied) await c.deferUpdate().catch(() => undefined);
     }
-    if (!screen) return;
+    if (!screen) return undefined;
     const file = primaryFileName(screen);
     const reuse = file !== null && file === slot.lastFile;
     if (reuse) this.stats.reusedImage++;
@@ -138,7 +143,7 @@ export class PanelSync<Hint = unknown> {
         this.stats.viaInteraction++;
         slot.lastFile = file;
         slot.lastSentAt = Date.now();
-        return;
+        return screen.holdMs;
       } catch (error) {
         const code = discordErrorCode(error);
         if (code !== DISCORD_ERRORS.unknownInteraction && code !== DISCORD_ERRORS.alreadyAcknowledged) {
@@ -147,6 +152,7 @@ export class PanelSync<Hint = unknown> {
       }
     }
     await this.editViaRest(key, slot, screen, reuse, file);
+    return screen.holdMs;
   }
 
   private async editViaRest(key: string, slot: Slot<Hint>, screen: Screen, reuse: boolean, file: string | null): Promise<void> {

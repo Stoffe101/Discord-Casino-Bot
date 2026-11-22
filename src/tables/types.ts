@@ -122,7 +122,14 @@ export interface TableSnapshot {
  * passes); 'round_settled' = the dealer played and the hand settled (`dealt` if that happened at
  * the deal itself, e.g. a dealer blackjack).
  */
-export type RenderHint = { kind: 'update' } | { kind: 'dealt' } | { kind: 'round_settled'; dealerSteps: number; dealt?: boolean } | { kind: 'restored' };
+export type RenderHint =
+  | { kind: 'update' }
+  | { kind: 'dealt' }
+  /** A player just drew a card (hit, double or bust) and play goes on. */
+  | { kind: 'drawn'; userId: string; hand: number }
+  /** `lastDraw`: the card a player drew in the action that ended the round, if any. */
+  | { kind: 'round_settled'; dealerSteps: number; dealt?: boolean; lastDraw?: { userId: string; hand: number } }
+  | { kind: 'restored' };
 
 /** Notifications from the table service to whatever presents tables (Discord or tests). */
 export interface TableObserver {

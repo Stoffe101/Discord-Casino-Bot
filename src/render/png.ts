@@ -23,7 +23,7 @@ function findFontDir(): string | null {
 
 let cachedOptions: ResvgRenderOptions | null = null;
 
-function renderOptions(): ResvgRenderOptions {
+export function renderOptions(): ResvgRenderOptions {
   if (cachedOptions) return cachedOptions;
   const dir = findFontDir();
   const fontFiles = dir ? readdirSync(dir).filter((f) => f.endsWith('.ttf')).map((f) => join(dir, f)) : [];

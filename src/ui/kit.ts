@@ -36,6 +36,8 @@ export interface FileAttachment {
 export interface Screen {
   components: APIMessageTopLevelComponent[];
   files?: FileAttachment[];
+  /** Animation frames: how long to keep this frame up before showing the next (ms). */
+  holdMs?: number;
 }
 
 export type ButtonTone = 'primary' | 'secondary' | 'success' | 'danger';

@@ -1,11 +1,14 @@
 import type { CasinoApp } from '../../app/casino-app.js';
 import { chips, escapeMarkdown, discordTime, plural } from '../../core/format.js';
 import { cardLabel } from '../../games/cards.js';
-import { describeRules, describeTotal, handValue, isNaturalCards, type BlackjackRules } from '../../games/blackjack/engine.js';
+import { currentTurnUserId, describeRules, describeTotal, handValue, isNaturalCards, type BlackjackRules } from '../../games/blackjack/engine.js';
 import { renderTableSvg } from '../../render/table-image.js';
 import { rulesFromSettings } from '../../tables/blackjack-table-service.js';
 import { buildTableView, describeTableForAlt } from '../../tables/table-view.js';
-import type { LogEntry, TableSnapshot } from '../../tables/types.js';
+import type { LogEntry, RenderHint, TableSnapshot } from '../../tables/types.js';
+import { tableAnimation } from './table-animation.js';
+import { myHandSvg } from '../../render/hand-image.js';
+import { basicStrategy } from '../../games/blackjack/strategy.js';
 import { cid } from '../custom-id.js';
 import {
   button,
@@ -174,13 +177,23 @@ function seatSummary(state: TableSnapshot['state'], round: NonNullable<TableSnap
   });
 }
 
-export async function blackjackPanel(app: CasinoApp, snapshot: Readonly<TableSnapshot>, options: { revealStep?: number; dealStep?: number } = {}): Promise<Screen> {
+export async function blackjackPanel(
+  app: CasinoApp,
+  snapshot: Readonly<TableSnapshot>,
+  options: { revealStep?: number; dealStep?: number; animation?: RenderHint } = {},
+): Promise<Screen> {
   const { record, state } = snapshot;
   const rules = tableRules(app, snapshot);
   const view = buildTableView(snapshot, rules, options);
-  const svg = renderTableSvg(view);
-  const { key, png } = await app.images.render(svg, 800);
-  const fileName = `table-${key}.png`;
+  // An animated frame carries a GIF (cards in motion); every other frame is a sharp static PNG.
+  const anim = options.animation ? await tableAnimation(app, snapshot, options.animation) : null;
+  const image = anim ? anim.file : await (async () => {
+    const { key, png } = await app.images.render(renderTableSvg(view), 800);
+    return { name: `table-${key}.png`, data: png };
+  })();
+  const fileName = image.name;
+  // Alt text never runs ahead of an animation (screen readers would hear the result first).
+  const alt = anim?.mode === 'deal' ? 'Cards are being dealt' : anim?.mode === 'reveal' ? 'The dealer is playing' : describeTableForAlt(view);
   const host = state.seats.find((s) => s.userId === record.ownerId)?.displayName;
   const header =
     `## ♠ ${escapeMarkdown(record.name)}${record.isPrivate ? ' 🔒' : ''}\n` +
@@ -188,14 +201,17 @@ export async function blackjackPanel(app: CasinoApp, snapshot: Readonly<TableSna
   const tableId = record.id;
   const parts: ReturnType<typeof text>[] = [];
   const rows: ReturnType<typeof row>[] = [];
-  const dealing = options.dealStep !== undefined;
-  const revealing = options.revealStep !== undefined;
+  const dealing = options.dealStep !== undefined || anim?.mode === 'deal';
+  const revealing = options.revealStep !== undefined || anim?.mode === 'reveal';
   // Animation frames show no controls and no activity log (the log already knows the outcome).
   const animating = dealing || revealing;
 
   if (dealing) {
     const players = view.seats.filter((s) => s.hands.length).map((s) => escapeMarkdown(s.name));
     parts.push(text(`### 🃏 Dealing hand ${view.roundNumber}\n-# Cards are going out to ${players.join(', ') || 'the table'}…`));
+  } else if (revealing && state.lastResult && options.revealStep === undefined) {
+    // The animated reveal: the outcome stays out of the text until the cards have landed.
+    parts.push(text(`### Dealer's turn\nThe dealer turns over the hole card…`));
   } else if (revealing && state.lastResult) {
     const shown = state.lastResult.dealerCards.slice(0, 2 + options.revealStep!);
     const step = options.revealStep!;
@@ -318,11 +334,12 @@ ${seatSummary(state, round, seat.userId).join('\n')}`));
   const full = state.seats.length >= record.config.maxSeats;
   const accent = state.phase === 'playing' && !dealing ? COLORS.gold : state.lastResult && !animating && state.phase === 'betting' ? COLORS.deepEmerald : COLORS.emerald;
   return {
-    files: [{ name: fileName, data: png, description: describeTableForAlt(view) }],
+    files: [{ name: fileName, data: image.data, description: alt }],
+    ...(anim ? { holdMs: anim.holdMs } : {}),
     components: [
       container(accent, [
         text(header),
-        gallery([{ url: `attachment://${fileName}`, description: describeTableForAlt(view) }]),
+        gallery([{ url: `attachment://${fileName}`, description: alt }]),
         ...parts,
         log.length ? separator() : null,
         log.length ? text(log.join('\n')) : null,
@@ -330,7 +347,7 @@ ${seatSummary(state, round, seat.userId).join('\n')}`));
       ]),
       row(
         button({ id: cid('bj', 'join', tableId), label: full ? 'Table full' : 'Take a seat', emoji: ICONS.tables, tone: 'success', disabled: full }),
-        button({ id: cid('bj', 'seat', tableId), label: 'My seat' }),
+        button({ id: cid('bj', 'seat', tableId), label: state.phase === 'betting' ? 'My seat' : 'My hand' }),
         button({ id: cid('bj', 'leave', tableId), label: 'Leave' }),
         button({ id: cid('bj', 'rules', tableId), label: 'Rules', emoji: ICONS.help }),
         button({ id: cid('bj', 'home', tableId), label: 'Casino', emoji: ICONS.home }),
@@ -357,6 +374,87 @@ export function closedTablePanel(name: string, reason: string): Screen {
 }
 
 // ───────────────────────────── personal seat panel ─────────────────────────────
+
+/**
+ * "My hand": the player's private view of their own hand during a round — a close-up image, their
+ * total, whose turn it is, a basic-strategy tip and what each move would do — with private action
+ * buttons (they work exactly like the table's). Seat controls follow underneath.
+ */
+export async function myHandScreen(app: CasinoApp, viewer: Viewer, tableId: string): Promise<Screen> {
+  const seatScreen = mySeatScreen(app, viewer, tableId);
+  const snap = app.blackjack.peek(tableId);
+  const round = snap?.state.round;
+  const mine = round?.seats.find((s) => s.userId === viewer.userId);
+  if (!snap || !round || !mine) return seatScreen;
+  const { record, state } = snap;
+  const rules = tableRules(app, snap);
+  const view = buildTableView(snap, rules);
+  const seatView = view.seats.find((s) => s.userId === viewer.userId);
+  const { key, png } = await app.images.render(
+    myHandSvg({
+      feltId: record.config.feltId,
+      cardBackId: record.config.cardBackId,
+      dealer: view.dealer.cards,
+      dealerTotal: view.dealer.total,
+      hands: (seatView?.hands ?? []).map((h) => ({ cards: h.cards, total: h.total, active: h.active, badge: h.badge })),
+    }),
+    760,
+  );
+  const file = `hand-${key}.png`;
+  const up = round.dealer[0]!;
+  const turnUser = state.phase === 'playing' ? currentTurnUserId(round) : null;
+  const myTurn = turnUser === viewer.userId;
+  const turnHand = myTurn ? round.turn!.hand : -1;
+  const handLines = mine.hands.map((h, i) => {
+    const marker = i === turnHand ? '▸ ' : '';
+    const label = mine.hands.length > 1 ? `**Hand ${i + 1}** ` : '';
+    const { total } = handValue(h.cards);
+    const done = h.surrendered ? ' · surrendered' : total > 21 ? ' · bust' : h.done && i !== turnHand ? ' · done' : '';
+    return `${marker}${label}${h.cards.map(cardLabel).join(' ')} → **${describeTotal(h.cards, h.fromSplit)}** · bet ${chips(h.bet)}${h.doubled ? ' (doubled)' : ''}${done}`;
+  });
+  const lines = [`## ${ICONS.blackjack} Your hand · ${escapeMarkdown(record.name)}`, ...handLines, `-# Dealer shows ${cardLabel(up)}`];
+  const rows: ReturnType<typeof row>[] = [];
+  if (state.phase === 'insurance' && mine.insurance.decision === 'pending') {
+    lines.push(`### Insurance?\nIt costs **${chips(Math.floor(mine.hands[0]!.bet / 2))}** and pays 2:1 if the dealer has blackjack.\n-# Basic strategy: decline insurance.`);
+    rows.push(row(button({ id: cid('bj', 'ins', tableId, 1), label: 'Take insurance', tone: 'primary' }), button({ id: cid('bj', 'ins', tableId, 0), label: 'No insurance' })));
+  } else if (myTurn) {
+    const hand = mine.hands[turnHand]!;
+    const opts = app.blackjack.playerOptions(tableId, viewer.userId);
+    const legal = { double: !!opts?.double && !!opts.canAffordDouble, split: !!opts?.split && !!opts.canAffordSplit, surrender: !!opts?.surrender };
+    const tip = basicStrategy(hand.cards, up, legal, rules.dealerHitsSoft17);
+    const total = describeTotal(hand.cards, hand.fromSplit);
+    const explain = [
+      opts?.hit ? '**Hit** — take another card' : null,
+      opts?.stand ? `**Stand** — keep ${total}` : null,
+      legal.double ? `**Double** — add ${chips(hand.bet)}, take exactly one more card` : null,
+      legal.split ? `**Split** — two hands, another ${chips(hand.bet)} on the second` : null,
+      legal.surrender ? `**Surrender** — give up and get ${chips(Math.floor(hand.bet / 2))} back` : null,
+    ].filter(Boolean);
+    lines.push(`### ▸ Your turn · decide ${discordTime(state.deadline ?? app.clock.now())}`, `💡 Basic strategy says **${tip.move[0]!.toUpperCase()}${tip.move.slice(1)}** — ${tip.why}.`, `-# ${explain.join(' · ')}`);
+    const id = (action: string) => cid('bj', 'act', tableId, action, round.seq);
+    rows.push(
+      row(
+        button({ id: id('hit'), label: 'Hit', tone: 'success', disabled: !opts?.hit }),
+        button({ id: id('stand'), label: 'Stand', tone: 'danger', disabled: !opts?.stand }),
+        button({ id: id('double'), label: 'Double', tone: 'primary', disabled: !legal.double }),
+        button({ id: id('split'), label: 'Split', tone: 'primary', disabled: !legal.split }),
+        rules.surrender ? button({ id: id('surrender'), label: 'Surrender', disabled: !legal.surrender }) : null,
+      ),
+    );
+  } else {
+    const waitingFor = turnUser ? escapeMarkdown(state.seats.find((s) => s.userId === turnUser)?.displayName ?? 'another player') : null;
+    const finished = mine.hands.every((h) => h.done || h.surrendered);
+    lines.push(waitingFor ? `-# ${finished ? 'Your hand is done' : 'Not your turn yet'} — waiting for **${waitingFor}**.` : '-# Waiting for the table.');
+  }
+  rows.push(row(button({ id: cid('bj', 'seat', tableId), label: 'Refresh', emoji: ICONS.refresh })));
+  return {
+    files: [{ name: file, data: png, description: `Your hand: ${handLines.join('; ').replace(/\*\*/g, '')}` }],
+    components: [
+      container(myTurn ? COLORS.gold : COLORS.emerald, [text(lines.slice(0, 1).concat(lines.slice(1, 1 + handLines.length + 1)).join('\n')), gallery([{ url: `attachment://${file}`, description: 'Your hand' }]), text(lines.slice(2 + handLines.length).join('\n') || '-# '), ...rows]),
+      ...seatScreen.components,
+    ],
+  };
+}
 
 export function mySeatScreen(app: CasinoApp, viewer: Viewer, tableId: string): Screen {
   const snap = app.blackjack.peek(tableId);

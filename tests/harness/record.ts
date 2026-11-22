@@ -149,7 +149,7 @@ function html(rec: Recording, frames: Array<{ entry: TimelineEntry; file: string
     buttons: entry.buttons,
     selects: entry.selects,
     // Embedded, so the replay is one self-contained file.
-    image: entry.image ? `data:image/png;base64,${Buffer.from(entry.image.data).toString('base64')}` : null,
+    image: entry.image ? `data:image/${entry.image.filename.endsWith('.gif') ? 'gif' : 'png'};base64,${Buffer.from(entry.image.data).toString('base64')}` : null,
     file,
     focus: entry.messageId === rec.focus,
   }));
@@ -196,7 +196,7 @@ async function main(): Promise<void> {
     mkdirSync(dir, { recursive: true });
     const frames = rec.entries.map((entry, i) => {
       if (!entry.image) return { entry, file: null };
-      const file = `frame-${String(i + 1).padStart(3, '0')}.png`;
+      const file = `frame-${String(i + 1).padStart(3, '0')}.${entry.image.filename.endsWith('.gif') ? 'gif' : 'png'}`;
       writeFileSync(join(dir, file), entry.image.data);
       return { entry, file };
     });

@@ -19,7 +19,7 @@ import { rewardsScreen } from '../ui/screens/rewards.js';
 import { profileScreen, achievementsScreen, styleScreen } from '../ui/screens/profile.js';
 import { leaderboardScreen } from '../ui/screens/leaderboard.js';
 import { helpScreen } from '../ui/screens/help.js';
-import { tablesScreen, blackjackPanel, mySeatScreen, rulesScreen, closedTablePanel } from '../ui/screens/blackjack.js';
+import { tablesScreen, blackjackPanel, mySeatScreen, myHandScreen, rulesScreen, closedTablePanel } from '../ui/screens/blackjack.js';
 import { gamesHubScreen, slotsScreen, paytableScreen, roulettePanel, coinflipMessage } from '../ui/screens/games.js';
 import { lobbyScreen } from '../ui/screens/lobby.js';
 import { adminScreen, auditScreen, adminTablesScreen } from '../ui/screens/admin.js';
@@ -63,12 +63,14 @@ export async function buildScreens(guildId: string, channelId: string): Promise<
   scheduler.runDue();
   await app.blackjack.idle();
   await add('bj-dealing', blackjackPanel(app, app.blackjack.peek(t)!, { dealStep: 0 }));
+  await add('bj-deal-gif', blackjackPanel(app, app.blackjack.peek(t)!, { animation: { kind: 'dealt' } }));
   let round = app.blackjack.peek(t)!.state.round!;
   await app.blackjack.act(t, id(0), 'split', round.seq);
   round = app.blackjack.peek(t)!.state.round!;
   await app.blackjack.act(t, id(0), 'double', round.seq);
   await add('bj-playing', blackjackPanel(app, app.blackjack.peek(t)!));
   await add('my-seat', mySeatScreen(app, viewer, t));
+  await add('my-hand', myHandScreen(app, viewer, t));
   for (let guard = 0; guard < 20; guard++) {
     const s = app.blackjack.peek(t)!.state;
     if (s.phase !== 'playing') break;
@@ -88,6 +90,7 @@ export async function buildScreens(guildId: string, channelId: string): Promise<
   scheduler.runDue();
   await app.roulette.idle();
   await add('roulette-spinning', roulettePanel(app, app.roulette.peek(wheel.record.id)!, { spinFrame: 0 }));
+  await add('roulette-spin-gif', roulettePanel(app, app.roulette.peek(wheel.record.id)!, { animate: true }));
   await add('roulette-spun', roulettePanel(app, app.roulette.peek(wheel.record.id)!));
 
   // Coinflip challenge, then accepted.
@@ -96,6 +99,7 @@ export async function buildScreens(guildId: string, channelId: string): Promise<
   await add('coinflip-pending', coinflipMessage(app, challenge, names));
   const accepted = await app.coinflip.accept(challenge.id, id(1));
   await add('coinflip-flipping', coinflipMessage(app, accepted.challenge, names, { flipping: true }));
+  await add('coinflip-toss-gif', coinflipMessage(app, accepted.challenge, names, { flipping: true, animate: true }));
   await add('coinflip-result', coinflipMessage(app, accepted.challenge, names));
 
   await add('lobby', lobbyScreen(app, guildId));
@@ -112,6 +116,7 @@ export async function buildScreens(guildId: string, channelId: string): Promise<
   await add('rules', rulesScreen(app, guildId, t));
   await add('games', gamesHubScreen(app, viewer));
   await add('slots-spinning', slotsScreen(app, viewer, 25, { stopped: 1 }));
+  await add('slots-reels-gif', slotsScreen(app, viewer, 25, { animate: true }));
   await add('slots', slotsScreen(app, viewer, 25));
   await add('paytable', paytableScreen(25));
   await add('help', helpScreen(app, viewer, 'start'));

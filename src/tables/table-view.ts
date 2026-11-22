@@ -21,6 +21,8 @@ export interface HandView {
   dim: boolean;
   /** Index of the card that just arrived (highlighted), if any. */
   fresh?: number;
+  /** Animation frames: only the first `visible` cards are on the table yet (layout uses all). */
+  visible?: number;
 }
 
 export interface SeatView {
@@ -41,6 +43,8 @@ export interface DealerView {
   badge: Badge | null;
   /** Index of the dealer card that was just turned or drawn (highlighted), if any. */
   fresh?: number;
+  /** Animation frames: only the first `visible` cards are on the table yet (layout uses all). */
+  visible?: number;
 }
 
 export type TableViewMode = 'waiting' | 'betting' | 'dealing' | 'insurance' | 'playing' | 'reveal' | 'results';

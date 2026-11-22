@@ -35,7 +35,7 @@ import {
   accessCodeModal,
   createTableModal,
   customBetModal,
-  mySeatScreen,
+  myHandScreen,
   rulesScreen,
   tablesScreen,
 } from '../ui/screens/blackjack.js';
@@ -208,8 +208,11 @@ export class InteractionRouter {
     const last = frames.length - 1;
     for (const [index, build] of frames.entries()) {
       const started = Date.now();
+      let hold = delayMs;
       try {
         const screen = this.bot.checked(await build());
+        // An animated frame (GIF) stays up for its own length.
+        if (screen.holdMs !== undefined) hold = screen.holdMs * this.bot.timing.animationScale;
         if (index === 0 && !i.deferred && !i.replied) await i.update(editOptions(screen));
         else await i.editReply(editOptions(screen));
       } catch (error) {
@@ -223,7 +226,7 @@ export class InteractionRouter {
         return;
       }
       // Pace by cadence: the request's own time counts towards the frame (with a short minimum hold).
-      if (index < last) await new Promise((r) => setTimeout(r, Math.max(delayMs > 0 ? MIN_FRAME_HOLD_MS : 0, delayMs - (Date.now() - started))));
+      if (index < last) await new Promise((r) => setTimeout(r, Math.max(hold > 0 ? MIN_FRAME_HOLD_MS : 0, hold - (Date.now() - started))));
     }
   }
 
@@ -630,8 +633,8 @@ export class InteractionRouter {
         arm('reply');
         return this.show(i, rulesScreen(this.app, viewer.guildId, tableId), 'private');
       case 'seat':
-        arm('reply');
-        return this.show(i, mySeatScreen(this.app, viewer, tableId), 'private');
+        arm(this.fromEphemeral(i) ? 'update' : 'reply');
+        return this.show(i, await myHandScreen(this.app, viewer, tableId), this.fromEphemeral(i) ? 'auto' : 'private');
       case 'join':
         return this.joinTable(i, viewer, tableId, arm);
       case 'betx':
@@ -669,13 +672,20 @@ export class InteractionRouter {
         arm('update');
         const move = args[1] as PlayerAction;
         if (!PLAYER_ACTIONS.has(move)) throw new UserError('Unknown action.');
-        await tables.act(tableId, viewer.userId, move, intArg(args[2], -1), i);
+        // From the private "My hand" view: the table panel updates on its own, and the private
+        // view refreshes in place (it must never be answered with the shared panel).
+        const privateView = this.fromEphemeral(i);
+        await tables.act(tableId, viewer.userId, move, intArg(args[2], -1), privateView ? undefined : i);
+        if (privateView) return this.show(i, await myHandScreen(this.app, viewer, tableId));
         return this.settle(i);
       }
-      case 'ins':
+      case 'ins': {
         arm('update');
-        await tables.decideInsurance(tableId, viewer.userId, args[1] === '1', i);
+        const privateView = this.fromEphemeral(i);
+        await tables.decideInsurance(tableId, viewer.userId, args[1] === '1', privateView ? undefined : i);
+        if (privateView) return this.show(i, await myHandScreen(this.app, viewer, tableId));
         return this.settle(i);
+      }
       case 'leave': {
         arm(this.fromEphemeral(i) ? 'update' : 'reply');
         const result = await tables.leave(tableId, viewer.userId);
@@ -693,7 +703,7 @@ export class InteractionRouter {
       case 'sit':
         arm('update');
         await tables.setSittingOut(tableId, viewer.userId, args[1] === '1');
-        return this.show(i, mySeatScreen(this.app, viewer, tableId));
+        return this.show(i, await myHandScreen(this.app, viewer, tableId));
       case 'close':
         arm('update');
         await tables.closeTable(tableId, `closed by the host`, { actorId: viewer.userId });
@@ -702,7 +712,7 @@ export class InteractionRouter {
         arm('update');
         if (!i.isUserSelectMenu()) return;
         await tables.kick(tableId, viewer.userId, i.values[0]!);
-        return this.show(i, mySeatScreen(this.app, viewer, tableId));
+        return this.show(i, await myHandScreen(this.app, viewer, tableId));
       }
       default:
         throw new UserError('That control is out of date.', 'stale', 'Out of date');
@@ -759,7 +769,10 @@ export class InteractionRouter {
       const bet = intArg(args[0]);
       // The spin is settled first (money is final); the reels then stop one after another.
       await this.app.slots.spin(viewer.guildId, viewer.userId, bet, intArg(args[1], -1));
-      return this.playFrames(i, [() => slotsScreen(this.app, viewer, bet, { stopped: 0 }), () => slotsScreen(this.app, viewer, bet, { stopped: 2 }), () => slotsScreen(this.app, viewer, bet)], this.bot.timing.spinFrameMs);
+      const reels = this.bot.animations
+        ? [() => slotsScreen(this.app, viewer, bet, { animate: true }), () => slotsScreen(this.app, viewer, bet)]
+        : [() => slotsScreen(this.app, viewer, bet, { stopped: 0 }), () => slotsScreen(this.app, viewer, bet, { stopped: 2 }), () => slotsScreen(this.app, viewer, bet)];
+      return this.playFrames(i, reels, this.bot.timing.spinFrameMs);
     }
   }
 
@@ -790,7 +803,11 @@ export class InteractionRouter {
       else return;
       if (action === 'accept' && challenge.status === 'resolved') {
         // The coin goes up first, then lands.
-        await this.playFrames(i, [async () => (await this.bot.coinflipScreen(challenge.id, { flipping: true }))!, async () => (await this.bot.coinflipScreen(challenge.id))!], this.bot.timing.spinFrameMs * 1.6);
+        await this.playFrames(
+          i,
+          [async () => (await this.bot.coinflipScreen(challenge.id, { flipping: true, animate: this.bot.animations }))!, async () => (await this.bot.coinflipScreen(challenge.id))!],
+          this.bot.timing.spinFrameMs * 1.6,
+        );
         return;
       }
       const screen = await this.bot.coinflipScreen(challenge.id);

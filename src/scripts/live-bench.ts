@@ -41,7 +41,7 @@ interface RawFile {
 }
 
 function payload(screen: Screen, reuse: boolean): { body: Record<string, unknown>; files: RawFile[] } {
-  const files = reuse ? [] : (screen.files ?? []).map((f) => ({ name: f.name, data: Buffer.from(f.data), contentType: 'image/png' }));
+  const files = reuse ? [] : (screen.files ?? []).map((f) => ({ name: f.name, data: Buffer.from(f.data), contentType: f.name.endsWith('.gif') ? 'image/gif' : 'image/png' }));
   return {
     body: {
       components: screen.components,

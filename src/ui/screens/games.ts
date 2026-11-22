@@ -1,11 +1,12 @@
-import { randomInt } from 'node:crypto';
+import { createHash, randomInt } from 'node:crypto';
 import type { CasinoApp } from '../../app/casino-app.js';
 import { chips, discordTime, escapeMarkdown, signedChips } from '../../core/format.js';
 import type { Challenge } from '../../games/coinflip/coinflip-service.js';
 import { BET_TYPES, describeNumber, pocketColor, type RouletteBetType } from '../../games/roulette/engine.js';
 import type { WheelSnapshot } from '../../games/roulette/roulette-service.js';
 import { SYMBOL_NAMES, THREE_OF_A_KIND, TWO_CHERRIES, exactReturnToPlayer } from '../../games/slots/engine.js';
-import { coinSvg, rouletteSvg, slotsSvg } from '../../render/game-images.js';
+import { coinSvg, coinTossFrames, rouletteSpinFrames, rouletteSvg, slotsSpinFrames, slotsSvg } from '../../render/game-images.js';
+import { framesToGif, type GifFrame } from '../../render/gif.js';
 import { cid } from '../custom-id.js';
 import {
   button,
@@ -27,6 +28,16 @@ import {
 } from '../kit.js';
 import { COLORS, ICONS } from '../theme.js';
 import { NAV, channelUrl, navRow, type Viewer } from './common.js';
+
+/** Extra time after a GIF's own length, so clients that load it a moment late still see it end. */
+const LOAD_SLACK_MS = 450;
+
+/** Encode animation frames as a GIF attachment, with how long to keep it up. */
+async function gifFile(frames: GifFrame[], width: number, prefix: string): Promise<{ name: string; data: Buffer; holdMs: number }> {
+  const { gif, durationMs } = await framesToGif(frames, width);
+  const last = frames.at(-1)?.delayMs ?? 0; // the final still frame needn't be waited out
+  return { name: `${prefix}-${createHash('sha1').update(gif).digest('hex').slice(0, 12)}.gif`, data: gif, holdMs: durationMs - last + LOAD_SLACK_MS };
+}
 
 // ───────────────────────────── hub ─────────────────────────────
 
@@ -69,28 +80,25 @@ const SLOT_BETS = [5, 10, 25, 50, 100, 250, 500, 1000];
  * only the first reels have stopped, nothing about the outcome (or the new balance) is shown yet,
  * and every control is disabled until the reels settle.
  */
-export async function slotsScreen(app: CasinoApp, viewer: Viewer, bet: number, options: { stopped?: number } = {}): Promise<Screen> {
+export async function slotsScreen(app: CasinoApp, viewer: Viewer, bet: number, options: { stopped?: number; animate?: boolean } = {}): Promise<Screen> {
   app.economy.ensurePlayer(viewer.guildId, viewer.userId, viewer.displayName);
   const s = app.settings.get(viewer.guildId).slots;
   const amount = Math.min(s.maxBet, Math.max(s.minBet, bet));
   const last = app.slots.lastSpin(viewer.guildId, viewer.userId);
-  const spinning = options.stopped !== undefined && last !== undefined && last !== null;
+  const spinning = (options.stopped !== undefined || options.animate === true) && last !== undefined && last !== null;
   const settled = app.economy.getPlayer(viewer.guildId, viewer.userId)!.balance;
   const balance = spinning ? settled - last.payout : settled;
   const count = app.slots.spinCount(viewer.guildId, viewer.userId);
   const line = last?.spin.line ?? [];
   const paying = !spinning && last && last.payout > 0 ? (line.every((sym) => sym === line[0]) ? [0, 1, 2] : line.flatMap((sym, i) => (sym === 'cherry' ? [i] : []))) : [];
-  const svg = slotsSvg({
-    rows: last?.spin.rows ?? null,
-    win: !spinning && (last?.payout ?? 0) > 0,
-    label: last?.spin.label ?? '',
-    bet: last?.bet ?? amount,
-    payout: last?.payout ?? 0,
-    ...(spinning ? { stopped: options.stopped } : {}),
-    paying,
-  });
-  const { key, png } = await app.images.render(svg, 640);
-  const file = `slots-${key}.png`;
+  const final = { rows: last?.spin.rows ?? null, win: (last?.payout ?? 0) > 0, label: last?.spin.label ?? '', bet: last?.bet ?? amount, payout: last?.payout ?? 0, paying: last && last.payout > 0 ? (line.every((sym) => sym === line[0]) ? [0, 1, 2] : line.flatMap((sym, i) => (sym === 'cherry' ? [i] : []))) : [] };
+  // Animated: the reels roll and stop one by one (GIF); otherwise a still of the current state.
+  const anim = options.animate && last ? await gifFile(slotsSpinFrames(final), 560, 'slots-spin') : null;
+  const still = anim
+    ? null
+    : await app.images.render(slotsSvg({ ...final, win: !spinning && final.win, ...(spinning ? { stopped: options.stopped } : {}), paying }), 640);
+  const file = anim ? anim.name : `slots-${still!.key}.png`;
+  const png = anim ? anim.data : still!.png;
   const betOptions = [...new Set([s.minBet, ...SLOT_BETS.filter((b) => b > s.minBet && b < s.maxBet), s.maxBet])].slice(0, 5);
   const resultText = spinning
     ? `### Spinning…\n-# Bet ${chips(last.bet)} · spin #${count}`
@@ -101,6 +109,7 @@ export async function slotsScreen(app: CasinoApp, viewer: Viewer, bet: number, o
       : '### Pull the lever\n-# Line up three of a kind on the middle row. Two cherries pay double.';
   return {
     files: [{ name: file, data: png, description: spinning ? 'The reels are spinning' : last ? `Slot reels showing ${last.spin.line.join(', ')}` : 'Slot machine' }],
+    ...(anim ? { holdMs: anim.holdMs } : {}),
     components: [
       container(!spinning && last && last.payout > 0 ? COLORS.gold : COLORS.emerald, [
         text(`## ${ICONS.slots} Emerald Slots\n-# Balance **${chips(balance)}** chips · bet **${chips(amount)}**`),
@@ -136,10 +145,27 @@ export function paytableScreen(bet: number): Screen {
 
 const COLOR_DOT = { red: '🔴', black: '⚫', green: '🟢' } as const;
 
-export async function roulettePanel(app: CasinoApp, wheel: Readonly<WheelSnapshot>, options: { spinFrame?: number } = {}): Promise<Screen> {
+export async function roulettePanel(app: CasinoApp, wheel: Readonly<WheelSnapshot>, options: { spinFrame?: number; animate?: boolean } = {}): Promise<Screen> {
   const { record, state } = wheel;
   const s = app.settings.get(record.guildId).roulette;
   const result = state.lastResult;
+  // The animated spin: wheel and ball in motion until the ball drops (the outcome stays out of the
+  // text until the final frame replaces this one).
+  if (options.animate && result) {
+    const gif = await gifFile(rouletteSpinFrames({ result: result.number, history: state.history, spinNumber: result.spinNumber }), 640, 'wheel-spin');
+    const bets = result.players.map((p) => `**${escapeMarkdown(p.displayName)}** ${p.bets.map((b) => `${b.label} ${chips(b.amount)}`).join(' · ')}`);
+    return {
+      files: [{ name: gif.name, data: gif.data, description: 'The roulette wheel is spinning' }],
+      holdMs: gif.holdMs,
+      components: [
+        container(COLORS.emerald, [
+          text(`## ${ICONS.roulette} Roulette\n-# Spin ${result.spinNumber} · no more bets`),
+          gallery([{ url: `attachment://${gif.name}`, description: 'The roulette wheel is spinning' }]),
+          text(`### No more bets — the ball is rolling…\n${bets.join('\n')}`),
+        ]),
+      ],
+    };
+  }
   // In-motion frames between "no more bets" and the result: the outcome is already settled, but
   // nothing about it is shown until the ball lands.
   if (options.spinFrame !== undefined && result) {
@@ -244,16 +270,19 @@ export function coinflipModal(opponentId: string, opponentName: string, min: num
   ]);
 }
 
-export async function coinflipMessage(app: CasinoApp, challenge: Challenge, names: { challenger: string; opponent: string }, options: { flipping?: boolean } = {}): Promise<Screen> {
+export async function coinflipMessage(app: CasinoApp, challenge: Challenge, names: { challenger: string; opponent: string }, options: { flipping?: boolean; animate?: boolean } = {}): Promise<Screen> {
   const c = escapeMarkdown(names.challenger);
   const o = escapeMarkdown(names.opponent);
   const pot = challenge.amount * 2;
   if (options.flipping && challenge.status === 'resolved') {
     // The moment between "accepted" and the result: nothing about the outcome is shown yet.
-    const { key, png } = await app.images.render(coinSvg('flip'), 420);
-    const file = `coin-${key}.png`;
+    // Animated: the coin is tossed, tumbles and lands (GIF); otherwise a still of it mid-air.
+    const anim = options.animate && challenge.result ? await gifFile(coinTossFrames(challenge.result), 420, 'coin-toss') : null;
+    const still = anim ? null : await app.images.render(coinSvg('flip'), 420);
+    const file = anim ? anim.name : `coin-${still!.key}.png`;
     return {
-      files: [{ name: file, data: png, description: 'The coin is in the air' }],
+      files: [{ name: file, data: anim ? anim.data : still!.png, description: 'The coin is in the air' }],
+      ...(anim ? { holdMs: anim.holdMs } : {}),
       components: [
         container(COLORS.gold, [
           text(`## ${ICONS.coinflip} The coin is in the air…`),

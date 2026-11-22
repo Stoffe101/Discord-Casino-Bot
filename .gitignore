@@ -1,0 +1,34 @@
+# Dependencies & build output
+node_modules/
+dist/
+coverage/
+
+# Secrets & local configuration
+.env
+.env.*
+!.env.example
+
+# Runtime data
+data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+logs/
+*.log
+
+# Test & tooling artifacts
+.vitest-temp/
+tmp/
+render-preview/
+*.tsbuildinfo
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.claude/settings.local.json

@@ -1,0 +1,45 @@
+{
+  "name": "emerald-room-casino",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A premium, multiplayer, fictional-currency casino for private Discord communities.",
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "dev": "tsx watch --clear-screen=false src/main.ts",
+    "start": "node --enable-source-maps dist/main.js",
+    "build": "tsc -p tsconfig.build.json",
+    "register-commands": "tsx src/scripts/register-commands.ts",
+    "register-commands:prod": "node dist/scripts/register-commands.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "simulate": "tsx src/scripts/simulate.ts",
+    "simulate:discord": "tsx tests/harness/run-scale.ts",
+    "record": "tsx tests/harness/record.ts",
+    "render-preview": "tsx src/scripts/render-preview.ts",
+    "test:allowlist": "tsx src/scripts/test-allowlist.ts",
+    "live-bench": "tsx src/scripts/live-bench.ts",
+    "live-tables": "tsx src/scripts/live-tables.ts",
+    "reconcile": "tsx src/scripts/reconcile.ts",
+    "check": "npm run typecheck && npm run lint && npm test && npm run build"
+  },
+  "dependencies": {
+    "@resvg/resvg-js": "^2.6.2",
+    "discord.js": "^14.28.1",
+    "gifenc": "^1.0.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.6.6",
+    "eslint": "^10.15.0",
+    "tsx": "^4.23.15",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.73.0",
+    "vitest": "^5.1.1"
+  }
+}

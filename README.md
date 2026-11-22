@@ -52,6 +52,8 @@ Further reading: [Discord setup guide](docs/DISCORD_SETUP.md) · [Architecture](
   soft/hard totals, naturals, dealer peek, hit / stand / double / split (to 4 hands) / surrender,
   insurance, split-ace rules, configurable S17/H17, 3:2 or 6:5.
 - **Multiple concurrent tables**, each with its own thread, dealer, shoe, seats, timers and panel.
+  Discord's "started a thread" notice is removed again, because the lobby already lists every table
+  with a link, so the casino channel doesn't fill up. Closed tables are locked and archived.
   Five seats by default (1–7 configurable). Private tables with access codes.
 - One persistent **table panel** per thread that updates in place: the table image (dealer, every
   hand, bets, the active player highlighted in gold), a status line, a short activity log and
@@ -112,6 +114,7 @@ Then, in your server, run **`/casinoadmin setup`** in the channel you want as th
 | `npm run render-preview` | Render sample artwork to `render-preview/` |
 | `npm run test:allowlist` | Find your dev server's `#casino` channel for [test mode](#test-mode-one-channel-allowlist) |
 | `npm run live-bench` | Test mode only: validate every screen against the real Discord API in the allowlisted channel |
+| `npm run live-tables` | Test mode with threads: real table threads under the allowlisted channel, simulated players |
 | `npm run reconcile` | Read-only ledger check of the database (run while the bot is stopped) |
 
 > npm 11 may print an `allow-scripts` warning for `esbuild` (used by the dev runner). It is safe to
@@ -214,8 +217,16 @@ to pick when there are zero or several matching channels. With test mode on:
   threads, DMs, reactions, pins, channel or server settings, global commands, and any payload that
   could ping someone.
 - Interactions from other channels or threads get no response at all.
-- Threads are not used: table and roulette panels are posted in the allowlisted channel. Panels
-  that already live in a thread are re-posted there on startup.
+- By default threads are not used: table and roulette panels are posted in the allowlisted channel,
+  and panels that already live in a thread are re-posted there on startup.
+- With `CASINO_TEST_ALLOW_THREADS=true`, tables get their own threads again, but only threads whose
+  parent is the allowlisted channel in the allowlisted server. A thread counts only after Discord's
+  own data confirms its parent: the response to creating it, a channel lookup, the gateway cache or
+  the interaction itself. In verified threads the bot may post and edit messages, add players to
+  private tables, and archive or lock the thread. It may not rename or delete threads, and every
+  other thread stays closed.
+- `npm run live-tables` (threads enabled) runs simulated hands through the real thread code in real
+  threads, then closes, locks and archives them.
 - `/casinoadmin setup` only works in the allowlisted channel. If no lobby is configured yet, the bot posts
   it there on startup.
 - `npm run live-bench` shows every screen once through a single bot message, letting Discord's own API validate

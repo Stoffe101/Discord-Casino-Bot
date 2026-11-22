@@ -56,6 +56,10 @@ export interface FakeMessage {
   deleted: boolean;
   /** True while a deferred reply is still "thinking". */
   loading: boolean;
+  /** Message type (0 default, 18 = "started a thread" system notice). */
+  type: number;
+  /** For thread notices: the thread they point at. */
+  referenceChannelId: string | null;
 }
 
 export interface FakeChannel {
@@ -141,6 +145,14 @@ export class FakeDiscord {
     return id;
   }
 
+  /** A thread someone else created (e.g. a member) under a channel. */
+  addThread(parentId: string, name: string, type: 11 | 12 = 11): string {
+    const parent = this.channels.get(parentId)!;
+    const id = snowflake();
+    this.channels.set(id, { id, guildId: parent.guildId, name, type, parentId, archived: false, locked: false });
+    return id;
+  }
+
   user(name: string, options: { admin?: boolean } = {}): FakeUser {
     const u = { id: snowflake(), name, admin: options.admin ?? false };
     this.users.set(u.id, u);
@@ -172,8 +184,7 @@ export class FakeDiscord {
       result = err(500, 0, e instanceof Error ? e.message : String(e));
     }
     this.log.push({ method, route: route.replace(/\/[A-Za-z0-9_-]{40,}/g, '/[token]'), status: result.status, ms: performance.now() - started, at: Date.now() });
-    const hasBody = result.body !== undefined;
-    return new Response(hasBody ? JSON.stringify(result.body) : null, { status: result.status, headers: hasBody ? { 'content-type': 'application/json' } : {} });
+    return undiciLikeResponse(result.status, result.body);
   };
 
   private route(method: string, route: string, query: URLSearchParams, json: Json, files: FakeFile[]): Result {
@@ -286,10 +297,21 @@ export class FakeDiscord {
       const id = snowflake();
       const thread: FakeChannel = { id, guildId: channel.guildId, name: json?.name ?? 'thread', type: json?.type === 12 ? 12 : 11, parentId: channel.id, archived: false, locked: false };
       this.channels.set(id, thread);
+      // Like Discord: a public thread created without a starter message posts a notice in the parent.
+      if (thread.type === 11) {
+        const notice = this.blank(channel.id, null, 0);
+        notice.type = 18;
+        notice.content = thread.name;
+        notice.referenceChannelId = id;
+      }
       return { status: 201, body: this.channelJson(thread) };
     }
     if (s[1] === 'thread-members' && method === 'PUT') return { status: 204 };
     if (s[1] === 'messages') {
+      if (s.length === 2 && method === 'GET') {
+        const list = [...this.messages.values()].filter((m) => m.channelId === channel.id && !m.forUser && !m.deleted).reverse().slice(0, 50);
+        return { status: 200, body: list.map((m) => this.messageJson(m)) };
+      }
       if (s.length === 2 && method === 'POST') {
         if (channel.archived && channel.type !== 0) return err(400, 50083, 'Thread is archived');
         if (((json?.flags ?? 0) & EPHEMERAL) !== 0) return err(400, 50035, 'Channel messages cannot be ephemeral');
@@ -321,7 +343,7 @@ export class FakeDiscord {
 
   private blank(channelId: string, forUser: string | null, flags: number): FakeMessage {
     const channel = this.channels.get(channelId)!;
-    const m: FakeMessage = { id: snowflake(), channelId, guildId: channel.guildId, flags, content: '', components: [], attachments: [], forUser, edits: 0, deleted: false, loading: false };
+    const m: FakeMessage = { id: snowflake(), channelId, guildId: channel.guildId, flags, content: '', components: [], attachments: [], forUser, edits: 0, deleted: false, loading: false, type: 0, referenceChannelId: null };
     this.messages.set(m.id, m);
     return m;
   }
@@ -592,7 +614,8 @@ export class FakeDiscord {
       attachments: m.attachments.map((a) => ({ id: a.id, filename: a.filename, size: a.size, url: `https://cdn.fake/${a.id}/${a.filename}`, proxy_url: `https://media.fake/${a.id}/${a.filename}`, content_type: 'image/png' })),
       embeds: [],
       pinned: false,
-      type: 0,
+      type: m.type,
+      ...(m.referenceChannelId ? { message_reference: { type: 0, channel_id: m.referenceChannelId, guild_id: m.guildId } } : {}),
       flags: m.flags,
       components: m.components,
       application_id: this.appId,
@@ -706,6 +729,35 @@ function validateMessage(draft: Draft, payload: Json): string[] {
   if (total > 40) problems.push(`too many components (${total} > 40)`);
   if (textChars > 4000) problems.push(`too much text (${textChars} > 4000)`);
   return problems;
+}
+
+// ───────────────────────────── responses ─────────────────────────────
+
+/**
+ * The same shape @discordjs/rest's Node transport (undici) returns: no clone(), body readable once.
+ * Using real fetch Responses here would hide bugs that only show up in production.
+ */
+export function undiciLikeResponse(status: number, body?: unknown): Response {
+  const text = body === undefined ? '' : JSON.stringify(body);
+  let used = false;
+  const read = () => {
+    if (used) throw new TypeError('Body is unusable: Body has already been read');
+    used = true;
+    return text;
+  };
+  return {
+    body: null,
+    arrayBuffer: async () => new TextEncoder().encode(read()).buffer,
+    json: async () => JSON.parse(read()),
+    text: async () => read(),
+    get bodyUsed() {
+      return used;
+    },
+    headers: new Headers(body === undefined ? {} : { 'content-type': 'application/json' }),
+    status,
+    statusText: '',
+    ok: status >= 200 && status < 300,
+  } as unknown as Response;
 }
 
 // ───────────────────────────── request bodies ─────────────────────────────

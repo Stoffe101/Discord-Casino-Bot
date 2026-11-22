@@ -3,6 +3,7 @@ import { REST, Routes } from 'discord.js';
 import { silentLogger } from '../src/core/logger.js';
 import { OutboundGuard, OutboundBlockedError, allowlistFromEnv, mentionViolation, routeOf } from '../src/discord/outbound-guard.js';
 import { CasinoHarness } from './harness/casino-harness.js';
+import { undiciLikeResponse } from './harness/fake-discord.js';
 
 const GUILD = '573000000000000001';
 const CHANNEL = '157400000000000001';
@@ -40,7 +41,7 @@ describe('OutboundGuard policy', () => {
     ['PATCH', `/channels/${OTHER}/messages/1`, /not allowlisted/],
     ['GET', `/channels/${OTHER}/messages`, /not allowlisted/],
     ['POST', `/channels/${THREAD}/messages`, /threads count as separate channels/],
-    ['POST', `/channels/${CHANNEL}/threads`, /only messages/],
+    ['POST', `/channels/${CHANNEL}/threads`, /thread creation is not allowed/],
     ['POST', `/channels/${CHANNEL}/messages/800000000000000005/threads`, /thread creation/],
     ['PUT', `/channels/${CHANNEL}/messages/800000000000000005/reactions/%F0%9F%8E%B2/@me`, /reactions, pins/],
     ['PUT', `/channels/${CHANNEL}/pins/800000000000000005`, /only messages/],
@@ -113,7 +114,7 @@ describe('OutboundGuard policy', () => {
   it('reads the allowlist from the environment and fails closed', () => {
     expect(allowlistFromEnv({}, APP)).toBeNull();
     expect(() => allowlistFromEnv({ CASINO_TEST_MODE: 'true' }, APP)).toThrow(/requires/);
-    expect(allowlistFromEnv({ CASINO_TEST_MODE: 'true', CASINO_TEST_GUILD_ID: GUILD, CASINO_TEST_CHANNEL_ID: CHANNEL }, APP)).toEqual({ guildId: GUILD, channelId: CHANNEL, applicationId: APP });
+    expect(allowlistFromEnv({ CASINO_TEST_MODE: 'true', CASINO_TEST_GUILD_ID: GUILD, CASINO_TEST_CHANNEL_ID: CHANNEL }, APP)).toEqual({ guildId: GUILD, channelId: CHANNEL, applicationId: APP, allowThreads: false });
   });
 });
 
@@ -123,7 +124,7 @@ describe('OutboundGuard on a real discord.js REST client', () => {
     const rest = new REST({
       makeRequest: async (url: string) => {
         sent.push(url);
-        return new Response(JSON.stringify({ id: '1' }), { status: 200, headers: { 'content-type': 'application/json' } });
+        return undiciLikeResponse(200, { id: '1' });
       },
     } as never).setToken('test');
     guard().install(rest);

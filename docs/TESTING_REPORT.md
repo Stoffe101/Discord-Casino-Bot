@@ -11,8 +11,51 @@ This report keeps four kinds of evidence apart:
 | **A. Real Discord bot API** | Discord accepted what the bot sent | The running bot in test mode, plus `npm run live-bench`: one bot message in the allowlisted channel, edited through every screen |
 | **B. Real Discord UI inspection** | How the screens look in the desktop client | Read-only screenshots of the allowlisted channel. Stopped part-way at the owner's request, because screenshots hid their browser |
 | **C. Simulated players** | Behaviour of the real bot code under player actions | The full-stack harness: real discord.js, guard, router and panel sync against an in-memory Discord (`tests/harness/`). Its payload rules are *a model* of Discord's |
-| **D. Real human clicks** | Real players pressing buttons in the client | **Not verified in this session.** The bot can't press its own buttons, and the owner's account was deliberately not automated |
+| **D. Real human clicks** | Real players pressing buttons in the client | **Not verified.** The bot can't press its own buttons, and the owner's account was deliberately not automated |
 
+## 0. Round 2: table threads under #casino
+
+The owner then authorised threads whose parent is the verified #casino channel, in the same server. Nothing else changed.
+
+**Guard.** With `CASINO_TEST_ALLOW_THREADS=true`, a thread becomes reachable only after Discord's own data confirms both its parent and its server. That confirmation can come from:
+- the response to creating it;
+- a channel lookup;
+- the gateway cache;
+- the interaction payload.
+
+Once a thread is verified, the bot may:
+- post and edit messages in it;
+- add players to private tables;
+- archive or lock it.
+
+It may not rename or delete threads, create nested threads, or reach threads of other channels or servers. Interactions from unrelated threads get no response.
+
+**Tests.** `tests/outbound-guard-threads.test.ts` has 38 cases:
+- policy cases;
+- learning from real discord.js REST responses, where a lookup of a #general thread does *not* unlock it;
+- full-stack cases: a table thread is created under #casino, played in, then closed, locked and archived; a private table gets a private thread and the joining player is added; an interaction from a member's thread under #general is ignored; three tables get three threads, with no panels or notices left in #casino.
+
+The whole suite passes: 278 tests.
+
+**Live: `npm run live-tables`.** This runs the real bot thread code against real Discord: thread creation, panel sync with dealer reveal frames, and close/lock/archive. The players are simulated through the game services.
+
+| Run | Result |
+| --- | --- |
+| 3 tables (2 public, 1 private) × 2 hands, concurrently | ✅ 3 threads created under #casino. Results shown on every panel. Image still resolved after an edit that reused it without re-uploading. Closed panel, locked and archived on all 3. 6 hands, 72 panel edits, **0 rate-limited**. Guard: 103 allowed, 0 blocked. Ledger OK |
+| Same run: what #casino received | ✅ **0 new messages**. The bot now deletes Discord's "started a thread" notice, since the lobby already lists tables (verified live, 0 left from the run). Private threads create no notice |
+| Discord API timings in threads | message edit avg 552 ms (p95 1.1 s); message create avg 953 ms; thread/channel requests avg 368 ms |
+
+**Found and fixed in this round:**
+
+1. **The guard couldn't learn threads from Discord responses in production.** Node's discord.js transport returns responses without `clone()`. The live run only worked because the bot also learns from discord.js's thread-created event.
+   - The guard now buffers the body for the two routes it inspects and hands back an equivalent response.
+   - The test fake now returns the same response shape as the real transport, so tests can't hide this again.
+2. **Close-time cleanup was fire-and-forget.** The closed panel, lock and archive ran outside the work that `idle()` and shutdown wait for, so a shutdown right after a close could cut it short. It is now tracked.
+3. **Thread notices cluttered #casino.** Every public table left a "started a thread" notice; these are now removed.
+4. **A stale panel was left from the first, unguarded session.** That session's thread still showed "Table 01" as open. It is now marked closed, locked and archived.
+5. **Leftover notices from earlier bench runs** were deleted. These were the bot's own messages only; the notice for your original table thread was kept.
+
+**Still needs you, because only real people can press buttons:** see the short checklist in the PR (§ "Your manual test").
 ## 1. Safety setup: test-mode allowlist
 
 - **Allowlist.** Resolved with `npm run test:allowlist`, which reads the development server from `.env` and makes two read-only API calls.
@@ -111,7 +154,7 @@ The running bot now logs Discord API timings by request kind every 10 minutes an
 ## 7. Remaining limitations and unverified behaviour
 
 - **(D) Real players pressing buttons in the client** (desktop or mobile) is still unverified. Every click path was exercised through the full-stack harness, and every payload was accepted by Discord, but no human click was observed.
-- **Threads are untested live.** Production mode uses one thread per table, and posting in threads was not authorised for this session. Thread creation, private-thread membership and thread panels are covered only by the harness.
+- **Threads (round 2):** creation, panels, reveal frames and close/lock/archive were verified live with simulated players. Joining from a real click and private-thread membership for a real member still need a human.
 - **Mobile layout** was not inspected in a real mobile client.
 - **Early-session reward inflation:** first-hand achievements and missions can roughly double a new player's bankroll in one evening. This is a design choice, left unchanged; a "reward multiplier" setting would be a small follow-up.
 - **Single process only**, now enforced by an OS-held lock on the database path.

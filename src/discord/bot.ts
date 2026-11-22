@@ -3,9 +3,11 @@ import {
   Client,
   Events,
   GatewayIntentBits,
+  MessageType,
   PermissionFlagsBits,
   ThreadAutoArchiveDuration,
   type ClientOptions,
+  type Interaction,
   type GuildTextBasedChannel,
   type TextChannel,
   type ThreadChannel,
@@ -24,7 +26,7 @@ import { COLORS } from '../ui/theme.js';
 import { PanelSync, sleep } from './panel-sync.js';
 import { DISCORD_ERRORS, createOptions, discordErrorCode, editOptions, primaryFileName } from './payload.js';
 import { InteractionRouter } from './router.js';
-import type { OutboundGuard } from './outbound-guard.js';
+import type { AdmissionCandidate, OutboundGuard } from './outbound-guard.js';
 import { RestMetrics } from './rest-metrics.js';
 
 export interface BotTiming {
@@ -44,6 +46,18 @@ export interface CasinoBotOptions {
   /** Replace the HTTP layer (tests use an in-memory Discord). */
   makeRequest?: NonNullable<ClientOptions['rest']>['makeRequest'];
   timing?: Partial<BotTiming>;
+}
+
+/** What the guard needs to know about an incoming interaction (thread parent included). */
+function admissionOf(interaction: Interaction): AdmissionCandidate {
+  const channel = interaction.channel;
+  return {
+    id: interaction.id,
+    token: interaction.token,
+    guildId: interaction.guildId,
+    channelId: interaction.channelId,
+    parentId: channel && channel.isThread() ? channel.parentId : null,
+  };
 }
 
 export const REQUIRED_CHANNEL_PERMISSIONS = [
@@ -138,7 +152,7 @@ export class CasinoBot {
         const snap = app.blackjack.peek(id);
         if (snap) this.requestLobby(snap.record.guildId);
       },
-      tableClosed: (snap, reason) => void this.onTableClosed(snap, reason),
+      tableClosed: (snap, reason) => this.track(this.onTableClosed(snap, reason)),
     });
     app.roulette.setObserver({
       wheelChanged: (id, spun, origin) => {
@@ -147,21 +161,25 @@ export class CasinoBot {
         const w = app.roulette.peek(id);
         if (w) this.requestLobby(w.record.guildId);
       },
-      wheelClosed: (w) => void this.onWheelClosed(w),
+      wheelClosed: (w) => this.track(this.onWheelClosed(w)),
     });
     app.coinflip.setObserver({
-      challengeChanged: (challenge) => void this.router.refreshChallenge(challenge),
+      challengeChanged: (challenge) => this.track(this.router.refreshChallenge(challenge)),
     });
 
     this.client.on(Events.InteractionCreate, (interaction) => {
-      if (guard && !guard.admitInteraction(interaction)) return;
-      const handled: Promise<void> = this.router.handle(interaction).finally(() => this.inflight.delete(handled));
-      this.inflight.add(handled);
+      if (guard && !guard.admitInteraction(admissionOf(interaction))) return;
+      this.track(this.router.handle(interaction));
     });
     this.client.on(Events.Error, (error) => logger.error('discord client error', { error }));
     this.client.on(Events.Warn, (message) => logger.warn('discord client warning', { message }));
     this.client.rest.on('rateLimited', (info) => logger.debug('rate limited', { route: info.route, timeToReset: info.timeToReset }));
     this.client.once(Events.ClientReady, (c) => void this.onReady(c.user.tag));
+    if (guard?.threadsAllowed) {
+      // Threads the gateway reports are verified against the allowlist (parent + server).
+      this.client.on(Events.ThreadCreate, (thread) => void guard.learnThread({ id: thread.id, parentId: thread.parentId, guildId: thread.guildId }));
+      this.client.on(Events.ThreadUpdate, (_old, thread) => void guard.learnThread({ id: thread.id, parentId: thread.parentId, guildId: thread.guildId }));
+    }
   }
 
   async start(token: string): Promise<void> {
@@ -175,7 +193,10 @@ export class CasinoBot {
     this.logger.info(`logged in as ${tag}`, { guilds: this.client.guilds.cache.size });
     if (this.guard) {
       const { guildId, channelId } = this.guard.allow;
-      this.logger.info('TEST MODE: outgoing Discord actions are limited to one channel; threads are disabled', { guildId, channelId });
+      for (const channel of this.client.channels.cache.values()) {
+        if (channel.isThread()) this.guard.learnThread({ id: channel.id, parentId: channel.parentId, guildId: channel.guildId });
+      }
+      this.logger.info(`TEST MODE: outgoing Discord actions are limited to one channel${this.guard.threadsAllowed ? ' and its threads' : '; threads are disabled'}`, { guildId, channelId, knownThreads: this.guard.knownThreads.size });
       if (!this.app.settings.lobby(guildId).channelId) this.app.settings.setLobby(guildId, channelId, null);
     }
     // Re-attach every restored panel (recreating missing ones) and refresh lobbies.
@@ -222,6 +243,14 @@ export class CasinoBot {
     else this.logger.debug('ledger reconciled');
   }
 
+  /** Background work (interactions, close-time cleanup) that idle() and stop() wait for. */
+  private track(work: Promise<void>): void {
+    const tracked: Promise<void> = work
+      .catch((error: unknown) => this.logger.error('background task failed', { error }))
+      .finally(() => this.inflight.delete(tracked));
+    this.inflight.add(tracked);
+  }
+
   /** Resolves once every in-flight interaction, game action and panel/lobby update has finished. */
   async idle(): Promise<void> {
     for (let pass = 0; pass < 100; pass++) {
@@ -262,6 +291,11 @@ export class CasinoBot {
   /** Threads are separate channels; in test mode they are never used. */
   get threadsAllowed(): boolean {
     return this.guard?.threadsAllowed ?? true;
+  }
+
+  /** In test mode a thread is usable only if it is a verified child of the allowlisted channel. */
+  allowsThread(thread: ThreadChannel): boolean {
+    return this.guard ? this.guard.learnThread({ id: thread.id, parentId: thread.parentId, guildId: thread.guildId }) : true;
   }
 
   /** In test mode only the allowlisted channel may host panels. */
@@ -317,8 +351,27 @@ export class CasinoBot {
     const message = await target.send(createOptions(screen));
     await this.app.blackjack.attachDiscord(tableId, { channelId: channel.id, threadId: thread?.id ?? null, messageId: message.id });
     if (thread && snap.record.isPrivate) await thread.members.add(creatorId).catch(() => undefined);
+    // Public threads make Discord post "<bot> started a thread" in the channel; the lobby already
+    // lists every table, so remove that notice to keep the casino channel tidy.
+    if (thread && !snap.record.isPrivate) this.track(this.removeThreadNotice(channel, thread.id));
     this.requestLobby(snap.record.guildId);
     return { url: thread ? thread.url : message.url };
+  }
+
+  /** Delete the bot's own "started a thread" system message for a thread it just created. */
+  private async removeThreadNotice(channel: TextChannel, threadId: string): Promise<void> {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const recent = await channel.messages.fetch({ limit: 10, cache: false }).catch(() => null);
+      const notice = recent?.find(
+        (m) => m.type === MessageType.ThreadCreated && m.author.id === this.client.user?.id && (m.reference?.channelId === threadId || m.thread?.id === threadId),
+      );
+      if (notice) {
+        this.guard?.allowDelete(notice.id); // the bot's own notice for its own thread
+        await notice.delete().catch((error: unknown) => this.logger.debug('could not remove thread notice', { code: discordErrorCode(error) }));
+        return;
+      }
+      await sleep(400 * (attempt + 1));
+    }
   }
 
   async addToTableThread(tableId: string, userId: string): Promise<string | null> {
@@ -349,7 +402,7 @@ export class CasinoBot {
     // Try to post a fresh panel in the existing thread first.
     if (record.threadId && this.threadsAllowed) {
       const thread = await this.client.channels.fetch(record.threadId).catch(() => null);
-      if (thread?.isThread()) {
+      if (thread?.isThread() && this.allowsThread(thread)) {
         if (thread.archived) await thread.setArchived(false).catch(() => undefined);
         const screen = this.checked(await blackjackPanel(this.app, snap));
         const message = await thread.send(createOptions(screen));

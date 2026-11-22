@@ -17,6 +17,8 @@ import { FakeDiscord, textOf, buttonsOf, type FakeMessage, type FakeUser, type I
 export interface HarnessOptions {
   /** Enable test-mode outbound guard restricted to #casino (default true). */
   guard?: boolean;
+  /** With the guard on: also allow verified child threads of #casino. */
+  allowThreads?: boolean;
   /** Database file (default in-memory); pass the same path to simulate a restart. */
   dbPath?: string;
   seed?: number;
@@ -56,7 +58,7 @@ export class CasinoHarness {
     this.clock = options.clock ?? new ManualClock(Date.now());
     this.scheduler = new ManualScheduler(this.clock);
     this.app = new CasinoApp({ db: this.db, logger, clock: this.clock, scheduler: this.scheduler, rng: seededRng(options.seed ?? 7) });
-    this.guard = options.guard === false ? null : new OutboundGuard({ guildId: this.guildId, channelId: this.casino, applicationId: this.fd.appId }, logger);
+    this.guard = options.guard === false ? null : new OutboundGuard({ guildId: this.guildId, channelId: this.casino, applicationId: this.fd.appId, allowThreads: options.allowThreads ?? false }, logger);
     this.bot = new CasinoBot(this.app, logger, {
       guard: this.guard,
       makeRequest: this.fd.makeRequest as never,

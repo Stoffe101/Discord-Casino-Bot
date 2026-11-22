@@ -166,6 +166,12 @@ describe('OutboundGuard inside the running bot (full stack)', () => {
     const rec = await h.slash(admin, 'casinoadmin', { subcommand: 'setup', args: [] }, h.general);
     expect(rec.callbacks).toEqual([]);
     expect(h.app.settings.lobby(h.guildId).channelId).toBeNull();
+    // An admin in #casino pointing setup at #general is refused privately; nothing reaches #general.
+    const elsewhere = await h.slash(admin, 'casinoadmin', { subcommand: 'setup', args: [{ name: 'channel', type: 'channel', value: h.general }] });
+    expect(h.seen(elsewhere)!.forUser).toBe(admin.id);
+    expect(h.text(h.seen(elsewhere))).toMatch(/test mode/i);
+    expect(h.app.settings.lobby(h.guildId).channelId).toBeNull();
+    expect(h.fd.log.some((r) => r.route.includes(h.general))).toBe(false);
     // Setup from #casino works and posts the lobby there.
     const ok = await h.slash(admin, 'casinoadmin', { subcommand: 'setup' });
     expect(ok.errors).toEqual([]);

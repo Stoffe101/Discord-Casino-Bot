@@ -23,12 +23,13 @@ This report keeps four kinds of evidence apart:
   - **Allowed:** messages in the allowlisted channel, answers to interactions that came from it, and command registration for that server.
   - **Refused:** threads, DMs, other channels or servers, reactions, pins, settings, global commands, and any payload that could ping.
 - **Interactions.** Interactions from other channels or threads are dropped before routing, so no response is sent outside the allowlist.
+- **Lobby.** `/casinoadmin setup` pointed at another channel is refused privately (tested). If no lobby is configured, test mode posts it in the allowlisted channel on startup.
 - **Guard tests** (`tests/outbound-guard.test.ts`, 50 cases):
   - the policy table;
   - token expiry and percent-encoded routes;
   - a real discord.js `REST` client: blocked requests never reach the network;
   - full-stack cases: an interaction from `#general` produces zero HTTP requests, setup elsewhere is refused, a thread panel is relocated without touching the thread, and timeouts, lobby refreshes and closes stay inside the allowlist.
-- **Live evidence.** On the first guarded boot, the bot tried to update an existing table panel inside a thread (created by an earlier unguarded run). The guard blocked the edit, logged it, and the table was re-posted in the allowed channel. No further blocked requests occurred.
+- **Live evidence.** On the first guarded boot, the bot tried to update an existing table panel inside a thread (created by an earlier unguarded run). The guard blocked the edit, logged it, and the table was re-posted in the allowed channel. Today's log has exactly one blocked request (that one) and no error lines.
 
 ## 2. What ran and the results
 
@@ -47,9 +48,9 @@ This report keeps four kinds of evidence apart:
 | 20 players / 4 tables with 25 ms latency, 2 hands | C | ✅ Same, plus every acknowledgement under 3 s |
 | 60 players / 12 tables with 40 ms latency (`simulate:discord`) | C | ✅ 36 hands, 472 interactions, 0 late; ledger OK |
 | 60 players / 12 tables × 15 hands with a crash (`simulate --crash`) | C (engine) | ✅ 180 hands; 12 tables restored; ledger OK; 0 open escrows |
-| Single instance per database | live | ✅ A second `node dist/main.js` refused with exit code 2 while the bot ran |
+| Single instance per database | live | ✅ With the bot running, a second `node dist/main.js` printed the refusal and exited with code 2; the running bot was unaffected. A restart right after a hard kill started normally, because the OS released the lock |
 | Live database offline reconcile (`npm run reconcile`) | live | ✅ 0 problems |
-| Full suite (`npm run check`) | — | ✅ 239 tests, typecheck, lint, build |
+| Full suite (`npm run check`) | — | ✅ 240 tests, typecheck, lint, build |
 
 ## 3. Issues found and fixed
 
@@ -65,7 +66,7 @@ Each fix has a regression test (`tests/ui-regressions.test.ts` unless noted).
 | 6 | Closed table read "empty table. Any open bets…" | client screenshot | Reason capitalised |
 | 7 | Leaderboard "Maja — −25" looked like a typo | client screenshot | Separator changed to "·" |
 | 8 | Test mode could still **ping members inside the channel** (the coinflip card pinged its opponent) | review | Guard rejects any payload that could mention someone; coinflip drops the ping in test mode; client default is `allowedMentions: { parse: [] }` (`tests/outbound-guard.test.ts`) |
-| 9 | **Two bot processes could run against one database**. It happened once during this session's restart, for about a minute with no player activity; the ledger was checked afterwards (0 problems) | own restart mistake | PID lock file next to the database; a second copy exits with code 2; the Windows runner stops instead of retrying (`tests/instance-lock.test.ts`, plus live proof) |
+| 9 | **Two bot processes could run against one database**. It happened once during this session's restart, for about a minute with no player activity; the ledger was checked afterwards (0 problems) | own restart mistake | An OS-held lock (a named pipe keyed on the database path) that the OS releases when the process dies. A second copy exits with code 2; the Windows runner stops instead of retrying. A first version used a PID file; it was replaced after review because PIDs get reused after hard kills and a fresh clone has no `data/` folder yet (`tests/instance-lock.test.ts`: hard-killed holder, missing folder; plus live proof) |
 | 10 | A panel stored in a thread couldn't be updated under the allowlist | first guarded boot | Treated as a missing panel and re-posted in the allowed channel (`tests/outbound-guard.test.ts`) |
 
 ## 4. Performance
@@ -101,7 +102,11 @@ The running bot now logs Discord API timings by request kind every 10 minutes an
   - Disabled actions (Split, Surrender) are visibly greyed out.
 - **Wrapping:** at the window size used, the lobby's 8 buttons wrapped to three lines; still tidy.
 - **Screenshots stay local.** They were taken of the allowlisted channel only and kept out of the repository and PR, because they show member names and the server.
-- **No test messages left behind.** The bench message was deleted at the end of testing.
+- **Messages the bot left in the channel:**
+  - The lobby. It was already there and is reused.
+  - A "Table 01 — closed" panel, re-posted from the thread when test mode started, then closed by the idle sweep.
+  - The bench message was deleted at the end of testing.
+  - The thread from the earlier unguarded run still shows that table's last open panel. Test mode can't edit threads, so it stays stale, and clicks on it get no response while test mode is on.
 
 ## 7. Remaining limitations and unverified behaviour
 
@@ -109,7 +114,7 @@ The running bot now logs Discord API timings by request kind every 10 minutes an
 - **Threads are untested live.** Production mode uses one thread per table, and posting in threads was not authorised for this session. Thread creation, private-thread membership and thread panels are covered only by the harness.
 - **Mobile layout** was not inspected in a real mobile client.
 - **Early-session reward inflation:** first-hand achievements and missions can roughly double a new player's bankroll in one evening. This is a design choice, left unchanged; a "reward multiplier" setting would be a small follow-up.
-- **Single process only**, now enforced by the database lock.
+- **Single process only**, now enforced by an OS-held lock on the database path.
 
 ## 8. Reproducing
 

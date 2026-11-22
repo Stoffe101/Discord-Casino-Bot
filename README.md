@@ -216,7 +216,8 @@ to pick when there are zero or several matching channels. With test mode on:
 - Interactions from other channels or threads get no response at all.
 - Threads are not used: table and roulette panels are posted in the allowlisted channel. Panels
   that already live in a thread are re-posted there on startup.
-- `/casinoadmin setup` only works in the allowlisted channel.
+- `/casinoadmin setup` only works in the allowlisted channel. If no lobby is configured yet, the bot posts
+  it there on startup.
 - `npm run live-bench` shows every screen once through a single bot message, letting Discord's own API validate
   each payload, then deletes the message (`--keep` / `--cleanup` / `--only name`).
 
@@ -300,14 +301,15 @@ exactly-once (round id primary key). What happens if the process stops:
 Panels are re-rendered on startup; missing table messages or threads are recreated, and the lobby
 message is edited in place (or re-posted if it was deleted). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-> **Single process only — enforced.** The bot holds a lock file next to the database
-> (`data/casino.db.lock`) and a second copy refuses to start (exit code 2) instead of running two
-> bots against one database. A lock left by a crashed process is taken over automatically.
+> **Single process only — enforced.** The bot holds an operating-system lock tied to its database
+> (a named pipe on Windows), and a second copy refuses to start (exit code 2) instead of running two
+> bots against one database. The OS releases the lock whenever the process ends — even after a
+> crash or hard kill — so there is never a stale lock to clean up.
 
 ## Testing
 
 ```powershell
-npm test                  # 239 tests, ~15 s, fully headless (never connects to Discord)
+npm test                  # 240 tests, ~15 s, fully headless (never connects to Discord)
 npm run check             # typecheck + lint + tests + build
 npm run simulate          # engine level, e.g. -- --tables 12 --players 5 --rounds 15 --crash
 npm run simulate:discord  # full Discord stack, e.g. -- --tables 12 --players 5 --rounds 3 --latency 40
@@ -352,7 +354,7 @@ player, mobile rendering) is listed as unverified in [docs/TESTING_REPORT.md](do
 | Symptom | Fix |
 | --- | --- |
 | `Configuration problem: DISCORD_TOKEN is not set` | Copy `.env.example` to `.env` and fill it in |
-| `Another casino bot (process …) is already using ./data/casino.db` | A copy is already running (another terminal, `npm run dev`, or the Windows runner). Stop it first |
+| `Another casino bot is already running against ./data/casino.db` | A copy is already running (another terminal, `npm run dev`, or the Windows runner). Stop it first |
 | Nothing happens outside one channel | Test mode is on (`CASINO_TEST_MODE=true`); see [Test mode](#test-mode-one-channel-allowlist) |
 | Slash commands don't appear | Run `npm run register-commands`; set `DISCORD_DEV_GUILD_ID` for instant registration; global commands can take up to an hour |
 | "Missing permissions" on setup | Grant the permissions listed above in the casino channel (check channel overrides) |

@@ -399,10 +399,12 @@ export class FakeDiscord {
     (this.client as unknown as { actions: { InteractionCreate: { handle(d: Json): void } } }).actions.InteractionCreate.handle(raw);
   }
 
-  slash(user: FakeUser, channelId: string, name: string, options: { subcommand?: string; args?: Array<{ name: string; type: 'string' | 'integer' | 'user'; value: string | number }> } = {}): InteractionRecord {
+  slash(user: FakeUser, channelId: string, name: string, options: { subcommand?: string; args?: Array<{ name: string; type: 'string' | 'integer' | 'user' | 'channel'; value: string | number }> } = {}): InteractionRecord {
     const { raw, rec } = this.base(user, channelId, 'command', null, null);
-    const args = (options.args ?? []).map((a) => ({ name: a.name, type: a.type === 'string' ? 3 : a.type === 'integer' ? 4 : 6, value: a.value }));
+    const typeCode = { string: 3, integer: 4, user: 6, channel: 7 } as const;
+    const args = (options.args ?? []).map((a) => ({ name: a.name, type: typeCode[a.type], value: a.value }));
     const resolvedUsers = (options.args ?? []).filter((a) => a.type === 'user').map((a) => this.users.get(String(a.value))!).filter(Boolean);
+    const resolvedChannels = (options.args ?? []).filter((a) => a.type === 'channel').map((a) => this.channels.get(String(a.value))!).filter(Boolean);
     raw.type = 2;
     raw.data = {
       id: snowflake(),
@@ -410,7 +412,9 @@ export class FakeDiscord {
       type: 1,
       guild_id: raw.guild_id,
       options: options.subcommand ? [{ name: options.subcommand, type: 1, options: args }] : args,
-      ...(resolvedUsers.length ? { resolved: this.resolved(resolvedUsers) } : {}),
+      ...(resolvedUsers.length || resolvedChannels.length
+        ? { resolved: { ...(resolvedUsers.length ? this.resolved(resolvedUsers) : {}), ...(resolvedChannels.length ? { channels: Object.fromEntries(resolvedChannels.map((ch) => [ch.id, { ...this.channelJson(ch), permissions: '2251799813685247' }])) } : {}) } }
+        : {}),
     };
     this.dispatch(raw);
     return rec;

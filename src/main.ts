@@ -36,7 +36,7 @@ async function shutdown(reason: string, exitCode: number): Promise<void> {
     logger.error('error during shutdown', { error });
   } finally {
     db?.close();
-    lock?.release();
+    await lock?.release().catch(() => undefined);
     logger.info('goodbye');
     process.exit(exitCode);
   }
@@ -54,12 +54,12 @@ async function main(): Promise<void> {
     throw new ConfigError(error instanceof Error ? error.message : String(error));
   }
   try {
-    lock = acquireInstanceLock(env.databasePath);
+    // Held by the operating system: released automatically when this process ends, however it ends.
+    lock = await acquireInstanceLock(env.databasePath);
   } catch (error) {
     if (error instanceof InstanceLockError) throw new ConfigError(error.message);
     throw error;
   }
-  process.on('exit', () => lock?.release());
   db = openDatabase(env.databasePath);
   app = new CasinoApp({ db, logger });
   bot = new CasinoBot(app, logger, { guard: allowlist ? new OutboundGuard(allowlist, logger) : null });
@@ -96,7 +96,7 @@ main().catch((error: unknown) => {
     await app?.shutdown().catch(() => undefined);
     await bot?.client.destroy().catch(() => undefined);
     db?.close();
-    lock?.release();
+    await lock?.release().catch(() => undefined);
     setTimeout(() => process.exit(1), 2_000).unref();
   })();
 });

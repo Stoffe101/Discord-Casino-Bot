@@ -306,7 +306,9 @@ export class CasinoBot {
   /** The channel new tables are created in: the lobby channel if set, else where the user is. */
   async casinoChannel(guildId: string, fallbackChannelId: string | null): Promise<TextChannel | null> {
     const lobby = this.app.settings.lobby(guildId).channelId;
-    for (const id of [lobby, fallbackChannelId]) {
+    // In test mode the allowlisted channel is the last resort, so a table that can't stay where it
+    // was (e.g. a thread under another channel) is re-homed there instead of being closed.
+    for (const id of [lobby, fallbackChannelId, this.guard?.allow.channelId ?? null]) {
       if (!id || !this.allowsChannel(id)) continue;
       const channel = await this.client.channels.fetch(id).catch(() => null);
       if (channel?.isThread()) {
@@ -453,6 +455,7 @@ export class CasinoBot {
     }
     const message = await (thread ?? channel).send(createOptions(screen));
     await this.app.roulette.attachDiscord(wheelId, { channelId: channel.id, threadId: thread?.id ?? null, messageId: message.id });
+    if (thread) this.track(this.removeThreadNotice(channel, thread.id));
     this.requestLobby(wheel.record.guildId);
     return thread?.url ?? message.url;
   }

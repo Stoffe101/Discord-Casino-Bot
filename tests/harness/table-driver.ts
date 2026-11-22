@@ -18,6 +18,7 @@ export interface DriveOptions {
   latencyMs?: number;
 }
 
+
 export interface DriveReport {
   tables: number;
   players: number;
@@ -110,11 +111,19 @@ export async function driveTables(h: CasinoHarness, options: DriveOptions): Prom
   await h.settle();
 
   const ack = interactions.filter((r) => r.ackedAt !== null).map((r) => r.ackedAt! - r.createdAt).sort((a, b) => a - b);
-  const writes = h.fd.log.filter((r) => r.method !== 'GET' && r.route.startsWith('/channels/')).map((r) => r.at).sort((a, b) => a - b);
+  // Discord rate-limits message writes per channel (each thread is its own channel).
+  const byChannel = new Map<string, number[]>();
+  for (const r of h.fd.log) {
+    const channel = r.method !== 'GET' ? /^\/channels\/(\d+)/.exec(r.route)?.[1] : undefined;
+    if (channel) byChannel.set(channel, [...(byChannel.get(channel) ?? []), r.at]);
+  }
   let peak = 0;
-  for (let i = 0, j = 0; i < writes.length; i++) {
-    while (writes[i]! - writes[j]! > 5_000) j++;
-    peak = Math.max(peak, i - j + 1);
+  for (const writes of byChannel.values()) {
+    writes.sort((a, b) => a - b);
+    for (let i = 0, j = 0; i < writes.length; i++) {
+      while (writes[i]! - writes[j]! > 5_000) j++;
+      peak = Math.max(peak, i - j + 1);
+    }
   }
   const kinds: Record<string, number> = {};
   for (const r of h.fd.log) {

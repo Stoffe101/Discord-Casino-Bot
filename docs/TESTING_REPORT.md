@@ -35,7 +35,16 @@ It may not rename or delete threads, create nested threads, or reach threads of 
 - learning from real discord.js REST responses, where a lookup of a #general thread does *not* unlock it;
 - full-stack cases: a table thread is created under #casino, played in, then closed, locked and archived; a private table gets a private thread and the joining player is added; an interaction from a member's thread under #general is ignored; three tables get three threads, with no panels or notices left in #casino.
 
-The whole suite passes: 278 tests.
+Five thread-mode scenarios run through the full stack (`tests/integration/threads-mode.test.ts`):
+- a crash and resume: the thread is looked up and verified, and the same message is edited;
+- 10 players on 2 tables concurrently;
+- roulette in its own thread;
+- timeouts, settlement and the idle close;
+- a table whose thread lives under another channel: it is never written to and is re-homed under #casino.
+
+A 60/12 scale run in thread mode (`simulate:discord --threads`): 36 hands, 472 interactions, 0 late, 0 blocked, ledger OK.
+
+The whole suite passes: 283 tests.
 
 **Live: `npm run live-tables`.** This runs the real bot thread code against real Discord: thread creation, panel sync with dealer reveal frames, and close/lock/archive. The players are simulated through the game services.
 
@@ -124,7 +133,7 @@ Each fix has a regression test (`tests/ui-regressions.test.ts` unless noted).
 | Panel updates sent by answering the click itself (no extra request) | 304 of 415 (73%) |
 | Memory, 12-table run | JS heap ~39 MB (stable). RSS 130 → ~300 MB, mostly native memory from the image renderer |
 
-**Bottleneck found: one shared channel in test mode.** With 12 tables, test mode peaked at 40–73 channel message writes per 5 s, far above Discord's per-channel edit limit. Clicks aren't affected (they answer through the interaction), but timer-driven panel updates would queue. In normal mode each table has its own thread, and with it its own rate limit. **Recommendation:** keep test mode to a few tables, and use threads in production.
+**Bottleneck found: one shared channel in test mode with threads off.** With 12 tables, it peaked at 40–73 channel message writes per 5 s, far above Discord's per-channel edit limit. Clicks aren't affected (they answer through the interaction), but timer-driven panel updates would queue. In normal mode each table has its own thread, and with it its own rate limit. **Recommendation:** with threads off, keep test mode to a few tables; use threads otherwise. In thread mode the same 12-table run peaked at 24 writes in one channel, all in #casino at the moment 12 tables opened together (thread creation plus notice removal). Per-table panel edits go to separate threads.
 
 The running bot now logs Discord API timings by request kind every 10 minutes and on shutdown. They also appear in `/casinoadmin health`.
 
@@ -149,7 +158,8 @@ The running bot now logs Discord API timings by request kind every 10 minutes an
   - The lobby. It was already there and is reused.
   - A "Table 01 — closed" panel, re-posted from the thread when test mode started, then closed by the idle sweep.
   - The bench message was deleted at the end of testing.
-  - The thread from the earlier unguarded run still shows that table's last open panel. Test mode can't edit threads, so it stays stale, and clicks on it get no response while test mode is on.
+  - The thread from the earlier unguarded run was closed, locked and archived in round 2.
+  - Round 2 left **8 archived, locked bench threads** under #casino. Three are private, and they are named like real tables (`blackjack-table-NN`). The guard deliberately can't delete threads, so remove them by hand if you want them gone.
 
 ## 7. Remaining limitations and unverified behaviour
 

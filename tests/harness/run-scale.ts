@@ -16,7 +16,8 @@ const num = (name: string, fallback: number) => {
 
 async function main(): Promise<void> {
   const dir = mkdtempSync(join(tmpdir(), 'casino-scale-'));
-  const h = new CasinoHarness({ dbPath: join(dir, 'scale.db'), seed: num('seed', 2026) });
+  const threads = args.includes('--threads');
+  const h = new CasinoHarness({ dbPath: join(dir, 'scale.db'), seed: num('seed', 2026), allowThreads: threads });
   const report = await driveTables(h, { tables: num('tables', 12), players: num('players', 5), rounds: num('rounds', 3), latencyMs: num('latency', 0) });
   const panels = h.bot.tablePanels.stats;
   const latency = h.bot.router.latency;
@@ -29,7 +30,7 @@ async function main(): Promise<void> {
   console.log(`router handling avg ${(latency.totalMs / Math.max(1, latency.count)).toFixed(1)} ms · max ${latency.maxMs} ms`);
   console.log(`panel renders ${panels.renders} · via click ${panels.viaInteraction} · via REST ${panels.viaRest} · image reused ${panels.reusedImage} · failures ${panels.failures}`);
   console.log(`Discord requests ${report.requests}: ${Object.entries(report.requestsByKind).map(([k, v]) => `${k} ×${v}`).join(' · ')}`);
-  console.log(`peak channel writes in any 5 s window: ${report.peakChannelWritesPer5s} (all tables share one channel in test mode)`);
+  console.log(`peak writes to one channel in any 5 s window: ${report.peakChannelWritesPer5s} (${threads ? 'each table has its own thread' : 'all tables share #casino'}) · guard blocked ${h.guard?.blockedCount ?? 0}`);
   const mem = process.memoryUsage();
   const mb = (n: number) => Math.round(n / 1048576);
   console.log(`memory rss ${report.rssMb.before} → ${report.rssMb.after} MB · heap used ${mb(mem.heapUsed)} MB · external ${mb(mem.external)} MB · array buffers ${mb(mem.arrayBuffers)} MB`);

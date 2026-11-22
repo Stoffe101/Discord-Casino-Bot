@@ -239,7 +239,16 @@ export class RouletteService {
         return 'spun';
       });
     } catch (error) {
-      this.logger.error('roulette deadline failed', { wheelId, error });
+      // Never leave a wheel stuck with bets on it: void this spin and refund everyone.
+      this.logger.error('roulette spin failed; voiding and refunding', { wheelId, error });
+      await this.mutate(wheelId, undefined, ({ record, state }) => {
+        if (state.bets.length === 0) return 'unchanged';
+        this.recorder.voidRound(record.guildId, state.roundId, 'roulette', record.id, 'Spin failed — bets refunded');
+        state.bets = [];
+        state.deadline = null;
+        state.roundId = newId();
+        return undefined;
+      }).catch((e: unknown) => this.logger.error('roulette void failed', { wheelId, error: e }));
     }
   }
 

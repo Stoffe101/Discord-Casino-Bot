@@ -277,6 +277,39 @@ describe('BlackjackTableService', () => {
       expect(h.economy.reconcile()).toEqual([]);
     });
 
+    it('removing the player whose turn it is stands their hand at once', async () => {
+      const t = await seatPlayers(h, 2);
+      await h.tables.debugSetShoe(t, ['TS', '9S', '7H', '6C', '9D', 'TH'] as Card[]);
+      await h.tables.placeBet(t, u(1), 50);
+      await h.tables.placeBet(t, u(2), 50);
+      await h.tick(ALL_IN_DEAL_DELAY_MS);
+      // Make player 2 the host so they can remove player 1, whose turn it is.
+      await h.tables.leave(t, u(1)).catch(() => undefined);
+      const snap = h.tables.peek(t)!;
+      // Player 1 chose to leave mid-turn: their hand stood immediately and play moved on.
+      expect(currentTurnUserId(snap.state.round!)).toBe(u(2));
+      await h.tables.act(t, u(2), 'stand', snap.state.round!.seq);
+      expect(h.tables.peek(t)!.state.seats.map((s) => s.userId)).toEqual([u(2)]);
+
+      // Now a real kick: host (player 2) removes a newcomer during the newcomer's turn.
+      h.economy.ensurePlayer(GUILD, u(3), 'Player 3');
+      await h.tables.join(t, u(3), 'Player 3');
+      await h.tables.debugSetShoe(t, ['TS', '5S', '7H', '9C', '6D', 'TH'] as Card[]);
+      await h.tables.placeBet(t, u(2), 20);
+      await h.tables.placeBet(t, u(3), 20);
+      await h.tick(ALL_IN_DEAL_DELAY_MS);
+      // The newcomer took the free first seat, so it is their turn.
+      expect(currentTurnUserId(h.tables.peek(t)!.state.round!)).toBe(u(3));
+      await h.tables.kick(t, u(2), u(3));
+      const r = h.tables.peek(t)!.state.round!;
+      expect(currentTurnUserId(r)).toBe(u(2)); // no waiting for the removed player's timer
+      await h.tables.act(t, u(2), 'stand', r.seq);
+      const after = h.tables.peek(t)!;
+      expect(after.state.phase).toBe('betting');
+      expect(after.state.seats.map((s) => s.userId)).toEqual([u(2)]);
+      expect(h.economy.reconcile()).toEqual([]);
+    });
+
     it('refunds an open bet when leaving between rounds', async () => {
       const t = await seatPlayers(h, 2);
       await h.tables.placeBet(t, u(2), 75);

@@ -291,6 +291,46 @@ describe('InteractionRouter (headless)', () => {
     expect(kinds(c.calls)).toEqual(['deferUpdate', 'editReply']);
   });
 
+  it('refuses table and wheel ids that belong to another server', async () => {
+    const OTHER = '999999999999999999';
+    app.economy.ensurePlayer(OTHER, 'outsider', 'Outsider');
+    const foreign = await app.blackjack.createTable({ guildId: OTHER, ownerId: 'outsider', ownerName: 'Outsider' });
+    const { wheel } = await app.roulette.open(OTHER);
+    const id = foreign.record.id;
+    for (const customId of [`bj:bet:${id}:50`, `bj:seat:${id}`, `bj:rules:${id}`, `bj:betx:${id}`, `bj:join:${id}`, `rl:clear:${wheel.record.id}`]) {
+      const { calls } = await run({ kind: 'button', user: 1, customId });
+      expect(textOf(calls[0]), customId).toMatch(/closed/);
+    }
+    const modalBet = await run({ kind: 'modal', user: 1, customId: `m:bjbet:${id}`, fields: { amount: '50' } });
+    expect(textOf(modalBet.calls[0])).toMatch(/closed/);
+    const adminClose = await run({ kind: 'button', user: 1, admin: true, customId: `adm:close:${id}`, ephemeralSource: true });
+    expect(textOf(adminClose.calls[0])).toMatch(/closed/);
+    expect(app.blackjack.peek(id)).toBeDefined();
+    expect(app.blackjack.peek(id)!.state.bets).toEqual({});
+  });
+
+  it('discord.js serialises our raw Components V2 payloads without altering them', async () => {
+    const { MessagePayload } = await import('discord.js');
+    const { replyOptions, editOptions } = await import('../src/discord/payload.js');
+    const { homeScreen } = await import('../src/ui/screens/home.js');
+    const { blackjackPanel } = await import('../src/ui/screens/blackjack.js');
+    const viewer = { guildId: GUILD, userId: userId(1), displayName: 'Player 1', avatarUrl: 'https://cdn.discordapp.com/embed/avatars/0.png', isAdmin: false };
+    app.economy.ensurePlayer(GUILD, userId(1), 'Player 1');
+    const home = homeScreen(app, viewer);
+    const target = { client: bot.client } as never; // a plain channel-like target
+    const body = MessagePayload.create(target, replyOptions(home)).resolveBody().body as { components: unknown; flags: number };
+    expect(body.components).toEqual(JSON.parse(JSON.stringify(home.components)));
+    expect(body.flags & MessageFlags.IsComponentsV2).toBeTruthy();
+
+    const t = await app.blackjack.createTable({ guildId: GUILD, ownerId: userId(1), ownerName: 'Player 1' });
+    const panel = await blackjackPanel(app, app.blackjack.peek(t.record.id)!);
+    const payload = MessagePayload.create(target, editOptions(panel)).resolveBody();
+    await payload.resolveFiles();
+    const edit = payload.body as { components: unknown; attachments: unknown[] };
+    expect(edit.components).toEqual(JSON.parse(JSON.stringify(panel.components)));
+    expect(payload.files?.map((f) => f.name)).toEqual([panel.files![0]!.name]);
+  });
+
   it('ignores duplicate deliveries of the same interaction', async () => {
     const f = fake({ kind: 'command', user: 1, commandName: 'daily' });
     await bot.router.handle(f.i as never);

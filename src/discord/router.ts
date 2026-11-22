@@ -205,6 +205,23 @@ export class InteractionRouter {
     if (!i.deferred && !i.replied) await i.deferUpdate().catch(() => undefined);
   }
 
+  /** Resolve a table id from a custom id / modal, refusing ids that belong to another server. */
+  private table(viewer: Viewer, tableId: string) {
+    const snap = this.app.blackjack.peek(tableId);
+    if (!snap || snap.record.guildId !== viewer.guildId) {
+      throw new UserError('That table has closed. Open the lobby to find another one.', 'table_closed', 'Table closed');
+    }
+    return snap;
+  }
+
+  private wheel(viewer: Viewer, wheelId: string) {
+    const wheel = this.app.roulette.peek(wheelId);
+    if (!wheel || wheel.record.guildId !== viewer.guildId) {
+      throw new UserError('This roulette wheel has closed. Open a new one from the casino.', 'wheel_closed', 'Wheel closed');
+    }
+    return wheel;
+  }
+
   private requireAdmin(viewer: Viewer): void {
     if (!viewer.isAdmin) throw new UserError('Only server managers can use casino admin tools.', 'not_admin', 'Admins only');
   }
@@ -570,10 +587,12 @@ export class InteractionRouter {
   private async blackjack(i: Component, viewer: Viewer, action: string, args: string[], arm: (m: AckMode) => void): Promise<void> {
     const tableId = args[0] ?? '';
     const tables = this.app.blackjack;
+    if (action === 'home') {
+      arm('reply');
+      return this.show(i, homeScreen(this.app, viewer), this.fromEphemeral(i) ? 'auto' : 'private');
+    }
+    const snap = this.table(viewer, tableId);
     switch (action) {
-      case 'home':
-        arm('reply');
-        return this.show(i, homeScreen(this.app, viewer), this.fromEphemeral(i) ? 'auto' : 'private');
       case 'rules':
         arm('reply');
         return this.show(i, rulesScreen(this.app, viewer.guildId, tableId), 'private');
@@ -582,15 +601,10 @@ export class InteractionRouter {
         return this.show(i, mySeatScreen(this.app, viewer, tableId), 'private');
       case 'join':
         return this.joinTable(i, viewer, tableId, arm);
-      case 'betx': {
-        const snap = tables.peek(tableId);
-        if (!snap) throw new UserError('That table has closed.', 'table_closed');
+      case 'betx':
         return this.showModal(i, customBetModal(tableId, snap.record.config.minBet, snap.record.config.maxBet, snap.state.bets[viewer.userId] ?? null));
-      }
     }
     this.requireOpen(viewer);
-    const snap = tables.peek(tableId);
-    if (!snap || snap.record.guildId !== viewer.guildId) throw new UserError('That table has closed. Open the lobby to find another one.', 'table_closed', 'Table closed');
     switch (action) {
       case 'bet':
       case 'rebet': {
@@ -691,12 +705,13 @@ export class InteractionRouter {
         if (!i.isStringSelectMenu()) return;
         const type = i.values[0] ?? '';
         if (!isBetType(type)) throw new UserError('Unknown bet type.');
+        const wheel = this.wheel(viewer, args[0] ?? '');
         const limits = this.app.settings.get(viewer.guildId).roulette;
-        return this.showModal(i, rouletteBetModal(args[0] ?? '', type, limits.minBet, limits.maxBet));
+        return this.showModal(i, rouletteBetModal(wheel.record.id, type, limits.minBet, limits.maxBet));
       }
       case 'clear':
         arm('update');
-        await this.app.roulette.clearBets(args[0] ?? '', viewer.userId, i);
+        await this.app.roulette.clearBets(this.wheel(viewer, args[0] ?? '').record.id, viewer.userId, i);
         return this.settle(i);
     }
   }
@@ -730,6 +745,8 @@ export class InteractionRouter {
       return this.showModal(i, coinflipModal(user.id, name, limits.minBet, limits.maxBet));
     }
     const id = args[0] ?? '';
+    const existing = this.app.coinflip.get(id);
+    if (!existing || existing.guildId !== viewer.guildId) throw new UserError('That challenge no longer exists.', 'unknown_challenge');
     this.handledChallenges.add(id);
     try {
       let challenge: Challenge;
@@ -804,11 +821,11 @@ export class InteractionRouter {
         return this.show(i, adminTablesScreen(this.app, viewer.guildId));
       case 'close':
         arm('update');
-        await this.app.blackjack.closeTable(args[0] ?? '', 'closed by an admin', { force: true });
+        await this.app.blackjack.closeTable(this.table(viewer, args[0] ?? '').record.id, 'closed by an admin', { force: true });
         return this.show(i, adminTablesScreen(this.app, viewer.guildId));
       case 'closewheel':
         arm('update');
-        await this.app.roulette.close(args[0] ?? '', 'closed by an admin');
+        await this.app.roulette.close(this.wheel(viewer, args[0] ?? '').record.id, 'closed by an admin');
         return this.show(i, adminTablesScreen(this.app, viewer.guildId));
       case 'lobby':
         arm('update');
@@ -867,9 +884,8 @@ export class InteractionRouter {
       }
       case 'tblcode': {
         arm('update');
-        const tableId = args[0] ?? '';
-        const snap = this.app.blackjack.peek(tableId);
-        if (!snap) throw new UserError('That table has closed.', 'table_closed');
+        const snap = this.table(viewer, args[0] ?? '');
+        const tableId = snap.record.id;
         await this.app.blackjack.join(tableId, viewer.userId, viewer.displayName, field('code'));
         const url = await this.bot.addToTableThread(tableId, viewer.userId);
         return this.show(i, this.seatedScreen(snap.record.name, url, 'Code accepted — welcome to the table.'), this.fromEphemeral(i) ? 'auto' : 'private');
@@ -877,14 +893,15 @@ export class InteractionRouter {
       case 'bjbet': {
         arm('update');
         this.requireOpen(viewer);
-        const tableId = args[0] ?? '';
+        const tableId = this.table(viewer, args[0] ?? '').record.id;
         await this.app.blackjack.placeBet(tableId, viewer.userId, amount(field('amount')), viewer.displayName, i);
         return this.settle(i);
       }
       case 'rlbet': {
         arm('update');
         this.requireOpen(viewer);
-        const [wheelId = '', type = ''] = args;
+        const [rawWheelId = '', type = ''] = args;
+        const wheelId = this.wheel(viewer, rawWheelId).record.id;
         if (!isBetType(type)) throw new UserError('Unknown bet type.');
         const number = type === 'straight' ? amount(field('number')) : undefined;
         await this.app.roulette.placeBet(wheelId, { userId: viewer.userId, displayName: viewer.displayName, type, number, amount: amount(field('amount')) }, i);

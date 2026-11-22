@@ -160,6 +160,26 @@ describe('RouletteService', () => {
     await expect(s.roulette.placeBet(wheel.record.id, { userId: u(1), displayName: 'P1', type: 'straight', number: 37, amount: 10 })).rejects.toThrow(/0 to 36/);
   });
 
+  it('voids and refunds a spin that fails instead of leaving the wheel stuck', async () => {
+    const { wheel } = await s.roulette.open(GUILD);
+    await s.roulette.placeBet(wheel.record.id, { userId: u(1), displayName: 'P1', type: 'red', amount: 80 });
+    const recorder = (s.roulette as unknown as { recorder: { record: (...a: unknown[]) => unknown } }).recorder;
+    const original = recorder.record.bind(recorder);
+    recorder.record = () => {
+      throw new Error('disk full');
+    };
+    const deadline = s.roulette.peek(wheel.record.id)!.state.deadline!;
+    s.clock.set(deadline);
+    s.scheduler.runDue();
+    await s.roulette.idle();
+    recorder.record = original;
+    const state = s.roulette.peek(wheel.record.id)!.state;
+    expect(state.bets).toEqual([]);
+    expect(state.deadline).toBeNull();
+    expect(s.economy.getPlayer(GUILD, u(1))).toMatchObject({ balance: 1000, reserved: 0 });
+    expect(s.economy.reconcile()).toEqual([]);
+  });
+
   it('refunds withdrawn bets and keeps escrow across a restart', async () => {
     const { wheel } = await s.roulette.open(GUILD);
     await s.roulette.placeBet(wheel.record.id, { userId: u(1), displayName: 'P1', type: 'odd', amount: 40 });

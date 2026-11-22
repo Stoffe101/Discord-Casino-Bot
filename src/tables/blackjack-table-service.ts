@@ -454,6 +454,11 @@ export class BlackjackTableService {
       if (inRound) {
         seat.leaving = true;
         pushLog(ctx.state, ctx.now, `${seat.displayName} will be removed after this hand`, 'info');
+        // Don't make the table wait out the turn timer of someone being removed.
+        const round = ctx.state.round!;
+        if (currentTurnUserId(round) === targetId || round.phase === 'insurance') {
+          return { value: undefined, hint: this.applyRound(ctx, standAllHands(round, targetId, 'leaving')) };
+        }
       } else {
         this.removeSeat(ctx, seat, 'was removed by the host');
       }

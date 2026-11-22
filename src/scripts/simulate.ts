@@ -56,6 +56,7 @@ async function main(): Promise<void> {
   db.migrate();
   let app = new CasinoApp({ db, logger, clock, scheduler, rng: seededRng(num('seed', 2026)) });
   app.settings.set(GUILD, 'tables.maxTables', Math.max(TABLES, 6));
+  app.settings.set(GUILD, 'economy.startingBalance', 20_000); // enough bankroll that nobody goes broke mid-run
   const actionMs: number[] = [];
   const renderMs: number[] = [];
   const pngBytes: number[] = [];
@@ -115,6 +116,12 @@ async function main(): Promise<void> {
     clock.advance(ALL_IN_DEAL_DELAY_MS);
     scheduler.runDue();
     await app.blackjack.idle();
+    // Tables where someone couldn't bet wait for the full betting window instead.
+    if (tableIds.some((id) => app.blackjack.peek(id)?.state.phase === 'betting' && Object.keys(app.blackjack.peek(id)!.state.bets).length > 0)) {
+      clock.advance(app.settings.get(GUILD).blackjack.bettingSeconds * 1000);
+      scheduler.runDue();
+      await app.blackjack.idle();
+    }
     await Promise.all(tableIds.map(render));
     // Play until every table is back to betting.
     for (let step = 0; step < 200; step++) {

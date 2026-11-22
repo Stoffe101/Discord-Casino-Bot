@@ -80,7 +80,7 @@ Further reading: [Discord setup guide](docs/DISCORD_SETUP.md) · [Architecture](
 - TypeScript, Node.js 24, discord.js 14 with **Components V2**, SQLite via Node's built-in
   `node:sqlite` (no native build step on Windows), resvg for image rendering.
 - Append-only ledger, escrowed wagers, idempotent operations, exactly-once settlement,
-  deterministic restart recovery. **156 automated tests**, plus an end-to-end simulation.
+  deterministic restart recovery. **160 automated tests**, plus an end-to-end simulation.
 
 ## Quick start
 
@@ -271,9 +271,9 @@ message is edited in place (or re-posted if it was deleted). See [docs/ARCHITECT
 ## Testing
 
 ```powershell
-npm test            # 156 tests, ~3 s, fully headless
+npm test            # 160 tests, ~3 s, fully headless
 npm run check       # typecheck + lint + tests + build
-npm run simulate    # e.g. -- --tables 10 --rounds 50 --crash
+npm run simulate    # e.g. -- --tables 12 --players 5 --rounds 15 --crash
 ```
 
 The suite covers card values, every rule and payout (including a 3,000-round randomised invariant
@@ -281,12 +281,18 @@ test), shoe exhaustion, ten players on two concurrent tables with simultaneous c
 and stale buttons, escrow and ledger invariants, concurrent claims, crash/restart at every phase,
 corrupt state, orphan refunds, exact slot RTP by enumeration, roulette odds, coinflip races and
 expiry, UI payloads against Discord's limits (40 components, 10 per container, 4,000 characters,
-custom-id rules, attachments), and the interaction router driven by fake interactions.
+custom-id rules, attachments), discord.js's own serializer on our raw V2 payloads, ids from other
+servers being refused, and the interaction router driven by fake interactions.
 
-Sample local measurements (Windows 11, Node 24, `npm run simulate -- --tables 2 --rounds 20`):
-service actions average ~2 ms (p95 ~6 ms); a full table panel including the image renders in
-~65 ms on average; table images are ~150–190 KB. Discord network latency comes on top and was not
-measured — **no live Discord test has been run by the author of this release**.
+Local measurements (Windows 11, Node 24.13):
+
+| Run | Result |
+| --- | --- |
+| `simulate -- --tables 2 --players 5 --rounds 20` (10 players) | 40 hands; service actions avg ~2 ms (p95 ~6 ms); panel render incl. image avg ~65 ms |
+| `simulate -- --tables 12 --players 5 --rounds 15 --crash` (60 players, crash + recovery mid-run) | 180 hands settled in 35 s; ledger reconciled; chips conserved; 0 open escrows. With all 12 tables acting at the same instant: actions avg 13 ms (p95 32 ms, includes queueing), panel renders avg 132 ms (p95 233 ms — renders share libuv's default 4-thread pool) |
+
+Table images are ~150–190 KB. Discord network latency comes on top and was not measured —
+**no live Discord session has been run for this release**; see the smoke-test checklist in the PR.
 
 ## Troubleshooting
 

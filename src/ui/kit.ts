@@ -65,6 +65,17 @@ export function container(accent: number, components: (APIComponentInContainer |
   return { type: ComponentType.Container, accent_color: accent, components: components.filter(isPresent) };
 }
 
+/** The same screen with a short confirmation line under the first container's heading. */
+export function withNote(screen: Screen, note: string): Screen {
+  let done = false;
+  const components = screen.components.map((c) => {
+    if (done || c.type !== ComponentType.Container) return c;
+    done = true;
+    return { ...c, components: [...c.components.slice(0, 1), text(note), ...c.components.slice(1)] };
+  });
+  return { ...screen, components };
+}
+
 export function thumbnail(url: string, description?: string): APIThumbnailComponent {
   return { type: ComponentType.Thumbnail, media: { url }, ...(description ? { description: description.slice(0, 1024) } : {}) };
 }

@@ -11,7 +11,76 @@ This report keeps four kinds of evidence apart:
 | **A. Real Discord bot API** | Discord accepted what the bot sent | The running bot in test mode, plus `npm run live-bench`: one bot message in the allowlisted channel, edited through every screen |
 | **B. Real Discord UI inspection** | How the screens look in the desktop client | Read-only screenshots of the allowlisted channel. Stopped part-way at the owner's request, because screenshots hid their browser |
 | **C. Simulated players** | Behaviour of the real bot code under player actions | The full-stack harness: real discord.js, guard, router and panel sync against an in-memory Discord (`tests/harness/`). Its payload rules are *a model* of Discord's |
-| **D. Real human clicks** | Real players pressing buttons in the client | **Not verified.** The bot can't press its own buttons, and the owner's account was deliberately not automated |
+| **D. Real human clicks** | Real players pressing buttons in the client | **Round 5 only:** with the owner's explicit permission, Claude played as the owner's account (computer use) in the allowlisted channel and its table threads. Earlier rounds: not verified |
+
+## Round 5: live play on Discord, then fixes (owner request)
+
+**How:** with the owner's explicit permission, Claude controlled the Discord desktop client on the owner's PC and played as the owner's account for about 30 minutes, only in the allowlisted channel and its table threads. It clicked buttons, used menus and filled the bot's forms, but typed no chat messages and contacted nobody. Every step was screenshotted. The screenshots were cropped to the chat column and kept as a local HTML recording in `recordings/` (gitignored, not part of the PR). Afterwards the same click sequences were repeated on the fixed build, with bot-side timings taken from debug logs.
+
+**Clicked live:**
+- **Blackjack:**
+  - chip bet and Rebet;
+  - the deal GIF;
+  - My hand: open, Hit, Double, Stand, Refresh;
+  - Hit and Stand on the shared panel;
+  - a turn that timed out;
+  - dealer reveal and results.
+- **Roulette:** the bet menu and amount form (Red 50, Odd 10), the spin GIF and the result.
+- **Slots:** opening the machine, changing the bet, spinning.
+- **Other screens:**
+  - Home, and Collect from both Home and Rewards;
+  - More games;
+  - Profile, Leaderboards and Rewards.
+
+**Not clicked live:**
+- split, surrender, insurance, custom bet, Deal now, leave and sit out;
+- tables with other human players;
+- coinflip (needs a second person);
+- wallet, achievements, customize and admin.
+
+These remain covered by the simulated-player tests (C) only.
+
+**What live play showed, and the fixes:**
+
+| # | Seen live | Fix |
+| --- | --- | --- |
+| 1 | The betting countdown read "dealing 1 seconds ago" (and roulette "spinning 1 seconds ago") for 1–2 s: the next real change reaches the client after its deadline | A live countdown stops 3.5 s before its deadline. The services schedule one redraw, which shows **"dealing now…"**, **"spinning now — last bets!"** or **"time is nearly up — the hand stands automatically"**. A short wait (everyone has bet) shows no countdown at all |
+| 2 | Standing from **My hand** turned the private view into the seat menu with the new balance while the table still read "Skrra to act". The result was told before the dealer's turn had played | While the table is still animating, the private view shows your final hand, the dealer's up card and **"Dealer's turn — watch the table"**, with no balance. Refresh afterwards shows **"Hand 7 · You won 50"** with the full dealer hand, then the seat menu |
+| 3 | A hand that stood because the timer ran out looked like any other result | Results say **"· ran out of time"** for that player |
+| 4 | Reopening slots showed the previous spin ("No win this time · Bet 25 · −25") under "bet 5", as if it had just happened | Only a spin shows its result. Opening the machine or changing the bet shows **"Pull the lever · Last spin: no win · bet 5"** |
+| 5 | Collect changed the balance without a word | **"✓ Collected 16 chips"** / **"✓ Daily reward: +N chips"** on the screen the button was on |
+| 6 | After the deal GIF, a player had to wait for the GIF's hold and the still's upload (about 2 s) before the buttons appeared | A deal that leads into play carries the live turn text and buttons with its GIF. A deal that ends the hand at once (dealer blackjack) still keeps the outcome out of the text until it lands |
+
+**Measured** (bot side, debug log of the fixed build):
+
+| Step | Time |
+| --- | --- |
+| Chip click | handled in 3 ms; Discord answered the update in 0.3 s |
+| Deal GIF | sent 0.43 s after the betting deadline (0.26 s render, 0.41 s upload) |
+| Deal GIF, 5 players | 0.42 s to build |
+| Dealer's turn | 0.67–0.72 s to build |
+| GIF uploads | 0.4–0.65 s, up to 270 KB |
+
+The longest event-loop stall while encoding was **19 ms**, so other players' clicks are never held up.
+
+Two Discord-side outliers were 2.4 s (the first click after a restart) and 1.95 s (a plain edit). What the client shows also includes Discord's delivery and the GIF download. That is why the countdown fix matters more than shaving render time.
+
+**Verified:**
+- 322 tests pass. `tests/integration/live-findings.test.ts` covers findings 1–5 (checked to fail without the fixes); the deal-with-controls change is in `gif-animations.test.ts`.
+- `live-bench`: Discord accepted all 46 screens, including the 4 new ones; 0 blocked by the guard.
+- The live re-run showed:
+  - "dealing now…" and the deal arriving with its buttons;
+  - "time is nearly up", then "ran out of time";
+  - "Dealer's turn — watch the table", then "Hand 7 · You won 50";
+  - "spinning now — last bets!";
+  - "✓ Collected 16 chips";
+  - "Pull the lever · Last spin".
+- No warnings or errors in the bot log during the run.
+
+**Known limits:**
+- **My hand timer:** the private view's own timer ("decide in N seconds") is a snapshot. The bot can't redraw someone's private message on a timer, so it can still count past zero if left open; its Refresh button updates it.
+- **Slots last spin:** kept in memory, so after a restart the machine starts fresh.
+- **Image loading:** Discord sometimes shows the previous image for a moment while a new one loads.
 
 ## Round 4: real animation and "My hand" (owner request)
 

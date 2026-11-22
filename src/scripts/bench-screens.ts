@@ -11,7 +11,7 @@ import { CasinoApp } from '../app/casino-app.js';
 import { ALL_IN_DEAL_DELAY_MS } from '../tables/blackjack-table-service.js';
 import { currentTurnUserId } from '../games/blackjack/engine.js';
 import type { Card } from '../games/cards.js';
-import type { Screen } from '../ui/kit.js';
+import { withNote, type Screen } from '../ui/kit.js';
 import type { Viewer } from '../ui/screens/common.js';
 import { noticeScreen, errorScreen } from '../ui/screens/common.js';
 import { homeScreen, walletScreen, historyScreen } from '../ui/screens/home.js';
@@ -79,6 +79,8 @@ export async function buildScreens(guildId: string, channelId: string): Promise<
   }
   await add('bj-reveal', blackjackPanel(app, app.blackjack.peek(t)!, { revealStep: 0 }));
   await add('bj-results', blackjackPanel(app, app.blackjack.peek(t)!));
+  await add('my-hand-revealing', myHandScreen(app, viewer, t, { revealing: true }));
+  await add('my-hand-result', myHandScreen(app, viewer, t));
 
   // Roulette with a few bets, then the spin.
   const { wheel } = await app.roulette.open(guildId);
@@ -104,6 +106,7 @@ export async function buildScreens(guildId: string, channelId: string): Promise<
 
   await add('lobby', lobbyScreen(app, guildId));
   await add('home', homeScreen(app, viewer));
+  await add('home-collected', withNote(homeScreen(app, viewer), '### ✓ Collected 13 chips'));
   await add('wallet', walletScreen(app, viewer));
   await add('history', historyScreen(app, viewer, 0));
   await add('rewards', rewardsScreen(app, viewer));
@@ -117,6 +120,7 @@ export async function buildScreens(guildId: string, channelId: string): Promise<
   await add('games', gamesHubScreen(app, viewer));
   await add('slots-spinning', slotsScreen(app, viewer, 25, { stopped: 1 }));
   await add('slots-reels-gif', slotsScreen(app, viewer, 25, { animate: true }));
+  await add('slots-result', slotsScreen(app, viewer, 25, { result: true }));
   await add('slots', slotsScreen(app, viewer, 25));
   await add('paytable', paytableScreen(25));
   await add('help', helpScreen(app, viewer, 'start'));

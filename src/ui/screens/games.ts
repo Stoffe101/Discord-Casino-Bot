@@ -1,6 +1,6 @@
 import { createHash, randomInt } from 'node:crypto';
 import type { CasinoApp } from '../../app/casino-app.js';
-import { chips, discordTime, escapeMarkdown, signedChips } from '../../core/format.js';
+import { chips, countdown, discordTime, escapeMarkdown, signedChips } from '../../core/format.js';
 import type { Challenge } from '../../games/coinflip/coinflip-service.js';
 import { BET_TYPES, describeNumber, pocketColor, type RouletteBetType } from '../../games/roulette/engine.js';
 import type { WheelSnapshot } from '../../games/roulette/roulette-service.js';
@@ -80,7 +80,11 @@ const SLOT_BETS = [5, 10, 25, 50, 100, 250, 500, 1000];
  * only the first reels have stopped, nothing about the outcome (or the new balance) is shown yet,
  * and every control is disabled until the reels settle.
  */
-export async function slotsScreen(app: CasinoApp, viewer: Viewer, bet: number, options: { stopped?: number; animate?: boolean } = {}): Promise<Screen> {
+/**
+ * The slot machine. ``result``: this render answers a spin (show what it paid); otherwise the
+ * machine was just opened or the bet changed, and the last spin is only mentioned in passing.
+ */
+export async function slotsScreen(app: CasinoApp, viewer: Viewer, bet: number, options: { stopped?: number; animate?: boolean; result?: boolean } = {}): Promise<Screen> {
   app.economy.ensurePlayer(viewer.guildId, viewer.userId, viewer.displayName);
   const s = app.settings.get(viewer.guildId).slots;
   const amount = Math.min(s.maxBet, Math.max(s.minBet, bet));
@@ -90,19 +94,23 @@ export async function slotsScreen(app: CasinoApp, viewer: Viewer, bet: number, o
   const balance = spinning ? settled - last.payout : settled;
   const count = app.slots.spinCount(viewer.guildId, viewer.userId);
   const line = last?.spin.line ?? [];
-  const paying = !spinning && last && last.payout > 0 ? (line.every((sym) => sym === line[0]) ? [0, 1, 2] : line.flatMap((sym, i) => (sym === 'cherry' ? [i] : []))) : [];
+  const showResult = spinning || options.result === true;
+  const paying = showResult && !spinning && last && last.payout > 0 ? (line.every((sym) => sym === line[0]) ? [0, 1, 2] : line.flatMap((sym, i) => (sym === 'cherry' ? [i] : []))) : [];
   const final = { rows: last?.spin.rows ?? null, win: (last?.payout ?? 0) > 0, label: last?.spin.label ?? '', bet: last?.bet ?? amount, payout: last?.payout ?? 0, paying: last && last.payout > 0 ? (line.every((sym) => sym === line[0]) ? [0, 1, 2] : line.flatMap((sym, i) => (sym === 'cherry' ? [i] : []))) : [] };
   // Animated: the reels roll and stop one by one (GIF); otherwise a still of the current state.
   const anim = options.animate && last ? await gifFile(slotsSpinFrames(final), 560, 'slots-spin') : null;
   const still = anim
     ? null
-    : await app.images.render(slotsSvg({ ...final, win: !spinning && final.win, ...(spinning ? { stopped: options.stopped } : {}), paying }), 640);
+    : await app.images.render(slotsSvg({ ...final, win: showResult && !spinning && final.win, ...(spinning ? { stopped: options.stopped } : {}), paying, ...(last && !showResult ? { idle: true } : {}) }), 640);
   const file = anim ? anim.name : `slots-${still!.key}.png`;
   const png = anim ? anim.data : still!.png;
   const betOptions = [...new Set([s.minBet, ...SLOT_BETS.filter((b) => b > s.minBet && b < s.maxBet), s.maxBet])].slice(0, 5);
   const resultText = spinning
     ? `### Spinning…\n-# Bet ${chips(last.bet)} · spin #${count}`
-    : last
+    : last && !showResult
+      ? `### Pull the lever
+-# Last spin: ${last.payout > 0 ? `${last.spin.label} **+${chips(last.net)}**` : 'no win'} · bet ${chips(last.bet)}`
+      : last
       ? last.payout > 0
         ? `### ${last.spin.label}! **+${chips(last.net)}**\n-# Bet ${chips(last.bet)} × ${last.spin.multiplier} · spin #${count}${last.recorded?.achievements.length ? ` · ✦ unlocked ${last.recorded.achievements.map((a) => a.name).join(', ')}` : ''}`
         : `### No win this time\n-# Bet ${chips(last.bet)} · ${signedChips(last.net)} · spin #${count}`
@@ -111,7 +119,7 @@ export async function slotsScreen(app: CasinoApp, viewer: Viewer, bet: number, o
     files: [{ name: file, data: png, description: spinning ? 'The reels are spinning' : last ? `Slot reels showing ${last.spin.line.join(', ')}` : 'Slot machine' }],
     ...(anim ? { holdMs: anim.holdMs } : {}),
     components: [
-      container(!spinning && last && last.payout > 0 ? COLORS.gold : COLORS.emerald, [
+      container(showResult && !spinning && last && last.payout > 0 ? COLORS.gold : COLORS.emerald, [
         text(`## ${ICONS.slots} Emerald Slots\n-# Balance **${chips(balance)}** chips · bet **${chips(amount)}**`),
         gallery([{ url: `attachment://${file}`, description: 'Slot machine reels' }]),
         text(resultText),
@@ -209,7 +217,7 @@ export async function roulettePanel(app: CasinoApp, wheel: Readonly<WheelSnapsho
     byUser.set(bet.userId, [...(byUser.get(bet.userId) ?? []), `${label} ${chips(bet.amount)}`]);
   }
   const betsText = [...byUser.entries()].map(([userId, bets]) => `**${escapeMarkdown(state.names[userId] ?? 'Player')}** ${bets.join(' · ')}`).join('\n');
-  const timing = state.deadline ? `spinning ${discordTime(state.deadline)}` : 'the wheel spins after the first bet';
+  const timing = state.deadline ? `spinning ${countdown(state.deadline, app.clock.now(), 'now — last bets!')}` : 'the wheel spins after the first bet';
   return {
     files: [{ name: file, data: png, description: result ? `Roulette result ${result.number}` : 'Roulette wheel' }],
     components: [

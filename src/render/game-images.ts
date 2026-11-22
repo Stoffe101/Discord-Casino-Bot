@@ -189,7 +189,7 @@ const REEL_BLUR: SlotSymbol[] = ['cherry', 'bell', 'seven', 'lemon', 'gem', 'clo
  * The slot machine. `stopped` (0–3) draws an in-motion frame where only the first reels have
  * stopped; the others are a blur. `paying` marks middle-row positions that pay (glow on a win).
  */
-export function slotsSvg(options: { rows: SlotSymbol[][] | null; win: boolean; label: string; bet: number; payout: number; stopped?: number; paying?: number[]; phase?: number; bounce?: number[] }): string {
+export function slotsSvg(options: { rows: SlotSymbol[][] | null; win: boolean; label: string; bet: number; payout: number; stopped?: number; paying?: number[]; phase?: number; bounce?: number[]; idle?: boolean }): string {
   const stopped = options.stopped ?? 3;
   const W = 720;
   const H = 400;
@@ -234,7 +234,7 @@ export function slotsSvg(options: { rows: SlotSymbol[][] | null; win: boolean; l
   parts.push(`<rect x="72" y="${64 + 84 + 2}" width="576" height="80" rx="10" fill="none" stroke="${lineColor}" stroke-width="${options.win ? 4 : 2}"/>`);
   parts.push(`<path d="M 48 190 L 64 180 L 64 200 Z" fill="${lineColor}"/><path d="M 672 190 L 656 180 L 656 200 Z" fill="${lineColor}"/>`);
   // Caption.
-  const caption = options.rows && stopped < 3 ? 'SPINNING…' : options.rows ? (options.win ? `${options.label.toUpperCase()} · WIN ${options.payout.toLocaleString('en-US')}` : 'NO WIN · SPIN AGAIN') : 'EMERALD SLOTS';
+  const caption = options.idle ? 'PULL THE LEVER' : options.rows && stopped < 3 ? 'SPINNING…' : options.rows ? (options.win ? `${options.label.toUpperCase()} · WIN ${options.payout.toLocaleString('en-US')}` : 'NO WIN · SPIN AGAIN') : 'EMERALD SLOTS';
   parts.push(
     `<text x="${W / 2}" y="378" text-anchor="middle" font-family="Cinzel" font-weight="900" font-size="24" fill="${options.win ? '#f2d78a' : '#cfe3d8'}" letter-spacing="3">${esc(caption)}</text>`,
   );

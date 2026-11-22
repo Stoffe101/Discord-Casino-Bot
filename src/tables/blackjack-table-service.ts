@@ -4,7 +4,7 @@ import type { Logger } from '../core/logger.js';
 import type { Scheduler } from '../core/scheduler.js';
 import { KeyedSerialQueue } from '../core/serial-queue.js';
 import { NotYourTurnError, StaleActionError, UserError } from '../core/errors.js';
-import { chips } from '../core/format.js';
+import { COUNTDOWN_CUTOFF_MS, chips } from '../core/format.js';
 import { newId, secureRng, shortCode, type Rng } from '../core/random.js';
 import type { GuildSettings } from '../config/settings.js';
 import type { EconomyService, SettingsProvider } from '../domain/economy/economy-service.js';
@@ -362,6 +362,7 @@ export class BlackjackTableService {
         ]);
       });
       this.scheduler.clear(this.timerKey(tableId));
+      this.scheduler.clear(this.countdownKey(tableId));
       this.tables.delete(tableId);
       record.status = 'closed';
       this.logger.info('table closed', { tableId, reason });
@@ -616,6 +617,7 @@ export class BlackjackTableService {
           const seat = state.seats.find((s) => s.userId === who);
           if (seat) {
             seat.timeouts++;
+            seat.timedOutRound = state.roundNumber;
             if (seat.timeouts >= TIMEOUTS_BEFORE_SIT_OUT && !seat.sittingOut) {
               seat.sittingOut = true;
               pushLog(state, now, `${seat.displayName} seems to be away — sitting out from the next hand`, 'info');
@@ -806,15 +808,31 @@ export class BlackjackTableService {
     const key = this.timerKey(tableId);
     if (state.deadline === null) {
       this.scheduler.clear(key);
+      this.scheduler.clear(this.countdownKey(tableId));
       return;
     }
     const deadline = state.deadline;
     const fireAt = state.phase === 'betting' ? deadline : deadline + TURN_GRACE_MS;
     this.scheduler.set(key, fireAt, () => void this.handleDeadline(tableId, deadline));
+    // Shortly before the visible deadline the panel is redrawn without its live countdown, so it
+    // never reads "1 seconds ago" while the deal (or the timeout) is on its way.
+    const redrawAt = deadline - COUNTDOWN_CUTOFF_MS;
+    if (redrawAt > this.clock.now()) {
+      this.scheduler.set(this.countdownKey(tableId), redrawAt, () => {
+        const rt = this.tables.get(tableId);
+        if (rt && rt.state.deadline === deadline) this.observer.tableChanged(tableId, { kind: 'update' });
+      });
+    } else {
+      this.scheduler.clear(this.countdownKey(tableId));
+    }
   }
 
   private timerKey(tableId: string): string {
     return `table:${tableId}`;
+  }
+
+  private countdownKey(tableId: string): string {
+    return `table:${tableId}:countdown`;
   }
 
   private opKey(state: BlackjackTableState, label: string): string {
@@ -1066,6 +1084,7 @@ export class BlackjackTableService {
           levelUp: rec && rec.xp.after.level > rec.xp.before.level ? rec.xp.after.level : null,
           achievements: rec?.achievements.map((a) => a.name) ?? [],
           missions: rec?.missions.map((m) => m.name) ?? [],
+          ...(state.seats.find((x) => x.userId === s.userId)?.timedOutRound === state.roundNumber ? { timedOut: true } : {}),
         };
       }),
     };

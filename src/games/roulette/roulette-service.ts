@@ -3,7 +3,7 @@ import type { Clock } from '../../core/clock.js';
 import type { Logger } from '../../core/logger.js';
 import type { Scheduler } from '../../core/scheduler.js';
 import { StaleActionError, UserError } from '../../core/errors.js';
-import { chips } from '../../core/format.js';
+import { COUNTDOWN_CUTOFF_MS, chips } from '../../core/format.js';
 import { KeyedSerialQueue } from '../../core/serial-queue.js';
 import { newId, secureRng, type Rng } from '../../core/random.js';
 import type { EconomyService, SettingsProvider } from '../../domain/economy/economy-service.js';
@@ -261,6 +261,7 @@ export class RouletteService {
         this.db.run("UPDATE game_tables SET status = 'closed', closed_at = ? WHERE id = ?", [this.clock.now(), wheelId]);
       });
       this.scheduler.clear(this.timerKey(wheelId));
+      this.scheduler.clear(this.countdownKey(wheelId));
       this.wheels.delete(wheelId);
       this.observer.wheelClosed(wheel);
     });
@@ -415,13 +416,27 @@ export class RouletteService {
   private arm(wheelId: string, state: RouletteState): void {
     if (state.deadline === null) {
       this.scheduler.clear(this.timerKey(wheelId));
+      this.scheduler.clear(this.countdownKey(wheelId));
       return;
     }
     const deadline = state.deadline;
     this.scheduler.set(this.timerKey(wheelId), deadline, () => void this.handleDeadline(wheelId, deadline));
+    // Redraw without the live countdown shortly before the spin (see COUNTDOWN_CUTOFF_MS).
+    const redrawAt = deadline - COUNTDOWN_CUTOFF_MS;
+    if (redrawAt > this.clock.now()) {
+      this.scheduler.set(this.countdownKey(wheelId), redrawAt, () => {
+        if (this.wheels.get(wheelId)?.state.deadline === deadline) this.observer.wheelChanged(wheelId, false);
+      });
+    } else {
+      this.scheduler.clear(this.countdownKey(wheelId));
+    }
   }
 
   private timerKey(wheelId: string): string {
     return `roulette:${wheelId}`;
+  }
+
+  private countdownKey(wheelId: string): string {
+    return `roulette:${wheelId}:countdown`;
   }
 }

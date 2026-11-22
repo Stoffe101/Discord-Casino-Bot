@@ -23,6 +23,18 @@ export function discordTime(ms: number, style: 't' | 'T' | 'd' | 'D' | 'f' | 'F'
   return `<t:${Math.floor(ms / 1000)}:${style}>`;
 }
 
+/**
+ * A live countdown on a shared panel stops this long before its deadline: the panel is redrawn
+ * then (the services schedule it) with `soon` instead, because the next real change (the deal, the
+ * spin) reaches players a second or two after the deadline, and Discord would meanwhile show
+ * "1 seconds ago".
+ */
+export const COUNTDOWN_CUTOFF_MS = 3_500;
+
+export function countdown(deadline: number, now: number, soon: string): string {
+  return deadline - now > COUNTDOWN_CUTOFF_MS ? discordTime(deadline) : soon;
+}
+
 export function durationShort(ms: number): string {
   const totalMinutes = Math.max(0, Math.ceil(ms / 60_000));
   const hours = Math.floor(totalMinutes / 60);

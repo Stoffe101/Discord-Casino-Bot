@@ -5,6 +5,7 @@
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { ALL_IN_DEAL_DELAY_MS } from '../../src/tables/blackjack-table-service.js';
+import { COUNTDOWN_CUTOFF_MS } from '../../src/core/format.js';
 import type { Card } from '../../src/games/cards.js';
 import { basicStrategy } from '../../src/games/blackjack/strategy.js';
 import { CasinoHarness } from '../harness/casino-harness.js';
@@ -34,7 +35,9 @@ describe('animated GIFs', () => {
     let frames = h.fd.timeline.filter((e) => e.messageId === panelId);
     expect(kinds(frames)).toEqual(['gif', 'png']); // deal animation, then the table
     expect(isGif(frames[0]!.image!.data)).toBe(true);
-    expect(frames[0]!.text).toContain('Dealing hand 1');
+    // The deal carries the live turn and its controls: players can act as soon as the cards land.
+    expect(frames[0]!.text).toContain('Alex to act');
+    expect(frames[0]!.buttons.map((b) => b.label)).toContain('Hit');
     // A hit: the card flies in (GIF), then the still. The click itself carries the GIF.
     h.fd.timeline.length = 0;
     const hit = await h.click(alex, h.tablePanel(tableId), 'Hit');
@@ -71,8 +74,12 @@ describe('animated GIFs', () => {
     const panel = () => h.fd.messages.get(h.app.roulette.peek(wheel.id)!.record.messageId!)!;
     const select = findComponents(panel().components, 3)[0]!;
     await h.submit(alex, await h.select(alex, panel(), select.custom_id, ['red']), { amount: '20' });
+    // Shortly before the spin the countdown is redrawn as "spinning now" (never "1 seconds ago").
+    await h.advance(h.app.settings.get(h.guildId).roulette.bettingSeconds * 1000 - COUNTDOWN_CUTOFF_MS + 100);
+    await h.settle();
+    expect(h.text(panel())).toContain('spinning now');
     h.fd.timeline.length = 0;
-    await h.advance(h.app.settings.get(h.guildId).roulette.bettingSeconds * 1000 + 500);
+    await h.advance(COUNTDOWN_CUTOFF_MS);
     await h.app.roulette.idle();
     await h.settle();
     expect(kinds(h.fd.timeline.filter((e) => e.messageId === panel().id))).toEqual(['gif', 'png']);

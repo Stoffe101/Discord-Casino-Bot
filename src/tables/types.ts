@@ -12,6 +12,8 @@ export interface SeatInfo {
   leaving: boolean;
   /** Consecutive turn timeouts. */
   timeouts: number;
+  /** The round in which this player last ran out of time (shown with that hand's result). */
+  timedOutRound?: number;
   /** Consecutive hands dealt without this player betting. */
   missedRounds: number;
   lastBet: number | null;
@@ -54,6 +56,8 @@ export interface ResultSeat {
   levelUp: number | null;
   achievements: string[];
   missions: string[];
+  /** The hand stood automatically because the player ran out of time. */
+  timedOut?: boolean;
 }
 
 export interface LastRoundResult {

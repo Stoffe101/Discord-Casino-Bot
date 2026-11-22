@@ -75,6 +75,12 @@ export class PanelSync<Hint = unknown> {
     this.slots.delete(key);
   }
 
+  /** True while this panel has a render queued or in flight (an animation is playing). */
+  busy(key: string): boolean {
+    const slot = this.slots.get(key);
+    return !!slot && (slot.running || slot.pending !== null);
+  }
+
   async idle(): Promise<void> {
     for (let i = 0; i < 200 && [...this.slots.values()].some((s) => s.running || s.pending); i++) {
       await new Promise((r) => setTimeout(r, 25));
@@ -148,6 +154,7 @@ export class PanelSync<Hint = unknown> {
     const spacing = (this.options.minIntervalMs ?? 300) - (Date.now() - slot.lastSentAt);
     if (spacing > 0 && carriers.length === 0 && frame === undefined) await sleep(spacing);
     let screen: Screen | null = null;
+    const renderStarted = Date.now();
     try {
       screen = await this.options.render(key, frame, hint);
     } catch (error) {
@@ -163,12 +170,24 @@ export class PanelSync<Hint = unknown> {
     const reuse = file !== null && file === slot.lastFile;
     if (reuse) this.stats.reusedImage++;
     this.stats.renders++;
+    const sendStarted = Date.now();
+    const timing = (via: string) =>
+      this.options.logger.debug('panel sent', {
+        panel: this.options.name,
+        key,
+        frame: frame ?? 'final',
+        via,
+        renderMs: sendStarted - renderStarted,
+        sendMs: Date.now() - sendStarted,
+        kb: reuse ? 0 : Math.round((screen.files ?? []).reduce((n, f) => n + f.data.length, 0) / 1024),
+      });
     if (chosen && 'update' in chosen) {
       try {
         await chosen.update(editOptions(screen, reuse));
         this.stats.viaInteraction++;
         slot.lastFile = file;
         slot.lastSentAt = Date.now();
+        timing('click');
         return screen.holdMs;
       } catch (error) {
         const code = discordErrorCode(error);
@@ -178,6 +197,7 @@ export class PanelSync<Hint = unknown> {
       }
     }
     await this.editViaRest(key, slot, screen, reuse, file);
+    timing('rest');
     return screen.holdMs;
   }
 

@@ -1,13 +1,13 @@
 import type { CasinoApp } from '../../app/casino-app.js';
-import { chips, escapeMarkdown, discordTime, plural } from '../../core/format.js';
+import { COUNTDOWN_CUTOFF_MS, chips, countdown, escapeMarkdown, discordTime, plural } from '../../core/format.js';
 import { cardLabel } from '../../games/cards.js';
 import { currentTurnUserId, describeRules, describeTotal, handValue, isNaturalCards, type BlackjackRules } from '../../games/blackjack/engine.js';
 import { renderTableSvg } from '../../render/table-image.js';
 import { rulesFromSettings } from '../../tables/blackjack-table-service.js';
 import { buildTableView, describeTableForAlt } from '../../tables/table-view.js';
-import type { LogEntry, RenderHint, TableSnapshot } from '../../tables/types.js';
+import type { LastRoundResult, LogEntry, RenderHint, ResultSeat, TableSnapshot } from '../../tables/types.js';
 import { tableAnimation } from './table-animation.js';
-import { myHandSvg } from '../../render/hand-image.js';
+import { myHandSvg, type MyHandImage } from '../../render/hand-image.js';
 import { basicStrategy } from '../../games/blackjack/strategy.js';
 import { cid } from '../custom-id.js';
 import {
@@ -201,7 +201,10 @@ export async function blackjackPanel(
   const tableId = record.id;
   const parts: ReturnType<typeof text>[] = [];
   const rows: ReturnType<typeof row>[] = [];
-  const dealing = options.dealStep !== undefined || anim?.mode === 'deal';
+  // A deal that leads into play carries the live text and controls with its GIF: players can act
+  // the moment the cards are in, instead of waiting for the animation and then the still. A deal
+  // that ends the hand at once (a dealer blackjack) keeps the outcome out of the text until it lands.
+  const dealing = options.dealStep !== undefined || (anim?.mode === 'deal' && !state.round);
   const revealing = options.revealStep !== undefined || anim?.mode === 'reveal';
   // Animation frames show no controls and no activity log (the log already knows the outcome).
   const animating = dealing || revealing;
@@ -230,7 +233,7 @@ export async function blackjackPanel(
       text(
         `### ▸ ${escapeMarkdown(who)} to act${handOf}\n` +
           `## ${hand.cards.map(cardLabel).join(' ')}  →  ${describeTotal(hand.cards, hand.fromSplit)}\n` +
-          `-# Bet ${chips(hand.bet)} · dealer shows ${cardLabel(up)} · decide ${discordTime(state.deadline ?? app.clock.now())}, then the hand stands automatically`,
+          `-# Bet ${chips(hand.bet)} · dealer shows ${cardLabel(up)} · ${state.deadline && state.deadline - app.clock.now() > COUNTDOWN_CUTOFF_MS ? `decide ${discordTime(state.deadline)}, then the hand stands automatically` : 'time is nearly up — the hand stands automatically'}`,
       ),
     );
     if (round.seats.length > 1) parts.push(text(`-# The table
@@ -257,7 +260,7 @@ ${seatSummary(state, round, seat.userId).join('\n')}`));
       .map((s) => escapeMarkdown(state.seats.find((x) => x.userId === s.userId)?.displayName ?? 'Player'));
     parts.push(
       text(
-        `### The dealer shows an ace — insurance?\nInsurance costs half your bet and pays **2:1** if the dealer has blackjack.\n-# Waiting for ${pending.join(', ') || 'nobody'} · closes ${discordTime(state.deadline ?? app.clock.now())}`,
+        `### The dealer shows an ace — insurance?\nInsurance costs half your bet and pays **2:1** if the dealer has blackjack.\n-# Waiting for ${pending.join(', ') || 'nobody'} · closes ${countdown(state.deadline ?? app.clock.now(), app.clock.now(), 'now')}`,
       ),
     );
     rows.push(
@@ -272,14 +275,13 @@ ${seatSummary(state, round, seat.userId).join('\n')}`));
     const lines: string[] = [];
     if (result && !result.voided) {
       lines.push(`### Hand ${result.roundNumber} · results`);
-      const dealer = result.dealerBlackjack ? 'Dealer had **blackjack**' : result.dealerBust ? `Dealer **busted** with ${result.dealerTotal}` : `Dealer stood on **${result.dealerTotal}**`;
-      lines.push(`-# ${dealer}`);
+      lines.push(`-# ${dealerVerdict(result)}`);
       for (const s of result.seats) {
         const verdict = s.net > 0 ? `▲ ${escapeMarkdown(s.displayName)} won **${chips(s.net)}**` : s.net < 0 ? `▼ ${escapeMarkdown(s.displayName)} lost ${chips(-s.net)}` : `■ ${escapeMarkdown(s.displayName)} broke even`;
         const detail = s.hands
           .map((h) => (h.outcome === 'blackjack' ? 'blackjack!' : h.outcome === 'bust' ? 'bust' : h.outcome === 'surrender' ? 'surrendered' : `${h.total}${h.doubled ? ' doubled' : ''}`))
           .join(' / ');
-        lines.push(`${verdict} · ${detail}`);
+        lines.push(`${verdict} · ${detail}${s.timedOut ? ' · ran out of time' : ''}`);
       }
       // One line per player: "Alex unlocked First Hand and Split Decision · reached level 3".
       const extras = result.seats
@@ -308,7 +310,7 @@ ${seatSummary(state, round, seat.userId).join('\n')}`));
     const heading = result && !result.voided ? '**Next hand** · ' : '### Place your bets\n';
     const timing =
       betCount > 0 && state.deadline
-        ? `dealing ${discordTime(state.deadline)}`
+        ? `dealing ${countdown(state.deadline, app.clock.now(), 'now…')}`
         : state.seats.length === 0
           ? 'take a seat to play'
           : 'press a chip to bet — the deal starts shortly after the first bet';
@@ -380,11 +382,25 @@ export function closedTablePanel(name: string, reason: string): Screen {
  * total, whose turn it is, a basic-strategy tip and what each move would do — with private action
  * buttons (they work exactly like the table's). Seat controls follow underneath.
  */
-export async function myHandScreen(app: CasinoApp, viewer: Viewer, tableId: string): Promise<Screen> {
+function dealerVerdict(result: LastRoundResult): string {
+  return result.dealerBlackjack ? 'Dealer had **blackjack**' : result.dealerBust ? `Dealer **busted** with ${result.dealerTotal}` : `Dealer stood on **${result.dealerTotal}**`;
+}
+
+/**
+ * The private view. ``revealing``: the shared panel is still playing the dealer's turn, so the
+ * private view must not run ahead of it (no result, no settled balance — "watch the table").
+ */
+export async function myHandScreen(app: CasinoApp, viewer: Viewer, tableId: string, options: { revealing?: boolean } = {}): Promise<Screen> {
   const seatScreen = mySeatScreen(app, viewer, tableId);
   const snap = app.blackjack.peek(tableId);
   const round = snap?.state.round;
   const mine = round?.seats.find((s) => s.userId === viewer.userId);
+  if (snap && !round) {
+    // Between hands: your last hand and how it went (once the table has shown it).
+    const result = snap.state.lastResult;
+    const myResult = result && !result.voided ? result.seats.find((s) => s.userId === viewer.userId) : undefined;
+    if (result && myResult) return handResultScreen(app, snap, result, myResult, seatScreen, options.revealing === true);
+  }
   if (!snap || !round || !mine) return seatScreen;
   const { record, state } = snap;
   const rules = tableRules(app, snap);
@@ -452,6 +468,50 @@ export async function myHandScreen(app: CasinoApp, viewer: Viewer, tableId: stri
     components: [
       container(myTurn ? COLORS.gold : COLORS.emerald, [text(lines.slice(0, 1).concat(lines.slice(1, 1 + handLines.length + 1)).join('\n')), gallery([{ url: `attachment://${file}`, description: 'Your hand' }]), text(lines.slice(2 + handLines.length).join('\n') || '-# '), ...rows]),
       ...seatScreen.components,
+    ],
+  };
+}
+
+async function handResultScreen(
+  app: CasinoApp,
+  snap: Readonly<TableSnapshot>,
+  result: LastRoundResult,
+  mine: ResultSeat,
+  seatScreen: Screen,
+  revealing: boolean,
+): Promise<Screen> {
+  const { record } = snap;
+  const handLines = mine.hands.map((h, i) => {
+    const label = mine.hands.length > 1 ? `**Hand ${i + 1}** ` : '';
+    return `${label}${h.cards.map(cardLabel).join(' ')} → **${describeTotal(h.cards, h.fromSplit)}** · bet ${chips(h.bet)}${h.doubled ? ' (doubled)' : ''}`;
+  });
+  const base = { feltId: record.config.feltId, cardBackId: record.config.cardBackId };
+  let image: MyHandImage;
+  let lines: string[];
+  let color: number;
+  if (revealing) {
+    const up = result.dealerCards[0]!;
+    image = { ...base, dealer: [up, null], dealerTotal: describeTotal([up]), hands: mine.hands.map((h) => ({ cards: h.cards, total: describeTotal(h.cards, h.fromSplit), active: false, badge: null })) };
+    lines = [`## ${ICONS.blackjack} Your hand · ${escapeMarkdown(record.name)}`, ...handLines, `### Dealer's turn`, '-# Watch the table — the result shows there first. Refresh here afterwards.'];
+    color = COLORS.emerald;
+  } else {
+    const view = buildTableView(snap, tableRules(app, snap));
+    const seatView = view.seats.find((s) => s.userId === mine.userId);
+    image = { ...base, dealer: view.dealer.cards, dealerTotal: view.dealer.total, hands: (seatView?.hands ?? []).map((h) => ({ cards: h.cards, total: h.total, active: false, badge: h.badge })) };
+    const verdict = mine.net > 0 ? `You won **${chips(mine.net)}**` : mine.net < 0 ? `You lost ${chips(-mine.net)}` : 'You broke even';
+    lines = [`## ${ICONS.blackjack} Hand ${result.roundNumber} · ${verdict}`, ...handLines, `-# ${dealerVerdict(result)}`];
+    color = mine.net > 0 ? COLORS.gold : COLORS.emerald;
+  }
+  const { key, png } = await app.images.render(myHandSvg(image), 760);
+  const file = `hand-${key}.png`;
+  const head = lines.slice(0, 1 + handLines.length).join('\n');
+  const tail = lines.slice(1 + handLines.length).join('\n');
+  return {
+    files: [{ name: file, data: png, description: revealing ? "Your hand; the dealer's turn is being played" : `Your last hand: ${handLines.join('; ').replace(/\*\*/g, '')}` }],
+    components: [
+      container(color, [text(head), gallery([{ url: `attachment://${file}`, description: 'Your hand' }]), text(tail), ...(revealing ? [row(button({ id: cid('bj', 'seat', record.id), label: 'Refresh', emoji: ICONS.refresh }))] : [])]),
+      // The seat menu shows your balance: only once the result is out.
+      ...(revealing ? [] : seatScreen.components),
     ],
   };
 }

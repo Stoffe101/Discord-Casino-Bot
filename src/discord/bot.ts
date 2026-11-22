@@ -327,6 +327,11 @@ export class CasinoBot {
   // ───────────────────────────── channels & threads ─────────────────────────────
 
   /** Animated roulette spins, slot reels and coin tosses for this server (blackjack has its own switch). */
+  /** True while the table panel is still being animated (e.g. the dealer's turn is playing). */
+  tableAnimating(tableId: string): boolean {
+    return this.tablePanels.busy(tableId);
+  }
+
   animatesGames(guildId: string): boolean {
     return this.animations && this.app.settings.get(guildId).animations;
   }

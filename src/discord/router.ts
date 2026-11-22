@@ -13,7 +13,7 @@ import {
 } from 'discord.js';
 import type { CasinoApp } from '../app/casino-app.js';
 import { InsufficientFundsError, UserError, isUserError } from '../core/errors.js';
-import { chips, escapeMarkdown, signedChips, parseChipAmount } from '../core/format.js';
+import { chips, escapeMarkdown, plural, signedChips, parseChipAmount } from '../core/format.js';
 import { shortCode } from '../core/random.js';
 import { getSpec, type SettingGroup } from '../config/settings.js';
 import { resetGuildData } from '../domain/dev-reset.js';
@@ -24,7 +24,7 @@ import type { Challenge, CoinSide } from '../games/coinflip/coinflip-service.js'
 import { isBetType } from '../games/roulette/engine.js';
 import type { PlayerAction } from '../games/blackjack/engine.js';
 import { cid, intArg, parseCid } from '../ui/custom-id.js';
-import { button, linkButton, row, type Screen } from '../ui/kit.js';
+import { button, linkButton, row, withNote, type Screen } from '../ui/kit.js';
 import { COLORS, ICONS } from '../ui/theme.js';
 import { noticeScreen, errorScreen, NAV, type Viewer } from '../ui/screens/common.js';
 import { homeScreen, walletScreen, historyScreen } from '../ui/screens/home.js';
@@ -515,15 +515,18 @@ export class InteractionRouter {
   }
 
   private async claimReward(i: Component, viewer: Viewer, action: string, from: string): Promise<void> {
+    let note: string | null = null;
     if (action === 'passive') {
       const { amount } = this.app.economy.claimPassive(viewer.guildId, viewer.userId);
       if (amount === 0) throw new UserError('Nothing to collect yet — passive income builds up over time.', 'nothing', 'Not yet');
+      note = `### ✓ Collected ${plural(amount, 'chip')}`;
     } else if (action === 'daily') {
-      this.app.economy.claimDaily(viewer.guildId, viewer.userId);
+      const claim = this.app.economy.claimDaily(viewer.guildId, viewer.userId);
+      note = `### ✓ Daily reward: +${chips(claim.amount)} chips${claim.streak > 1 ? ` · ${claim.streak}-day streak!` : ''}`;
     }
-    // Re-render the personal screen the button was on.
+    // Re-render the personal screen the button was on, with what was just collected.
     const screen = from === 'wallet' ? walletScreen(this.app, viewer) : from === 'rewards' ? rewardsScreen(this.app, viewer) : homeScreen(this.app, viewer);
-    return this.show(i, screen);
+    return this.show(i, note ? withNote(screen, note) : screen);
   }
 
   // ───────────────────────────── tables (finding / creating / joining) ─────────────────────────────
@@ -640,7 +643,7 @@ export class InteractionRouter {
         return this.show(i, rulesScreen(this.app, viewer.guildId, tableId), 'private');
       case 'seat':
         arm(this.fromEphemeral(i) ? 'update' : 'reply');
-        return this.show(i, await myHandScreen(this.app, viewer, tableId), this.fromEphemeral(i) ? 'auto' : 'private');
+        return this.show(i, await myHandScreen(this.app, viewer, tableId, { revealing: this.bot.tableAnimating(tableId) }), this.fromEphemeral(i) ? 'auto' : 'private');
       case 'join':
         return this.joinTable(i, viewer, tableId, arm);
       case 'betx':
@@ -682,14 +685,14 @@ export class InteractionRouter {
         // view refreshes in place (it must never be answered with the shared panel).
         const privateView = this.fromEphemeral(i);
         await tables.act(tableId, viewer.userId, move, intArg(args[2], -1), privateView ? undefined : i);
-        if (privateView) return this.show(i, await myHandScreen(this.app, viewer, tableId));
+        if (privateView) return this.show(i, await myHandScreen(this.app, viewer, tableId, { revealing: this.bot.tableAnimating(tableId) }));
         return this.settle(i);
       }
       case 'ins': {
         arm('update');
         const privateView = this.fromEphemeral(i);
         await tables.decideInsurance(tableId, viewer.userId, args[1] === '1', privateView ? undefined : i);
-        if (privateView) return this.show(i, await myHandScreen(this.app, viewer, tableId));
+        if (privateView) return this.show(i, await myHandScreen(this.app, viewer, tableId, { revealing: this.bot.tableAnimating(tableId) }));
         return this.settle(i);
       }
       case 'leave': {
@@ -709,7 +712,7 @@ export class InteractionRouter {
       case 'sit':
         arm('update');
         await tables.setSittingOut(tableId, viewer.userId, args[1] === '1');
-        return this.show(i, await myHandScreen(this.app, viewer, tableId));
+        return this.show(i, await myHandScreen(this.app, viewer, tableId, { revealing: this.bot.tableAnimating(tableId) }));
       case 'close':
         arm('update');
         await tables.closeTable(tableId, `closed by the host`, { actorId: viewer.userId });
@@ -718,7 +721,7 @@ export class InteractionRouter {
         arm('update');
         if (!i.isUserSelectMenu()) return;
         await tables.kick(tableId, viewer.userId, i.values[0]!);
-        return this.show(i, await myHandScreen(this.app, viewer, tableId));
+        return this.show(i, await myHandScreen(this.app, viewer, tableId, { revealing: this.bot.tableAnimating(tableId) }));
       }
       default:
         throw new UserError('That control is out of date.', 'stale', 'Out of date');
@@ -776,8 +779,8 @@ export class InteractionRouter {
       // The spin is settled first (money is final); the reels then stop one after another.
       await this.app.slots.spin(viewer.guildId, viewer.userId, bet, intArg(args[1], -1));
       const reels = this.bot.animatesGames(viewer.guildId)
-        ? [() => slotsScreen(this.app, viewer, bet, { animate: true }), () => slotsScreen(this.app, viewer, bet)]
-        : [() => slotsScreen(this.app, viewer, bet, { stopped: 0 }), () => slotsScreen(this.app, viewer, bet, { stopped: 2 }), () => slotsScreen(this.app, viewer, bet)];
+        ? [() => slotsScreen(this.app, viewer, bet, { animate: true }), () => slotsScreen(this.app, viewer, bet, { result: true })]
+        : [() => slotsScreen(this.app, viewer, bet, { stopped: 0 }), () => slotsScreen(this.app, viewer, bet, { stopped: 2 }), () => slotsScreen(this.app, viewer, bet, { result: true })];
       return this.playFrames(i, reels, this.bot.timing.spinFrameMs);
     }
   }

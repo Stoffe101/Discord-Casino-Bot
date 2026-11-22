@@ -1,5 +1,5 @@
 import type { CasinoApp } from '../../app/casino-app.js';
-import { chips, discordTime, percent, signedChips } from '../../core/format.js';
+import { chips, discordTime, percent, plural, signedChips } from '../../core/format.js';
 import { ACHIEVEMENTS, isAchieved } from '../../domain/achievements.js';
 import { COSMETICS, cosmetic, isCosmeticUnlocked, levelInfo, type CosmeticKind } from '../../domain/progression.js';
 import { stat } from '../../domain/stats-service.js';
@@ -45,10 +45,10 @@ export function profileScreen(app: CasinoApp, viewer: Viewer, target: ProfileTar
       : '### ♠ Blackjack\nNo rounds played yet.';
   const otherLines: string[] = [];
   if (stat(stats, 'roulette', 'rounds') > 0) {
-    otherLines.push(`Roulette — ${chips(stat(stats, 'roulette', 'rounds'))} spins · net ${signedChips(stat(stats, 'roulette', 'net'))}`);
+    otherLines.push(`Roulette — ${plural(stat(stats, 'roulette', 'rounds'), 'spin')} · net ${signedChips(stat(stats, 'roulette', 'net'))}`);
   }
   if (stat(stats, 'slots', 'rounds') > 0) {
-    otherLines.push(`Slots — ${chips(stat(stats, 'slots', 'rounds'))} spins · best ×${stat(stats, 'slots', 'biggest_multiplier')} · net ${signedChips(stat(stats, 'slots', 'net'))}`);
+    otherLines.push(`Slots — ${plural(stat(stats, 'slots', 'rounds'), 'spin')}${stat(stats, 'slots', 'biggest_multiplier') > 0 ? ` · best ×${stat(stats, 'slots', 'biggest_multiplier')}` : ''} · net ${signedChips(stat(stats, 'slots', 'net'))}`);
   }
   if (stat(stats, 'coinflip', 'rounds') > 0) {
     otherLines.push(`Coinflip — ${stat(stats, 'coinflip', 'wins')} won / ${stat(stats, 'coinflip', 'losses')} lost · net ${signedChips(stat(stats, 'coinflip', 'net'))}`);
@@ -80,7 +80,7 @@ export function profileScreen(app: CasinoApp, viewer: Viewer, target: ProfileTar
         text(
           `**Chips** ${chips(player.balance + player.reserved)}${richRank ? ` · #${richRank} richest` : ''} · peak ${chips(player.highest_balance)}\n` +
             `**Earned** ${chips(all('net_won') + rewards)} (${chips(rewards)} from rewards) · **Wagered** ${chips(all('wagered'))} · **Net** ${signedChips(all('net'))}\n` +
-            `-# Playing since ${discordTime(player.created_at, 'D')} · ${all('days_played')} days at the tables`,
+            `-# Playing since ${discordTime(player.created_at, 'D')} · ${plural(all('days_played'), 'day')} at the tables`,
         ),
         text(blackjackBlock + (otherLines.length ? `\n### Other games\n${otherLines.join('\n')}` : '')),
         text(

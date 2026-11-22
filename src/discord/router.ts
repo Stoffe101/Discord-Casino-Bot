@@ -369,6 +369,8 @@ export class InteractionRouter {
         `**Interactions** · ${this.latency.count} handled · avg ${avg} ms · max ${this.latency.maxMs} ms\n` +
         `**Panels** · ${p.renders} renders (${p.viaInteraction} direct, ${p.viaRest} edits, ${p.reusedImage} image reuses, ${p.failures} failures)\n` +
         `**Images** · cache ${this.app.images.hits} hits / ${this.app.images.misses} renders\n` +
+        `**Discord API** · ${this.bot.restMetrics.line()}${this.bot.restMetrics.rateLimited ? ` · rate-limited ${this.bot.restMetrics.rateLimited}×` : ''}\n` +
+        (this.bot.guard ? `**Test mode** · ${this.bot.guard.allowedCount} requests allowed, ${this.bot.guard.blockedCount} blocked\n` : '') +
         `**Process** · up ${Math.round((Date.now() - this.startedAt) / 60_000)} min · ${Math.round(mem.rss / 1048576)} MB · Discord ping ${this.bot.client.ws.ping} ms`,
     });
   }

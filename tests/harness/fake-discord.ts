@@ -94,6 +94,8 @@ export interface RequestLog {
   route: string;
   status: number;
   ms: number;
+  /** Wall-clock time the request finished. */
+  at: number;
 }
 
 interface Result {
@@ -169,7 +171,7 @@ export class FakeDiscord {
     } catch (e) {
       result = err(500, 0, e instanceof Error ? e.message : String(e));
     }
-    this.log.push({ method, route: route.replace(/\/[A-Za-z0-9_-]{40,}/g, '/[token]'), status: result.status, ms: performance.now() - started });
+    this.log.push({ method, route: route.replace(/\/[A-Za-z0-9_-]{40,}/g, '/[token]'), status: result.status, ms: performance.now() - started, at: Date.now() });
     const hasBody = result.body !== undefined;
     return new Response(hasBody ? JSON.stringify(result.body) : null, { status: result.status, headers: hasBody ? { 'content-type': 'application/json' } : {} });
   };

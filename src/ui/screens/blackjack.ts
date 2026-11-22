@@ -237,27 +237,37 @@ export async function blackjackPanel(app: CasinoApp, snapshot: Readonly<TableSna
           .join(' / ');
         lines.push(`${verdict} · ${detail}`);
       }
-      const extras = result.seats.flatMap((s) => [
-        ...s.achievements.map((a) => `${escapeMarkdown(s.displayName)} unlocked **${a}**`),
-        ...(s.levelUp ? [`${escapeMarkdown(s.displayName)} reached **level ${s.levelUp}**`] : []),
-        ...s.missions.map((m) => `${escapeMarkdown(s.displayName)} completed **${m}**`),
-      ]);
-      if (extras.length) lines.push(`-# ✦ ${extras.slice(0, 4).join(' · ')}`);
+      // One line per player: "Alex unlocked First Hand and Split Decision · reached level 3".
+      const extras = result.seats
+        .map((s) => {
+          const bits = [
+            s.achievements.length ? `unlocked ${listOf(s.achievements.map((a) => `**${a}**`))}` : null,
+            s.levelUp ? `reached **level ${s.levelUp}**` : null,
+            s.missions.length ? `completed ${listOf(s.missions.map((m) => `**${m}**`))}` : null,
+          ].filter(Boolean);
+          return bits.length ? `${escapeMarkdown(s.displayName)} ${bits.join(' · ')}` : null;
+        })
+        .filter((line): line is string => line !== null);
+      for (const line of extras.slice(0, 3)) lines.push(`-# ✦ ${line}`);
     }
     const betCount = Object.keys(state.bets).length;
-    const betLine = state.seats
-      .map((s) => {
-        const bet = state.bets[s.userId];
-        return bet ? `${escapeMarkdown(s.displayName)} **${chips(bet)}** ✓` : s.sittingOut ? `${escapeMarkdown(s.displayName)} *sitting out*` : `${escapeMarkdown(s.displayName)} —`;
-      })
-      .join(' · ');
+    const placed = state.seats.filter((s) => state.bets[s.userId]).map((s) => `${escapeMarkdown(s.displayName)} **${chips(state.bets[s.userId]!)}**`);
+    const deciding = state.seats.filter((s) => !state.bets[s.userId] && !s.sittingOut).map((s) => escapeMarkdown(s.displayName));
+    const away = state.seats.filter((s) => !state.bets[s.userId] && s.sittingOut).map((s) => escapeMarkdown(s.displayName));
+    const betLine = [
+      placed.length ? `Bets in: ${placed.join(' · ')}` : '',
+      placed.length && deciding.length ? `-# Still deciding: ${deciding.join(', ')}` : '',
+      away.length ? `-# Sitting out: ${away.join(', ')}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
     const heading = result && !result.voided ? '**Next hand** · ' : '### Place your bets\n';
     const timing =
       betCount > 0 && state.deadline
         ? `dealing ${discordTime(state.deadline)}`
         : state.seats.length === 0
           ? 'take a seat to play'
-          : 'the hand is dealt shortly after the first bet';
+          : 'press a chip to bet — the deal starts shortly after the first bet';
     lines.push(`${heading}${timing}${betLine ? `\n${betLine}` : ''}`);
     parts.push(text(lines.join('\n')));
     const presets = chipPresets(record.config.minBet, record.config.maxBet);
@@ -272,7 +282,10 @@ export async function blackjackPanel(app: CasinoApp, snapshot: Readonly<TableSna
     );
   }
 
-  const log = state.log.slice(-4).map((l) => `-# ${TONE_GLYPH[l.tone]} ${escapeMarkdown(l.text)}`);
+  // Right after a hand the results block already tells the story: only show what happened since.
+  const showingResults = !revealing && state.phase === 'betting' && state.lastResult !== null && !state.lastResult.voided;
+  const recent = showingResults ? state.log.filter((l) => l.at > state.lastResult!.settledAt) : state.log;
+  const log = recent.slice(-4).map((l) => `-# ${TONE_GLYPH[l.tone]} ${escapeMarkdown(l.text)}`);
   const full = state.seats.length >= record.config.maxSeats;
   const accent = state.phase === 'playing' ? COLORS.gold : state.lastResult && !revealing && state.phase === 'betting' ? COLORS.deepEmerald : COLORS.emerald;
   return {
@@ -297,12 +310,17 @@ export async function blackjackPanel(app: CasinoApp, snapshot: Readonly<TableSna
   };
 }
 
+/** "a", "a and b", "a, b and c". */
+function listOf(items: string[]): string {
+  return items.length <= 1 ? (items[0] ?? '') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`;
+}
+
 /** Shown on the panel's message once a table is closed. */
 export function closedTablePanel(name: string, reason: string): Screen {
   return {
     components: [
       container(COLORS.charcoal, [
-        text(`## ♠ ${escapeMarkdown(name)} — closed\n-# ${escapeMarkdown(reason)}. Any open bets were refunded. Thanks for playing!`),
+        text(`## ♠ ${escapeMarkdown(name)} — closed\n-# ${escapeMarkdown(reason.charAt(0).toUpperCase() + reason.slice(1))}. Any open bets were refunded. Thanks for playing!`),
         row(button({ id: cid('bj', 'home', 'closed'), label: 'Open the casino', emoji: ICONS.home })),
       ]),
     ],

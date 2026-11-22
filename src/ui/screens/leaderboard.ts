@@ -24,7 +24,7 @@ export function leaderboardScreen(
   const lines = board.entries.map((e) => {
     const marker = e.rank <= 3 ? MEDALS[e.rank - 1] : `\`#${String(e.rank).padStart(2)}\``;
     const who = escapeMarkdown(truncate(e.displayName || 'Player', 24));
-    const line = `${marker} ${e.userId === viewer.userId ? `__**${who}**__` : `**${who}**`} — ${e.display}`;
+    const line = `${marker} ${e.userId === viewer.userId ? `__**${who}**__` : `**${who}**`} · ${e.display}`;
     return line;
   });
   const viewerOnPage = board.entries.some((e) => e.userId === viewer.userId);

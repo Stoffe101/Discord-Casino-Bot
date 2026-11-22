@@ -25,6 +25,7 @@ import { PanelSync, sleep } from './panel-sync.js';
 import { DISCORD_ERRORS, createOptions, discordErrorCode, editOptions, primaryFileName } from './payload.js';
 import { InteractionRouter } from './router.js';
 import type { OutboundGuard } from './outbound-guard.js';
+import { RestMetrics } from './rest-metrics.js';
 
 export interface BotTiming {
   /** Delay between dealer-reveal frames. */
@@ -75,6 +76,7 @@ export class CasinoBot {
   private stopping = false;
   readonly guard: OutboundGuard | null;
   readonly timing: BotTiming;
+  readonly restMetrics = new RestMetrics();
 
   constructor(
     readonly app: CasinoApp,
@@ -87,7 +89,10 @@ export class CasinoBot {
     // Only the Guilds intent: no message content, no member lists, no presences.
     // Mentions never ping unless a message explicitly allows it (the coinflip challenge does).
     this.client = new Client({ intents: [GatewayIntentBits.Guilds], allowedMentions: { parse: [], repliedUser: false }, ...(options.makeRequest ? { rest: { makeRequest: options.makeRequest } } : {}) });
-    // Test mode: every outgoing request passes the allowlist check before it reaches the network.
+    // Innermost wrapper, next to the network: time every Discord request that is actually sent.
+    this.restMetrics.install(this.client.rest);
+    // Test mode: every outgoing request passes the allowlist check first (outermost, so refused
+    // requests never reach the network or the metrics).
     this.guard?.install(this.client.rest);
     const guard = this.guard;
     this.tablePanels = new PanelSync<RenderHint>({
@@ -183,6 +188,7 @@ export class CasinoBot {
     this.intervals.push(
       setInterval(() => void this.maintenance(), 60_000),
       setInterval(() => this.auditBooks(), 60 * 60_000),
+      setInterval(() => this.logMetrics(), 10 * 60_000),
     );
     this.auditBooks();
   }
@@ -194,6 +200,20 @@ export class CasinoBot {
     } catch (error) {
       this.logger.error('maintenance failed', { error });
     }
+  }
+
+  /** Periodic performance line in the log: Discord API timings, interaction handling, panels. */
+  logMetrics(): void {
+    const r = this.router.latency;
+    this.logger.info('metrics', {
+      discordApi: this.restMetrics.summary(),
+      rateLimited: this.restMetrics.rateLimited,
+      interactions: { count: r.count, avgMs: r.count ? Math.round(r.totalMs / r.count) : 0, maxMs: r.maxMs },
+      panels: this.tablePanels.stats,
+      images: { hits: this.app.images.hits, renders: this.app.images.misses },
+      rssMb: Math.round(process.memoryUsage().rss / 1048576),
+      guard: this.guard ? { allowed: this.guard.allowedCount, blocked: this.guard.blockedCount } : null,
+    });
   }
 
   private auditBooks(): void {
@@ -219,6 +239,7 @@ export class CasinoBot {
     this.stopping = true;
     for (const t of this.intervals) clearInterval(t);
     for (const t of this.lobbyTimers.values()) clearTimeout(t);
+    this.logMetrics();
     // Let interactions that are already being handled finish before disconnecting.
     await Promise.race([Promise.all([...this.inflight]), sleep(5_000)]);
     await Promise.race([Promise.all([this.tablePanels.idle(), this.wheelPanels.idle()]), sleep(5_000)]);

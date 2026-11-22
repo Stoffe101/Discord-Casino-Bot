@@ -67,7 +67,9 @@ export function homeScreen(app: CasinoApp, viewer: Viewer): Screen {
   const playButton = mine
     ? mine.record.threadId || mine.record.channelId
       ? linkButton(`Back to ${mine.record.name}`, channelUrl(viewer.guildId, (mine.record.threadId ?? mine.record.channelId)!, mine.record.threadId ? null : mine.record.messageId), ICONS.blackjack)
-      : button({ id: NAV.tables, label: `Back to ${mine.record.name}`, emoji: ICONS.blackjack, tone: 'primary' })
+      : // No panel yet (still being posted): open the player's seat controls instead. A distinct id —
+        // reusing the Tables button's id would make Discord reject the whole message.
+        button({ id: cid('bj', 'seat', mine.record.id), label: `Back to ${mine.record.name}`, emoji: ICONS.blackjack, tone: 'primary' })
     : button({ id: cid('tbl', 'quick'), label: 'Play Blackjack', emoji: ICONS.blackjack, tone: 'primary', disabled: !settings.blackjack.enabled });
 
   return {

@@ -229,7 +229,7 @@ export class CasinoBot {
     const target = thread ?? channel;
     const message = await target.send(createOptions(screen));
     await this.app.blackjack.attachDiscord(tableId, { channelId: channel.id, threadId: thread?.id ?? null, messageId: message.id });
-    if (thread) await thread.members.add(creatorId).catch(() => undefined);
+    if (thread && snap.record.isPrivate) await thread.members.add(creatorId).catch(() => undefined);
     this.requestLobby(snap.record.guildId);
     return { url: thread ? thread.url : message.url };
   }
@@ -245,7 +245,11 @@ export class CasinoBot {
     const thread = await this.client.channels.fetch(snap.record.threadId).catch(() => null);
     if (thread?.isThread()) {
       if (thread.archived) await thread.setArchived(false).catch(() => undefined);
-      await thread.members.add(userId).catch((error: unknown) => this.logger.warn('could not add member to thread', { tableId, code: discordErrorCode(error) }));
+      // Private threads need explicit membership. Public threads are open to everyone, so we don't
+      // add people there (that would post an "X added Y" system line for every join).
+      if (snap.record.isPrivate) {
+        await thread.members.add(userId).catch((error: unknown) => this.logger.warn('could not add member to thread', { tableId, code: discordErrorCode(error) }));
+      }
       return thread.url;
     }
     return null;

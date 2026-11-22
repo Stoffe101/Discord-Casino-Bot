@@ -61,6 +61,8 @@ export class InteractionRouter {
   private readonly claimed = new WeakSet<object>();
   private readonly seen = new Map<string, number>();
   private readonly handledChallenges = new Set<string>();
+  /** How we deferred each interaction, so later responses go to the right place. */
+  private readonly deferredAs = new WeakMap<object, 'update' | 'reply'>();
   readonly startedAt = Date.now();
   latency = { count: 0, totalMs: 0, maxMs: 0 };
 
@@ -93,11 +95,7 @@ export class InteractionRouter {
     const arm = (mode: AckMode) => {
       if (mode === 'none') return;
       guard = setTimeout(() => {
-        if (interaction.deferred || interaction.replied) return;
-        const p = mode === 'update' && (interaction.isMessageComponent() || interaction.isModalSubmit())
-          ? (interaction as ButtonInteraction).deferUpdate()
-          : interaction.deferReply({ flags: MessageFlags.Ephemeral });
-        p.catch(() => undefined);
+        this.defer(interaction, mode).catch(() => undefined);
       }, ACK_GUARD_MS);
     };
     try {
@@ -139,18 +137,40 @@ export class InteractionRouter {
     return false;
   }
 
-  /** Show a screen: in place when the click came from the user's own panel, otherwise as a new private reply. */
+  /**
+   * Acknowledge without answering yet. 'update' (component/modal on a message) means the eventual
+   * answer edits the user's own panel; 'reply' opens a private "thinking…" reply to fill later.
+   */
+  private async defer(i: RepliableInteraction, mode: 'update' | 'reply'): Promise<void> {
+    if (i.deferred || i.replied) return;
+    if (mode === 'update' && (i.isMessageComponent() || (i.isModalSubmit() && i.isFromMessage()))) {
+      this.deferredAs.set(i, 'update');
+      await (i as ButtonInteraction).deferUpdate();
+    } else {
+      this.deferredAs.set(i, 'reply');
+      await i.deferReply({ flags: MessageFlags.Ephemeral });
+    }
+  }
+
+  /**
+   * Show a screen: in place when the click came from the user's own private panel, otherwise as a
+   * new private (or public) reply. Never edits a shared message by accident: if the interaction
+   * was acknowledged in a way that doesn't match, the screen goes out as a private follow-up.
+   */
   private async show(i: RepliableInteraction, screen: Screen, how: 'auto' | 'private' | 'public' = 'auto'): Promise<void> {
     screen = this.bot.checked(screen);
-    if (how === 'auto' && this.fromEphemeral(i) && (i.isMessageComponent() || i.isModalSubmit())) {
-      if (!i.deferred && !i.replied) await (i as ButtonInteraction).update(editOptions(screen));
-      else await i.editReply(editOptions(screen));
+    const inPlace = how === 'auto' && this.fromEphemeral(i) && (i.isMessageComponent() || i.isModalSubmit());
+    if (!i.deferred && !i.replied) {
+      if (inPlace) await (i as ButtonInteraction).update(editOptions(screen));
+      else await i.reply(replyOptions(screen, how !== 'public'));
       return;
     }
-    const opts = replyOptions(screen, how !== 'public');
-    if (!i.deferred && !i.replied) await i.reply(opts);
-    else if (i.deferred && !i.replied && !(i.isMessageComponent() && !this.fromEphemeral(i) && how === 'auto')) await i.editReply(editOptions(screen));
-    else await i.followUp(opts);
+    const deferred = this.deferredAs.get(i);
+    if (i.deferred && !i.replied && (deferred === 'reply' || (deferred === 'update' && inPlace))) {
+      await i.editReply(editOptions(screen));
+      return;
+    }
+    await i.followUp(replyOptions(screen, how !== 'public'));
   }
 
   private async notice(i: RepliableInteraction, title: string, body: string, tone: 'success' | 'info' | 'error' | 'gold' = 'info', buttons: ReturnType<typeof button>[] = []): Promise<void> {
@@ -172,6 +192,7 @@ export class InteractionRouter {
     try {
       const opts = replyOptions(screen, true);
       if (!i.deferred && !i.replied) await i.reply(opts);
+      else if (this.deferredAs.get(i) === 'reply' && !i.replied) await i.editReply(editOptions(screen));
       else await i.followUp(opts);
     } catch (e) {
       this.app.logger.debug('could not report error to user', { code: discordErrorCode(e) });
@@ -274,7 +295,7 @@ export class InteractionRouter {
       case 'setup': {
         const channel = (i.options.getChannel('channel') ?? i.channel) as TextChannel | null;
         if (!channel || !('threads' in channel)) throw new UserError('Pick a regular text channel for the casino lobby.');
-        await i.deferReply({ flags: MessageFlags.Ephemeral });
+        await this.defer(i, 'reply');
         const { url, missing } = await this.bot.setupLobby(viewer.guildId, channel);
         if (!url) {
           return this.notice(i, 'Missing permissions', `I need these permissions in <#${channel.id}>: **${missing.join(', ')}**.`, 'error');
@@ -489,10 +510,7 @@ export class InteractionRouter {
 
   private async openTable(i: RepliableInteraction, viewer: Viewer, options: { name?: string; isPrivate?: boolean; maxSeats?: number; minBet?: number; maxBet?: number }): Promise<void> {
     const player = this.app.economy.getPlayer(viewer.guildId, viewer.userId)!;
-    if (!i.deferred && !i.replied) {
-      if (this.fromEphemeral(i) && (i.isMessageComponent() || i.isModalSubmit())) await (i as ButtonInteraction).deferUpdate();
-      else await i.deferReply({ flags: MessageFlags.Ephemeral });
-    }
+    await this.defer(i, this.fromEphemeral(i) ? 'update' : 'reply');
     const table = await this.app.blackjack.createTable({
       guildId: viewer.guildId,
       ownerId: viewer.userId,
@@ -651,10 +669,7 @@ export class InteractionRouter {
     const { wheel } = await this.app.roulette.open(viewer.guildId);
     let url: string | null;
     if (!wheel.record.messageId) {
-      if (!i.deferred && !i.replied) {
-        if (this.fromEphemeral(i) && i.isMessageComponent()) await i.deferUpdate();
-        else await i.deferReply({ flags: MessageFlags.Ephemeral });
-      }
+      await this.defer(i, this.fromEphemeral(i) ? 'update' : 'reply');
       url = await this.bot.createWheelPanel(wheel.record.id, i.channelId);
     } else {
       url = wheel.record.threadId
@@ -737,13 +752,10 @@ export class InteractionRouter {
     const challenge = await this.app.coinflip.create({ guildId: viewer.guildId, challengerId: viewer.userId, opponentId, amount: stake, call });
     const screen = await this.bot.coinflipScreen(challenge.id);
     if (!screen) return;
-    // Mention the opponent once (outside the components) so they get a notification.
+    // The card mentions the opponent; only this first post is allowed to ping them.
     const response = await i.reply({ ...createOptions(screen, [opponentId]), withResponse: true } as Parameters<typeof i.reply>[0] & { withResponse: true });
     const message = (response as { resource?: { message?: { id: string; channelId: string } } }).resource?.message;
     if (message) await this.app.coinflip.attachMessage(challenge.id, message.channelId, message.id);
-    if (i.channel && 'send' in i.channel) {
-      await i.channel.send({ content: `<@${opponentId}>, you've been challenged to a coinflip for **${chips(stake)}** chips!`, allowedMentions: { users: [opponentId] } }).catch(() => undefined);
-    }
   }
 
   /** Observer path: refresh a challenge message after expiry (clicks update it directly). */

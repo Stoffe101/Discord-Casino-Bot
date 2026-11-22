@@ -265,6 +265,32 @@ describe('InteractionRouter (headless)', () => {
     expect(textOf(closed.calls[0])).toContain('closed');
   });
 
+  it('after a slow acknowledgement, answers land in the right place and never edit a shared panel', async () => {
+    type Internals = {
+      defer(i: unknown, mode: 'update' | 'reply'): Promise<void>;
+      show(i: unknown, screen: unknown, how?: 'auto' | 'private' | 'public'): Promise<void>;
+    };
+    const router = bot.router as unknown as Internals;
+    const screen = { components: [{ type: 10, content: 'hello' }] };
+    // Public message + deferred "thinking" reply → the screen fills that reply.
+    const a = fake({ kind: 'button', user: 1, customId: 'nav:wallet' });
+    await router.defer(a.i, 'reply');
+    await router.show(a.i, screen);
+    expect(kinds(a.calls)).toEqual(['deferReply', 'editReply']);
+    // Public table panel acknowledged with deferUpdate → a private screen must NOT editReply
+    // (that would overwrite the shared panel); it goes out as a private follow-up instead.
+    const b = fake({ kind: 'button', user: 1, customId: 'bj:leave:x' });
+    await router.defer(b.i, 'update');
+    await router.show(b.i, screen, 'private');
+    expect(kinds(b.calls)).toEqual(['deferUpdate', 'followUp']);
+    expect(flagsOf(b.calls[1]) & MessageFlags.Ephemeral).toBeTruthy();
+    // The user's own private panel acknowledged with deferUpdate → edited in place.
+    const c = fake({ kind: 'button', user: 1, customId: 'nav:wallet', ephemeralSource: true });
+    await router.defer(c.i, 'update');
+    await router.show(c.i, screen);
+    expect(kinds(c.calls)).toEqual(['deferUpdate', 'editReply']);
+  });
+
   it('ignores duplicate deliveries of the same interaction', async () => {
     const f = fake({ kind: 'command', user: 1, commandName: 'daily' });
     await bot.router.handle(f.i as never);

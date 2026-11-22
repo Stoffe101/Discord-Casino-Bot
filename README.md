@@ -80,7 +80,7 @@ Further reading: [Discord setup guide](docs/DISCORD_SETUP.md) · [Architecture](
 - TypeScript, Node.js 24, discord.js 14 with **Components V2**, SQLite via Node's built-in
   `node:sqlite` (no native build step on Windows), resvg for image rendering.
 - Append-only ledger, escrowed wagers, idempotent operations, exactly-once settlement,
-  deterministic restart recovery. **155 automated tests**, plus an end-to-end simulation.
+  deterministic restart recovery. **156 automated tests**, plus an end-to-end simulation.
 
 ## Quick start
 
@@ -271,7 +271,7 @@ message is edited in place (or re-posted if it was deleted). See [docs/ARCHITECT
 ## Testing
 
 ```powershell
-npm test            # 155 tests, ~3 s, fully headless
+npm test            # 156 tests, ~3 s, fully headless
 npm run check       # typecheck + lint + tests + build
 npm run simulate    # e.g. -- --tables 10 --rounds 50 --crash
 ```

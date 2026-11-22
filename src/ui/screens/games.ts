@@ -213,7 +213,7 @@ export async function coinflipMessage(app: CasinoApp, challenge: Challenge, name
       components: [
         container(COLORS.gold, [
           text(
-            `## ${ICONS.coinflip} Coinflip duel\n**${c}** challenges **${o}** to a flip for **${chips(challenge.amount)}** chips each.\n${c} calls **${challenge.call === 'heads' ? 'Heads' : 'Tails'}** · winner takes **${chips(pot)}**\n-# Expires ${discordTime(challenge.expiresAt)}`,
+            `## ${ICONS.coinflip} Coinflip duel\n**${c}** challenges <@${challenge.opponentId}> to a flip for **${chips(challenge.amount)}** chips each.\n${c} calls **${challenge.call === 'heads' ? 'Heads' : 'Tails'}** · winner takes **${chips(pot)}**\n-# ${o}, accept or decline below · expires ${discordTime(challenge.expiresAt)}`,
           ),
           row(
             button({ id: cid('cf', 'accept', challenge.id), label: `Accept (${chips(challenge.amount)})`, tone: 'success' }),

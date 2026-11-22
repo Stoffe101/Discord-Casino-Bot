@@ -34,14 +34,12 @@ export function suitShape(suit: Suit, cx: number, cy: number, size: number, fill
   return `<path d="${SUIT_PATHS[suit]}" fill="${fill}" transform="translate(${n(cx - size / 2)} ${n(cy - size / 2)}) scale(${n(s)})"/>`;
 }
 
-/** Shared <defs> used by cards (gradients, shadow filter). Include once per document. */
+/** Shared <defs> used by cards (gradients, patterns). Include once per document. */
 export function cardDefs(): string {
   const backs = Object.entries(CARD_BACKS)
     .map(([id, style]) => cardBackPattern(id, style))
     .join('');
   return (
-    '<filter id="cardShadow" x="-20%" y="-20%" width="140%" height="150%">' +
-    '<feDropShadow dx="0" dy="3" stdDeviation="3.5" flood-color="#000" flood-opacity="0.45"/></filter>' +
     `<linearGradient id="paper" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fffdf7"/><stop offset="1" stop-color="${PAPER}"/></linearGradient>` +
     '<linearGradient id="courtRed" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fbe9e4"/><stop offset="1" stop-color="#f3d3cc"/></linearGradient>' +
     '<linearGradient id="courtBlack" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#eceff3"/><stop offset="1" stop-color="#d7dce4"/></linearGradient>' +
@@ -59,6 +57,11 @@ function cardBackPattern(id: string, style: CardBackStyle): string {
     '</pattern>'
   );
 }
+
+/** Soft two-layer offset shadow; much cheaper to rasterise than a blur filter. */
+const SHADOW =
+  `<rect x="1" y="4" width="${CARD_W}" height="${CARD_H}" rx="10" fill="#000" opacity="0.22"/>` +
+  `<rect x="0.5" y="2" width="${CARD_W}" height="${CARD_H}" rx="9.5" fill="#000" opacity="0.25"/>`;
 
 const CROWN = 'M10 34 L4 10 L22 22 L32 4 L42 22 L60 10 L54 34 Z';
 
@@ -103,9 +106,9 @@ export function cardFace(card: Card, x: number, y: number, w: number, options: {
   } else {
     parts.push(suitShape(suit, 60, 82, 48));
   }
-  const filter = options.shadow === false ? '' : ' filter="url(#cardShadow)"';
+  const shadow = options.shadow === false ? '' : SHADOW;
   const dim = options.dim ? `<rect x="0" y="0" width="${CARD_W}" height="${CARD_H}" rx="9" fill="#0b1a14" opacity="0.42"/>` : '';
-  return `<g transform="translate(${n(x)} ${n(y)}) scale(${n(s)})"${filter}>${parts.join('')}${dim}</g>`;
+  return `<g transform="translate(${n(x)} ${n(y)}) scale(${n(s)})">${shadow}${parts.join('')}${dim}</g>`;
 }
 
 /** A face-down card using one of the unlockable card-back styles. */
@@ -113,9 +116,9 @@ export function cardBack(x: number, y: number, w: number, backId = 'emerald', op
   const style = CARD_BACKS[backId] ?? CARD_BACKS.emerald!;
   const id = CARD_BACKS[backId] ? backId : 'emerald';
   const s = w / CARD_W;
-  const filter = options.shadow === false ? '' : ' filter="url(#cardShadow)"';
+  const shadow = options.shadow === false ? '' : SHADOW;
   return (
-    `<g transform="translate(${n(x)} ${n(y)}) scale(${n(s)})"${filter}>` +
+    `<g transform="translate(${n(x)} ${n(y)}) scale(${n(s)})">${shadow}` +
     `<rect x="0" y="0" width="${CARD_W}" height="${CARD_H}" rx="9" fill="#fbf8f0" stroke="${PAPER_EDGE}" stroke-width="1.4"/>` +
     `<rect x="6" y="6" width="${CARD_W - 12}" height="${CARD_H - 12}" rx="6" fill="url(#back-${id})"/>` +
     `<rect x="10" y="10" width="${CARD_W - 20}" height="${CARD_H - 20}" rx="4" fill="none" stroke="${style.accent}" stroke-width="1.6"/>` +

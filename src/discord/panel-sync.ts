@@ -38,6 +38,8 @@ interface Slot<Hint> {
 }
 
 const ACK_SAFETY_MS = 2_200;
+/** Every animation frame stays on screen at least this long, however slow the send was. */
+export const MIN_FRAME_HOLD_MS = 180;
 const CARRIER_MAX_AGE_MS = 2_500;
 
 /**
@@ -94,9 +96,12 @@ export class PanelSync<Hint = unknown> {
         const frames = this.options.frames?.(key, job.hint) ?? 0;
         const delay = typeof this.options.frameDelayMs === 'function' ? this.options.frameDelayMs(job.hint) : (this.options.frameDelayMs ?? 900);
         for (let frame = 0; frame < frames; frame++) {
+          // Pace by cadence: the time Discord took to show this frame counts towards its slot, so
+          // a slow connection doesn't stretch the animation (a short minimum hold keeps it readable).
+          const shown = Date.now();
           await this.renderAndSend(key, slot, frame, carriers, job.hint);
           carriers = [];
-          await sleep(delay);
+          await sleep(Math.max(delay > 0 ? MIN_FRAME_HOLD_MS : 0, delay - (Date.now() - shown)));
         }
         await this.renderAndSend(key, slot, undefined, carriers, job.hint);
       }

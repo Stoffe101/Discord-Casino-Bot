@@ -46,7 +46,7 @@ const POCKET_FILL = { red: '#b3263a', black: '#16181b', green: '#13784f' } as co
  * `spin` draws an in-motion frame instead: the wheel short of its final position and the ball still
  * running round the rim (frame 0 = just launched, 1 = slowing down), with no result shown yet.
  */
-export function rouletteSvg(options: { result: number | null; history: number[]; spinNumber: number; spin?: { frame: number; target: number } }): string {
+export function rouletteSvg(options: { result: number | null; history: number[]; spinNumber: number; spin?: { frame: number; wheelAngle: number; ballAngle: number } }): string {
   const W = 900;
   const H = 420;
   const cx = 220;
@@ -55,10 +55,10 @@ export function rouletteSvg(options: { result: number | null; history: number[];
   const pockets = WHEEL_ORDER.length;
   const step = 360 / pockets;
   const spinning = options.spin !== undefined;
-  const target = spinning ? options.spin!.target : options.result;
-  const index = target === null ? 0 : WHEEL_ORDER.indexOf(target);
-  // Winning pocket at the top; while spinning the wheel is still short of its final position.
-  const rotation = -index * step + (spinning ? [212, 63][options.spin!.frame] ?? 0 : 0);
+  const index = options.result === null ? 0 : WHEEL_ORDER.indexOf(options.result);
+  // Winning pocket at the top. In motion, the wheel and ball positions are random and unrelated
+  // to the result (the caller picks them), so an in-between frame can never give the number away.
+  const rotation = spinning ? options.spin!.wheelAngle : -index * step;
   const parts: string[] = [];
   parts.push(`<rect width="${W}" height="${H}" fill="url(#rfelt)"/>`);
   parts.push(`<circle cx="${cx}" cy="${cy}" r="${R + 14}" fill="#2a170b" stroke="#c9a54e" stroke-width="3"/>`);
@@ -89,7 +89,7 @@ export function rouletteSvg(options: { result: number | null; history: number[];
   parts.push(`<path d="M ${cx - 14} ${cy - R - 26} L ${cx + 14} ${cy - R - 26} L ${cx} ${cy - R - 4} Z" fill="#f2d78a" stroke="#8a6420" stroke-width="1.5"/>`);
   if (spinning) {
     // The ball runs on the outer track, ahead of the pointer, with a short motion trail.
-    const ballAngle = ([-128, -46][options.spin!.frame] ?? 0) - 90;
+    const ballAngle = options.spin!.ballAngle - 90;
     for (let t = 3; t >= 0; t--) {
       const a = ((ballAngle - t * 7) * Math.PI) / 180;
       parts.push(`<circle cx="${n(cx + (R + 6) * Math.cos(a))}" cy="${n(cy + (R + 6) * Math.sin(a))}" r="${9 - t * 1.5}" fill="#fdfcf8" opacity="${t === 0 ? 1 : 0.18 * (4 - t)}"/>`);

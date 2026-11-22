@@ -1,3 +1,4 @@
+import { randomInt } from 'node:crypto';
 import type { CasinoApp } from '../../app/casino-app.js';
 import { chips, discordTime, escapeMarkdown, signedChips } from '../../core/format.js';
 import type { Challenge } from '../../games/coinflip/coinflip-service.js';
@@ -143,7 +144,7 @@ export async function roulettePanel(app: CasinoApp, wheel: Readonly<WheelSnapsho
   // nothing about it is shown until the ball lands.
   if (options.spinFrame !== undefined && result) {
     const { key, png } = await app.images.render(
-      rouletteSvg({ result: null, history: state.history, spinNumber: result.spinNumber, spin: { frame: options.spinFrame, target: result.number } }),
+      rouletteSvg({ result: null, history: state.history, spinNumber: result.spinNumber, spin: { frame: options.spinFrame, wheelAngle: randomInt(360), ballAngle: randomInt(360) } }),
       760,
     );
     const file = `wheel-${key}.png`;

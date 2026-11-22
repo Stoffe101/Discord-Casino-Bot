@@ -38,16 +38,25 @@ This report keeps four kinds of evidence apart:
 
 **Also new:** bets typed as `2k`, `1.5k`, `all`, `max` or `half` in the bet, roulette and coinflip boxes.
 
-**Timings now** (per step, before network latency):
-- deal pass 450 ms;
-- each dealer card 700 ms;
-- roulette and slot frames 650 ms;
-- coin 1 s.
+**Timings, measured at the owner's real latency** (`npm run record -- --latency 500`, i.e. about 0.5 s per Discord request).
+- Frames are paced by cadence: the time a request takes counts towards the frame, with a 180 ms minimum hold. A slow connection therefore doesn't stretch the animation.
+- Gaps measured:
 
-A full dealer reveal with two extra cards takes about 2–3 s.
+| Step | Gap |
+| --- | --- |
+| Deal pass, then cards, totals and controls | 0.9 s |
+| Each dealer card | 0.7–0.9 s |
+| Slot reels | about 0.7 s per stop (about 1.9 s from click to result) |
+| Roulette | 0.7 s, then 1.0 s |
+| Coin | 1.0 s |
 
+**Safety:**
+- **Stuck animations:** if an animation edit fails, the player is sent straight to the final screen, as a private follow-up if needed, so a slot machine never stays locked mid-spin.
+- **Roulette leaks:** roulette in-motion frames use random wheel and ball positions, so they can't reveal the winning number.
+- **Size limits:** a seven-seat table with four split hands each and long names stays within Discord's limits.
+- All three are tested.
 **Verified:**
-- 298 tests pass; `tests/integration/animations.test.ts` covers frame order, no spoilers, locked controls, the newest-card marker and amount parsing.
+- 301 tests pass; `tests/integration/animations.test.ts` covers frame order, no spoilers, locked controls, the newest-card marker, amount parsing and the safety cases above.
 - **Live Discord:** all 37 screens were accepted, including the four new animation frames.
 - **Live table threads:** 2 tables × 2 hands with the new deal and reveal frames, 0 rate-limited, 0 blocked.
 ## 0. Round 2: table threads under #casino

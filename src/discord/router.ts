@@ -44,7 +44,7 @@ import { HELP_TOPICS, helpScreen, type HelpTopic } from '../ui/screens/help.js';
 import { adjustModal, adminScreen, adminTablesScreen, auditScreen, devResetModal, settingModal } from '../ui/screens/admin.js';
 import type { ModalSpec } from '../ui/kit.js';
 import type { CasinoBot } from './bot.js';
-import type { Carrier } from './panel-sync.js';
+import { MIN_FRAME_HOLD_MS, type Carrier } from './panel-sync.js';
 import { createOptions, discordErrorCode, editOptions, replyOptions } from './payload.js';
 
 type Component = ButtonInteraction | AnySelectMenuInteraction;
@@ -205,11 +205,25 @@ export class InteractionRouter {
    * one is rendered only when it is due.
    */
   private async playFrames(i: Component, frames: Array<() => Promise<Screen>>, delayMs: number): Promise<void> {
+    const last = frames.length - 1;
     for (const [index, build] of frames.entries()) {
-      const screen = this.bot.checked(await build());
-      if (index === 0 && !i.deferred && !i.replied) await i.update(editOptions(screen));
-      else await i.editReply(editOptions(screen));
-      if (index < frames.length - 1) await new Promise((r) => setTimeout(r, delayMs));
+      const started = Date.now();
+      try {
+        const screen = this.bot.checked(await build());
+        if (index === 0 && !i.deferred && !i.replied) await i.update(editOptions(screen));
+        else await i.editReply(editOptions(screen));
+      } catch (error) {
+        if (index === 0 && !i.deferred && !i.replied) throw error; // nothing shown yet: normal error path
+        // An in-between frame failed: never leave the message mid-animation (its controls are
+        // disabled). Show the final state now, as a private follow-up if the edit keeps failing.
+        this.app.logger.warn('animation frame failed; jumping to the final frame', { code: discordErrorCode(error) });
+        if (index === last) throw error;
+        const final = this.bot.checked(await frames[last]!());
+        await i.editReply(editOptions(final)).catch(() => i.followUp(replyOptions(final, true)));
+        return;
+      }
+      // Pace by cadence: the request's own time counts towards the frame (with a short minimum hold).
+      if (index < last) await new Promise((r) => setTimeout(r, Math.max(delayMs > 0 ? MIN_FRAME_HOLD_MS : 0, delayMs - (Date.now() - started))));
     }
   }
 

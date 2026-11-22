@@ -125,6 +125,50 @@ describe('other game animations', () => {
   });
 });
 
+describe('animation safety', () => {
+  it('slots never stay stuck mid-spin when an animation edit fails', async () => {
+    h = new CasinoHarness();
+    const alex = h.user('Alex');
+    const hubMessage = h.seen(await h.click(alex, h.seen(await h.slash(alex, 'casino'))!, 'More Games'))!;
+    const machine = h.seen(await h.click(alex, hubMessage, 'Play slots'))!;
+    // Every edit of the interaction's message fails (e.g. a network blip after the first frame).
+    h.fd.fault = (method, route) => (method === 'PATCH' && route.startsWith('/webhooks/') ? { status: 500, body: { code: 0, message: 'boom' } } : null);
+    const spin = h.buttons(machine).find((b) => b.label?.startsWith('Spin'))!;
+    const rec = await h.click(alex, machine, spin.label!);
+    h.fd.fault = null;
+    // The final result still reached the player, with working controls.
+    const final = h.seen(rec)!;
+    expect(final.forUser).toBe(alex.id);
+    expect(h.text(final)).not.toContain('Spinning…');
+    expect(h.buttons(final).find((b) => b.label?.startsWith('Spin'))!.disabled ?? false).toBe(false);
+  });
+
+  it('roulette spin frames carry no information about the result', async () => {
+    const { rouletteSvg } = await import('../../src/render/game-images.js');
+    const frame = (winner: number) => rouletteSvg({ result: null, history: [winner, 4, 19], spinNumber: 3, spin: { frame: 0, wheelAngle: 40, ballAngle: 120 } });
+    expect(frame(7)).toBe(frame(32)); // identical whatever the winning number is
+  });
+
+  it('a full table of long names and split hands still fits Discord limits', async () => {
+    const { validateScreen } = await import('../../src/ui/validate.js');
+    const { blackjackPanel } = await import('../../src/ui/screens/blackjack.js');
+    h = new CasinoHarness();
+    h.app.settings.set(h.guildId, 'blackjack.maxSeats', 7);
+    const players = Array.from({ length: 7 }, (_, i) => h.user(`${'W'.repeat(28)}${i}`));
+    await h.click(players[0]!, h.seen(await h.slash(players[0]!, 'casino')), 'Play Blackjack');
+    const tableId = h.app.blackjack.tableOfUser(h.guildId, players[0]!.id)!.record.id;
+    for (const p of players) await h.click(p, h.tablePanel(tableId), '25');
+    await h.advance(ALL_IN_DEAL_DELAY_MS);
+    const snap = structuredClone(h.app.blackjack.peek(tableId)!);
+    // Worst case: everyone has four split hands of six cards.
+    for (const seat of snap.state.round!.seats) {
+      seat.hands = Array.from({ length: 4 }, () => ({ ...seat.hands[0]!, cards: ['2C', '2D', '2H', '3S', '3C', 'AD'] as Card[], fromSplit: true }));
+    }
+    const screen = await blackjackPanel(h.app, snap);
+    expect(validateScreen(screen).errors).toEqual([]);
+  });
+});
+
 describe('typed chip amounts', () => {
   it.each([
     ['250', 250],

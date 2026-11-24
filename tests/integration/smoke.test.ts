@@ -16,7 +16,8 @@ describe('full-stack harness smoke test', () => {
     const home = h.seen(rec)!;
     expect(home.forUser).toBe(alice.id);
     expect(h.text(home)).toContain('Alice');
-    expect(h.enabled(home)).toContain('My table');
+    expect(h.enabled(home)).toContain('Play a game');
+    expect(h.text(home)).toContain('Your table');
     expect(h.enabled(home)).not.toContain('Play Blackjack');
     expect(h.fd.problems).toEqual([]);
   });

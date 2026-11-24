@@ -47,6 +47,7 @@ import {
   TABLE_FILTERS,
   type TableFilter,
 } from '../ui/screens/blackjack.js';
+import { myTable } from '../ui/screens/my-table.js';
 import { coinflipLobbyScreen, coinflipModal, gamesHubScreen, paytableScreen, rouletteBetModal, rouletteHelpScreen, slotsScreen } from '../ui/screens/games.js';
 import { HELP_TOPICS, helpScreen, type HelpTopic } from '../ui/screens/help.js';
 import { adjustModal, adminScreen, adminTablesScreen, auditScreen, devResetModal, settingModal } from '../ui/screens/admin.js';
@@ -585,6 +586,15 @@ export class InteractionRouter {
       }
       case 'events':
         return this.show(i, eventsScreen(this.app, viewer, intArg(args[0])));
+      case 'rules': {
+        // The Games floor's "Rules and how to play…" menu (or a direct rules link).
+        const game = i.isStringSelectMenu() ? i.values[0] : args[0];
+        if (game === 'poker') return this.show(i, pokerRulesScreen());
+        if (game === 'roulette') return this.show(i, rouletteHelpScreen());
+        if (game === 'slots') return this.show(i, paytableScreen(this.app.settings.get(viewer.guildId).slots.minBet));
+        if (game === 'coinflip') return this.show(i, coinflipLobbyScreen(this.app, viewer));
+        return this.show(i, rulesScreen(this.app, viewer.guildId));
+      }
       case 'pkrules':
         return this.show(i, pokerRulesScreen());
       case 'bjrules':
@@ -719,7 +729,7 @@ export class InteractionRouter {
         const seat = this.app.blackjack.tableOfUser(viewer.guildId, viewer.userId) ?? this.app.poker.tableOfUser(viewer.guildId, viewer.userId);
         if (seat) {
           arm(this.fromEphemeral(i) ? 'update' : 'reply');
-          return this.show(i, tablesScreen(this.app, viewer, 'mine'));
+          return this.show(i, tablesScreen(this.app, viewer, 'blackjack'));
         }
         return this.showModal(i, createTableModal(this.app, viewer.guildId));
       }
@@ -773,6 +783,11 @@ export class InteractionRouter {
       arm(this.fromEphemeral(i) ? 'update' : 'reply');
       const url = await this.bot.addToTableThread(tableId, viewer.userId);
       return this.show(i, this.seatedScreen(snap.record.name, url, 'You already have a seat here.'), this.fromEphemeral(i) ? 'auto' : 'private');
+    }
+    if (myTable(this.app, viewer)) {
+      // Seated at another table (either game): explain and offer the way back instead of an error.
+      arm(this.fromEphemeral(i) ? 'update' : 'reply');
+      return this.show(i, tablesScreen(this.app, viewer, 'blackjack'), this.fromEphemeral(i) ? 'auto' : 'private');
     }
     if (snap.record.isPrivate && snap.record.ownerId !== viewer.userId && !code) {
       return this.showModal(i, accessCodeModal(tableId, snap.record.name));

@@ -56,7 +56,7 @@ export function leaderboardScreen(
         text(lines.length ? `${lines.join('\n')}\n\n${viewerLine}` : `Nobody is on this board yet — be the first!\n\n${viewerLine}`),
         periodButtons,
         row(
-          button({ id: cid('nav', 'lb', info.id, board.period, board.page - 1), emoji: ICONS.back, disabled: board.page === 0 }),
+          button({ id: cid('nav', 'lb', info.id, board.period, board.page - 1), emoji: ICONS.prev, disabled: board.page === 0 }),
           button({ id: cid('nav', 'lb', info.id, board.period, 'page'), label: `Page ${board.page + 1} of ${board.pages}`, disabled: true }),
           button({ id: cid('nav', 'lb', info.id, board.period, board.page + 1), emoji: ICONS.next, disabled: board.page >= board.pages - 1 }),
           button({ id: cid('nav', 'lb', info.id, board.period, board.page, 'r'), label: 'Refresh', emoji: ICONS.refresh }),

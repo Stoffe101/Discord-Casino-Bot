@@ -74,7 +74,7 @@ describe('countdowns never outlive their deadline', () => {
     h = new CasinoHarness();
     const alex = h.user('Alex');
     const hub = h.seen(await h.click(alex, h.seen(await h.slash(alex, 'casino'))!, 'Games'))!;
-    await h.click(alex, hub, 'Open the wheel');
+    await h.click(alex, hub, 'Roulette');
     const wheel = h.app.roulette.wheelFor(h.guildId)!.record;
     const panel = () => h.fd.messages.get(h.app.roulette.peek(wheel.id)!.record.messageId!)!;
     const pick = findComponents(panel().components, 3)[0]!;
@@ -133,7 +133,7 @@ describe('slots', () => {
     h = new CasinoHarness();
     const alex = h.user('Alex');
     const hub = h.seen(await h.click(alex, h.seen(await h.slash(alex, 'casino'))!, 'Games'))!;
-    const machine = h.seen(await h.click(alex, hub, 'Play slots'))!;
+    const machine = h.seen(await h.click(alex, hub, 'Slots'))!;
     expect(h.text(machine)).toContain('Pull the lever');
     await h.click(alex, machine, /^Spin/);
     expect(h.text(machine)).toMatch(/No win this time|\*\*\+\d/);

@@ -112,8 +112,8 @@ export class CasinoHarness {
   async openBlackjack(user: FakeUser, source?: FakeMessage | null, channelId = this.casino): Promise<InteractionRecord> {
     const home = source ?? this.seen(await this.slash(user, 'casino', {}, channelId));
     const games = this.seen(await this.click(user, home, 'Games'));
-    const tables = this.seen(await this.click(user, games, 'Blackjack tables'));
-    const create = await this.click(user, tables, 'Open Blackjack');
+    const tables = this.seen(await this.click(user, games, 'Blackjack'));
+    const create = await this.click(user, tables, 'Open a Blackjack table');
     return this.submit(user, create, {});
   }
 

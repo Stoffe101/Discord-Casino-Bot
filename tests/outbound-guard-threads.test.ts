@@ -186,7 +186,7 @@ describe('table threads in test mode (full stack)', () => {
     h = new CasinoHarness({ allowThreads: true });
     const [host, guest] = [h.user('Host'), h.user('Guest')];
     const tables = h.seen(await h.slash(host, 'blackjack'));
-    const opener = await h.click(host, tables, 'Open Blackjack');
+    const opener = await h.click(host, tables, 'Open a Blackjack table');
     await h.submit(host, opener, { visibility: 'private' });
     const record = h.app.blackjack.tableOfUser(h.guildId, host.id)!.record;
     expect(h.fd.channels.get(record.threadId!)?.type).toBe(12);
@@ -211,7 +211,7 @@ describe('table threads in test mode (full stack)', () => {
     for (let i = 0; i < 3; i++) {
       const host = h.user(`Host${i}`);
       const tables = h.seen(await h.slash(host, 'blackjack'));
-      const opener = await h.click(host, tables, 'Open Blackjack');
+      const opener = await h.click(host, tables, 'Open a Blackjack table');
       await h.submit(host, opener, { visibility: 'public' });
     }
     const open = h.app.blackjack.allOpenTables();

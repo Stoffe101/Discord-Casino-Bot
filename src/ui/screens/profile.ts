@@ -142,7 +142,7 @@ export function achievementsScreen(app: CasinoApp, viewer: Viewer, targetId: str
         separator(),
         text(lines.join('\n')),
         row(
-          button({ id: cid('nav', 'achv', targetId, p - 1), emoji: ICONS.back, disabled: p === 0 }),
+          button({ id: cid('nav', 'achv', targetId, p - 1), emoji: ICONS.prev, disabled: p === 0 }),
           button({ id: cid('nav', 'achv', targetId, 'page'), label: `Page ${p + 1} of ${pages}`, disabled: true }),
           button({ id: cid('nav', 'achv', targetId, p + 1), emoji: ICONS.next, disabled: p >= pages - 1 }),
           button({ id: cid('nav', 'profile', targetId === viewer.userId ? '' : targetId, 'from-achv'), label: 'Profile', emoji: ICONS.profile }),

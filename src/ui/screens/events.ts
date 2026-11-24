@@ -32,7 +32,7 @@ export function eventsScreen(app: CasinoApp, actor: EventActor, requested = 0): 
         ], button({ id: cid('evt', 'open', event.id), label: 'Details', emoji: ICONS.events, tone: 'primary' }))),
         current.length ? null : text('No upcoming events.'),
         pages > 1 ? row(
-          button({ id: cid('nav', 'events', page - 1), label: 'Previous', emoji: ICONS.back, disabled: page === 0 }),
+          button({ id: cid('nav', 'events', page - 1), label: 'Previous', emoji: ICONS.prev, disabled: page === 0 }),
           button({ id: cid('nav', 'events', page + 1), label: 'Next', emoji: ICONS.next, disabled: page + 1 >= pages }),
         ) : null,
         row(

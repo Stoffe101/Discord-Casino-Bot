@@ -40,7 +40,7 @@ it('grants relief first and changes the nickname only after the authenticated pl
   const user = h.user('Alice');
   fake.members.set(user.id, { value: null, manageable: true });
   const wallet = h.seen(await h.slash(user, 'wallet'))!;
-  await h.click(user, wallet, 'Claim with Sosse title');
+  await h.click(user, wallet, 'Claim as Sosse');
   expect(h.balance(user)).toBe(50);
   expect(fake.writes).toEqual([]);
   h.fd.click(user, wallet, 'Set my server nickname to Sosse');
@@ -63,7 +63,7 @@ it('retains the test allowlist and leaves relief independent of nicknames', asyn
   const user = h.user('Alice');
   fake.members.set(user.id, { value: 'Al', manageable: true });
   const wallet = h.seen(await h.slash(user, 'wallet'))!;
-  await h.click(user, wallet, 'Claim with Sosse title');
+  await h.click(user, wallet, 'Claim as Sosse');
   expect(h.balance(user)).toBe(50);
   expect(h.bot.nicknames).toBeNull();
   expect(h.enabled(wallet)).not.toContain('Set my server nickname to Sosse');

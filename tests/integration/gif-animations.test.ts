@@ -64,12 +64,12 @@ describe('animated GIFs', () => {
     const [alex, hanna] = [h.user('Alex'), h.user('Hanna')];
     const hub = async (u: typeof alex) => h.seen(await h.click(u, h.seen(await h.slash(u, 'casino'))!, 'Games'))!;
     // Slots: the click answers with rolling reels, then the result.
-    const machine = h.seen(await h.click(alex, await hub(alex), 'Play slots'))!;
+    const machine = h.seen(await h.click(alex, await hub(alex), 'Slots'))!;
     h.fd.timeline.length = 0;
     await h.click(alex, machine, h.buttons(machine).find((b) => b.label?.startsWith('Spin'))!.label!);
     expect(kinds(h.fd.timeline.filter((e) => e.messageId === machine.id))).toEqual(['gif', 'png']);
     // Roulette.
-    await h.click(alex, await hub(alex), 'Open the wheel');
+    await h.click(alex, await hub(alex), 'Roulette');
     const wheel = h.app.roulette.wheelFor(h.guildId)!.record;
     const panel = () => h.fd.messages.get(h.app.roulette.peek(wheel.id)!.record.messageId!)!;
     const select = findComponents(panel().components, 3)[0]!;
@@ -84,7 +84,7 @@ describe('animated GIFs', () => {
     await h.settle();
     expect(kinds(h.fd.timeline.filter((e) => e.messageId === panel().id))).toEqual(['gif', 'png']);
     // Coinflip.
-    const card = h.seen(await h.submit(alex, await h.select(alex, h.seen(await h.click(alex, await hub(alex), 'Choose opponent')), 'cf:pick', [hanna.id]), { amount: '25', call: 'tails' }))!;
+    const card = h.seen(await h.submit(alex, await h.select(alex, h.seen(await h.click(alex, await hub(alex), 'Coinflip')), 'cf:pick', [hanna.id]), { amount: '25', call: 'tails' }))!;
     h.fd.timeline.length = 0;
     await h.click(hanna, card, /^Accept/);
     expect(kinds(h.fd.timeline.filter((e) => e.messageId === card.id))).toEqual(['gif', 'png']);

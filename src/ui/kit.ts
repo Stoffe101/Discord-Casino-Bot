@@ -230,5 +230,5 @@ function isPresent<T>(value: T | null | undefined | false): value is T {
 /** Text progress bar, e.g. ▰▰▰▱▱ */
 export function progressBar(fraction: number, width = 10): string {
   const filled = Math.max(0, Math.min(width, Math.round(fraction * width)));
-  return '▰'.repeat(filled) + '▱'.repeat(width - filled);
+  return '█'.repeat(filled) + '░'.repeat(width - filled);
 }

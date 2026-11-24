@@ -26,8 +26,8 @@ describe('expanded wallet', () => {
     expect(economy.reliefStatus(h.guildId, alice.id)).toMatchObject({ reason: 'rewards' });
     disableOtherRewards();
     const wallet = h.seen(await h.slash(alice, 'wallet'))!;
-    h.fd.click(alice, wallet, 'Claim with Sosse title');
-    h.fd.click(alice, wallet, 'Claim with Sosse title');
+    h.fd.click(alice, wallet, 'Claim as Sosse');
+    h.fd.click(alice, wallet, 'Claim as Sosse');
     await h.settle();
     expect(h.balance(alice)).toBe(50);
     expect(economy.ledgerPage(h.guildId, alice.id, 10).filter((row) => row.type === 'emergency_relief')).toHaveLength(1);
@@ -75,7 +75,7 @@ describe('expanded wallet', () => {
     expect(() => economy.gift(h.guildId, alice.id, bob.id, 50, 'disabled')).toThrow(/disabled/);
     h.app.settings.set(h.guildId, 'economy.giftingEnabled', true);
     const wallet = h.seen(await h.slash(alice, 'wallet'))!;
-    await h.click(alice, wallet, 'Gifting');
+    await h.click(alice, wallet, 'Gift chips');
     const modal = await h.select(alice, wallet, 'gift:pick', [bob.id]);
     await h.submit(alice, modal, { amount: '50' });
     expect(h.text(wallet)).toContain('Confirm chip gift');

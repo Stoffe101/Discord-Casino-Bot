@@ -26,6 +26,8 @@ export const NAV = {
   tables: cid('nav', 'tables'),
   myTable: cid('nav', 'tables', 'mine'),
   games: cid('nav', 'games'),
+  // A second way into Games from a screen's own content (a message can't repeat a custom id).
+  floor: cid('nav', 'games', 'floor'),
   events: cid('nav', 'events'),
   help: cid('nav', 'help', 'start'),
 } as const;

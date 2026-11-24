@@ -2,6 +2,7 @@ import type { CasinoApp } from '../../app/casino-app.js';
 import { COUNTDOWN_CUTOFF_MS, chips, countdown, escapeMarkdown, discordTime, plural } from '../../core/format.js';
 import { eventsScreen } from './events.js';
 import { pokerUrl } from './poker.js';
+import { myTable, myTableLine, returnToTableButton, seatConflict } from './my-table.js';
 import { cardLabel } from '../../games/cards.js';
 import { currentTurnUserId, describeRules, describeTotal, handValue, type BlackjackRules } from '../../games/blackjack/engine.js';
 import { isMultiplayerLayout, renderTableSvg } from '../../render/table-image.js';
@@ -131,31 +132,69 @@ export function tablesScreen(app: CasinoApp, viewer: Viewer, filter: TableFilter
       !wheelEntry && entry.url && !entry.record.isPrivate && !seated ? row(linkButton('Spectate', entry.url, ICONS.spectate)) : null,
     ];
   });
-  const title = myView ? 'My table' : focusedGame ? TABLE_FILTER_LABELS[focusedGame] + ' tables' : 'Casino tables';
-  const empty = myView ? 'You don’t have a seat at a table. Open Games to choose one.'
-    : focusedGame ? 'No ' + TABLE_FILTER_LABELS[focusedGame] + ' tables are open. You can start one below.' : 'No tables match this filter.';
-  const matching = filtered.length ? plural(filtered.length, 'open table') : empty;
-  const hasOtherGameSeat = !!mine && (focusedGame === 'blackjack' ? !myBlackjack : focusedGame === 'poker' && !myPoker);
+  const me = myTable(app, viewer);
+  // My table: one card with the way back (and out, when nothing is in play).
+  if (myView) {
+    return {
+      components: [
+        container(me?.urgent ? COLORS.gold : COLORS.emerald, [
+          navRow('games'),
+          me ? text(`## My table\n${myTableLine(me)}`) : text('## My table\n-# You are not seated at a Blackjack or Hold’em table right now.'),
+          me
+            ? row(
+                returnToTableButton(me),
+                me.canLeaveNow ? button({ id: me.game === 'blackjack' ? cid('bj', 'leave', me.id) : cid('pk', 'leave', me.id), label: 'Leave table', emoji: ICONS.leave, tone: 'danger' }) : null,
+                button({ id: NAV.floor, label: 'Games', emoji: ICONS.games }),
+              )
+            : row(
+                button({ id: NAV.floor, label: 'Games', emoji: ICONS.games, tone: 'success' }),
+                button({ id: cid('nav', 'tables', 'blackjack'), label: 'Blackjack tables', emoji: ICONS.blackjack }),
+                settings.poker.enabled ? button({ id: cid('nav', 'tables', 'poker'), label: 'Hold’em tables', emoji: ICONS.poker }) : null,
+              ),
+        ]),
+      ],
+    };
+  }
+  const gameLabel = focusedGame ? TABLE_FILTER_LABELS[focusedGame] : 'Casino';
+  const stakes = focusedGame === 'blackjack'
+    ? `Bets ${chips(settings.blackjack.minBet)}–${chips(settings.blackjack.maxBet)} · up to ${settings.blackjack.maxSeats} seats · you play the dealer, not each other`
+    : focusedGame === 'poker'
+      ? `Blinds ${chips(settings.poker.smallBlind)}/${chips(settings.poker.bigBlind)} · buy-in ${chips(settings.poker.minBuyIn)}–${chips(settings.poker.maxBuyIn)} · no rake`
+      : 'Every open table and the shared wheel.';
+  const count = filtered.length
+    ? `**${plural(filtered.length, 'table')} open**`
+    : focusedGame ? `**No ${gameLabel} tables yet** — open the first one and friends can join from here.` : 'No tables match this filter.';
+  const enabled = focusedGame === 'blackjack' ? settings.enabled && settings.blackjack.enabled : focusedGame === 'poker' ? settings.enabled && settings.poker.enabled : false;
+  const otherGame = !!me && !!focusedGame && me.game !== focusedGame;
+  const sameGame = !!me && !!focusedGame && me.game === focusedGame;
   return {
     components: [
       container(COLORS.emerald, [
         navRow('games'),
-        text('## ' + title + '\n' + matching),
-        !focusedGame && !myView
+        text(`## ${focusedGame === 'blackjack' ? ICONS.blackjack : focusedGame === 'poker' ? ICONS.poker : ICONS.tables} ${focusedGame ? `${gameLabel} tables` : 'All tables'}\n-# ${stakes}\n${count}`),
+        !focusedGame
           ? select({ id: cid('tbl', 'filter'), placeholder: 'Filter tables', options: allowed.map((value) => option(TABLE_FILTER_LABELS[value], value, undefined, undefined, value === filter)) })
           : null,
-        hasOtherGameSeat ? text('You already have a seat in ' + (myBlackjack ? 'Blackjack' : 'Hold’em') + '. Leave it before joining or opening another table.') : null,
-        focusedGame === 'blackjack' ? row(button({ id: cid('tbl', 'create'), label: 'Open Blackjack', emoji: ICONS.blackjack, tone: 'primary', disabled: !!mine || !settings.enabled || !settings.blackjack.enabled })) : null,
-        focusedGame === 'poker' ? row(button({ id: cid('pk', 'create'), label: 'Open Hold’em', emoji: ICONS.poker, tone: 'primary', disabled: !!mine || !settings.enabled || !settings.poker.enabled })) : null,
-        !focusedGame && !myView ? row(
+        // Seated in the other game: say why this game is unavailable and how to get back or out.
+        ...(otherGame && me ? seatConflict(me, `a ${gameLabel} table`) : []),
+        sameGame && me ? text(`### Your table\n${myTableLine(me)}`) : null,
+        focusedGame && !otherGame
+          ? row(
+              sameGame && me ? returnToTableButton(me)
+                : button({ id: focusedGame === 'blackjack' ? cid('tbl', 'create') : cid('pk', 'create'), label: `Open a ${gameLabel} table`, emoji: focusedGame === 'blackjack' ? ICONS.blackjack : ICONS.poker, tone: 'success', disabled: !enabled }),
+              button({ id: cid('nav', 'rules', focusedGame), label: 'Rules', emoji: ICONS.rules }),
+              button({ id: NAV.floor, label: 'Games', emoji: ICONS.back }),
+            )
+          : null,
+        !focusedGame ? row(
           button({ id: cid('nav', 'tables', 'blackjack'), label: 'Blackjack tables', emoji: ICONS.blackjack }),
           settings.poker.enabled ? button({ id: cid('nav', 'tables', 'poker'), label: 'Hold’em tables', emoji: ICONS.poker }) : null,
+          mineUrl ? linkButton('Return to your table', mineUrl, ICONS.tables) : null,
         ) : null,
-        mineUrl && !myView ? row(linkButton('Return to your table', mineUrl, ICONS.back)) : null,
       ]),
       sections.length ? container(COLORS.deepEmerald, sections) : null,
       pages > 1 ? row(
-        button({ id: cid('nav', 'tables', filter, current - 1), label: 'Previous', emoji: ICONS.back, disabled: current === 0 }),
+        button({ id: cid('nav', 'tables', filter, current - 1), label: 'Previous', emoji: ICONS.prev, disabled: current === 0 }),
         button({ id: cid('nav', 'tables', filter, current), label: 'Refresh ' + (current + 1) + '/' + pages, emoji: ICONS.refresh }),
         button({ id: cid('nav', 'tables', filter, current + 1), label: 'Next', emoji: ICONS.next, disabled: current + 1 === pages }),
       ) : row(button({ id: cid('nav', 'tables', filter, current), label: 'Refresh', emoji: ICONS.refresh })),

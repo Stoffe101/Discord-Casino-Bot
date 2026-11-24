@@ -61,9 +61,9 @@ export async function driveTables(h: CasinoHarness, options: DriveOptions): Prom
     for (const p of players) h.app.economy.ensurePlayer(h.guildId, p.id, p.name);
     const host = players[0]!;
     const home = h.seen(track(await h.slash(host, 'casino')));
-    const tablesScreen = h.seen(track(await h.click(host, home, 'Browse tables')));
-    const blackjack = h.seen(track(await h.click(host, tablesScreen, 'Blackjack tables')));
-    const opener = track(await h.click(host, blackjack, 'Open Blackjack'));
+    const tablesScreen = h.seen(track(await h.click(host, home, 'Games')));
+    const blackjack = h.seen(track(await h.click(host, tablesScreen, 'Blackjack')));
+    const opener = track(await h.click(host, blackjack, 'Open a Blackjack table'));
     track(await h.submit(host, opener, { name: `Table ${t + 1}`, visibility: 'public' }));
     const tableId = h.app.blackjack.tableOfUser(h.guildId, host.id)?.record.id;
     if (!tableId) throw new Error(`host ${host.name} has no table: ${opener.errors.join(', ')}`);

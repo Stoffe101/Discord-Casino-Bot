@@ -16,19 +16,17 @@ import {
   modal,
   option,
   row,
-  section,
   select,
   selectLabel,
   separator,
   text,
   textInputLabel,
-  thumbnail,
   userSelect,
   type ModalSpec,
   type Screen,
 } from '../kit.js';
 import { COLORS, ICONS } from '../theme.js';
-import { casinoArtwork } from '../../render/casino-art.js';
+import { FLOOR_ORDER, floorArt, type FloorTile } from '../../render/floor-art.js';
 import { NAV, navRow, type Viewer } from './common.js';
 
 /** Extra time after a GIF's own length, so clients that load it a moment late still see it end. */
@@ -45,47 +43,55 @@ async function gifFile(frames: GifFrame[], width: number, prefix: string): Promi
 
 export async function gamesHubScreen(app: CasinoApp, viewer: Viewer): Promise<Screen> {
   const settings = app.settings.get(viewer.guildId);
-  const tables = app.blackjack.openTables(viewer.guildId);
-  const tableCount = tables.length;
-  const seated = tables.reduce((count, table) => count + table.state.seats.length, 0);
-  const games = GAMES.filter((game) => game.id !== 'poker' || settings.poker.enabled);
-  const availability = {
-    poker: 'Blinds ' + chips(settings.poker.smallBlind) + '/' + chips(settings.poker.bigBlind) + ' · '
-      + app.poker.openTables(viewer.guildId).length + ' open',
-    blackjack: tableCount + ' open · ' + seated + ' seated',
-    roulette: app.roulette.wheelFor(viewer.guildId) ? 'Wheel open' : 'Shared wheel',
-    slots: (exactReturnToPlayer().rtp * 100).toFixed(1) + '% theoretical return',
-    coinflip: 'Two players',
+  const open: Record<FloorTile, boolean> = {
+    blackjack: gameEnabled(settings, 'blackjack'),
+    poker: gameEnabled(settings, 'poker'),
+    roulette: gameEnabled(settings, 'roulette'),
+    slots: gameEnabled(settings, 'slots'),
+    coinflip: gameEnabled(settings, 'coinflip'),
+    events: settings.enabled,
   };
-  const labels = {
-    blackjack: 'Blackjack tables', poker: 'Hold’em tables', roulette: 'Open the wheel', slots: 'Play slots', coinflip: 'Choose opponent',
+  const art = await floorArt(open);
+  const bj = app.blackjack.openTables(viewer.guildId);
+  const pk = app.poker.openTables(viewer.guildId);
+  const wheel = app.roulette.wheelFor(viewer.guildId);
+  const bettors = wheel ? new Set(wheel.state.bets.map((bet) => bet.userId)).size : 0;
+  const playing = (n: number) => (n === 1 ? '1 player' : `${n} players`);
+  const tables = (n: number) => (n === 1 ? '1 table' : `${n} tables`);
+  const next = app.events.upcoming(viewer.guildId, viewer.userId)[0];
+  const status = [
+    `${ICONS.blackjack} **Blackjack** · ${bj.length ? `${tables(bj.length)} · ${playing(bj.reduce((sum, t) => sum + t.state.seats.length, 0))}` : 'no tables yet'} · bets ${chips(settings.blackjack.minBet)}–${chips(settings.blackjack.maxBet)}`,
+    settings.poker.enabled
+      ? `${ICONS.poker} **Hold’em** · ${pk.length ? `${tables(pk.length)} · ${playing(pk.reduce((sum, t) => sum + t.state.seats.length, 0))}` : 'no tables yet'} · blinds ${chips(settings.poker.smallBlind)}/${chips(settings.poker.bigBlind)}`
+      : null,
+    `${ICONS.roulette} **Roulette** · ${bettors ? `${playing(bettors)} betting now` : 'the wheel is waiting for bets'} · ${chips(settings.roulette.minBet)}–${chips(settings.roulette.maxBet)}`,
+    `${ICONS.slots} **Slots** · your own machine · ${chips(settings.slots.minBet)}–${chips(settings.slots.maxBet)}`,
+    `${ICONS.coinflip} **Coinflip** · challenge a friend · ${chips(settings.coinflip.minBet)}–${chips(settings.coinflip.maxBet)}`,
+    `${ICONS.events} **Events** · ${next ? `next: ${escapeMarkdown(truncate(next.title, 40))} ${discordTime(next.starts_at)}` : 'nothing scheduled yet'}`,
+  ].filter(Boolean);
+  const play = (id: FloorTile) => {
+    const game = id === 'events' ? null : GAMES.find((g) => g.id === id)!;
+    return game
+      ? button({ id: game.play, label: game.id === 'slots' ? 'Slots' : game.label, emoji: game.icon, disabled: !open[id] })
+      : button({ id: NAV.events, label: 'Events', emoji: ICONS.events, disabled: !open.events });
   };
-  const cards = await Promise.all(games.map(async (game) => {
-    const artwork = await casinoArtwork(game.id);
-    const enabled = gameEnabled(settings, game.id);
-    const range = game.id === 'poker'
-      ? 'Buy-in ' + chips(settings.poker.minBuyIn) + '–' + chips(settings.poker.maxBuyIn)
-      : chips(settings[game.id].minBet) + '–' + chips(settings[game.id].maxBet) + ' chips';
-    const details = '### ' + game.label + '\n' + game.description + '\n' + (enabled ? availability[game.id] + ' · ' + range : 'Closed');
-    return {
-      artwork,
-      components: [
-        artwork ? section([details], thumbnail('attachment://' + artwork.name, artwork.description)) : text(details),
-        row(
-          button({ id: game.play, label: labels[game.id], emoji: game.icon, tone: 'primary', disabled: !enabled }),
-          button({ id: game.rules, label: (game.id === 'slots' ? 'Slots' : game.label) + ' rules', emoji: ICONS.help }),
-        ),
-      ],
-    };
-  }));
-  const tablesOnly = settings.poker.enabled ? 2 : 1;
+  const rules = GAMES.filter((game) => game.id !== 'poker' || settings.poker.enabled);
   return {
-    files: cards.flatMap(({ artwork }) => artwork ? [artwork] : []),
+    files: art ? [art] : [],
     components: [
-      navRow('games'),
-      container(COLORS.emerald, cards.slice(0, tablesOnly).flatMap(({ components }) => components)),
-      container(COLORS.gold, cards.slice(tablesOnly).flatMap(({ components }) => components)),
-      row(button({ id: NAV.events, label: 'Casino events', emoji: ICONS.events })),
+      container(COLORS.emerald, [
+        navRow('games'),
+        text('## The Gaming Floor\n-# Tables and the wheel are shared with everyone. Slots is your own machine.'),
+        art ? gallery([{ url: `attachment://${art.name}`, description: art.description }]) : null,
+        row(...FLOOR_ORDER.slice(0, 3).map(play)),
+        row(...FLOOR_ORDER.slice(3).map(play)),
+        text(`-# ${status.join('\n-# ')}`),
+        select({
+          id: cid('nav', 'rules'),
+          placeholder: '📖  Rules and how to play…',
+          options: rules.map((game) => option(game.id === 'slots' ? 'Emerald Slots — paytable' : `${game.label} — how to play`, game.id, undefined, game.icon)),
+        }),
+      ]),
     ],
   };
 }

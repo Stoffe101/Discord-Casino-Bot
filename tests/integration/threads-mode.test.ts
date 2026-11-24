@@ -99,7 +99,7 @@ describe('thread mode (full stack)', () => {
     const h = harness();
     const [alice, bob] = [h.user('Alice'), h.user('Bob')];
     const hub = h.seen(await h.click(alice, h.seen(await h.slash(alice, 'casino')), 'Games'))!;
-    await h.click(alice, hub, 'Open the wheel');
+    await h.click(alice, hub, 'Roulette');
     const record = h.app.roulette.wheelFor(h.guildId)!.record;
     expect(h.fd.channels.get(record.threadId!)?.parentId).toBe(h.casino);
     const panel = () => h.fd.messages.get(h.app.roulette.peek(record.id)!.record.messageId!)!;

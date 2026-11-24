@@ -20,7 +20,7 @@ it('sends the same complete Home on a slash response and on a navigation update'
   const expected = structuredClone(first.components);
   expect(first.flags & MessageFlags.IsComponentsV2).toBeTruthy();
   expect(first.flags & MessageFlags.Ephemeral).toBeTruthy();
-  expect(h.enabled(first)).toContain('Browse tables');
+  expect(h.enabled(first)).toContain('Play a game');
   const attachments = first.attachments.map((attachment) => attachment.filename);
   await h.click(user, first, 'Games');
   const back = await h.click(user, first, 'Home');

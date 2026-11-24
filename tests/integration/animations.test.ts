@@ -76,7 +76,7 @@ describe('other game animations', () => {
     h = new CasinoHarness();
     h.fd.recording = true;
     const alex = h.user('Alex');
-    const machine = h.seen(await h.click(alex, await hub(alex), 'Play slots'))!;
+    const machine = h.seen(await h.click(alex, await hub(alex), 'Slots'))!;
     const before = h.balance(alex);
     const spin = h.buttons(machine).find((b) => b.label?.startsWith('Spin'))!;
     const rec = await h.click(alex, machine, spin.label!);
@@ -94,7 +94,7 @@ describe('other game animations', () => {
     h = new CasinoHarness();
     h.fd.recording = true;
     const alex = h.user('Alex');
-    await h.click(alex, await hub(alex), 'Open the wheel');
+    await h.click(alex, await hub(alex), 'Roulette');
     const record = h.app.roulette.wheelFor(h.guildId)!.record;
     const panel = () => h.fd.messages.get(h.app.roulette.peek(record.id)!.record.messageId!)!;
     const select = findComponents(panel().components, 3)[0]!;
@@ -116,7 +116,7 @@ describe('other game animations', () => {
     h.fd.recording = true;
     const [alex, hanna] = [h.user('Alex'), h.user('Hanna')];
     h.app.settings.set(h.guildId, 'economy.startingBalance', 1000);
-    const sent = await h.submit(alex, await h.select(alex, h.seen(await h.click(alex, await hub(alex), 'Choose opponent')), 'cf:pick', [hanna.id]), { amount: '1k', call: 'heads' });
+    const sent = await h.submit(alex, await h.select(alex, h.seen(await h.click(alex, await hub(alex), 'Coinflip')), 'cf:pick', [hanna.id]), { amount: '1k', call: 'heads' });
     const card = h.seen(sent)!;
     expect(h.app.economy.getWallet(h.guildId, alex.id).reserved).toBe(Math.min(1000, h.app.settings.get(h.guildId).coinflip.maxBet));
     await h.click(hanna, card, /^Accept/);
@@ -131,7 +131,7 @@ describe('animation safety', () => {
     h = new CasinoHarness();
     const alex = h.user('Alex');
     const hubMessage = h.seen(await h.click(alex, h.seen(await h.slash(alex, 'casino'))!, 'Games'))!;
-    const machine = h.seen(await h.click(alex, hubMessage, 'Play slots'))!;
+    const machine = h.seen(await h.click(alex, hubMessage, 'Slots'))!;
     // Every edit of the interaction's message fails (e.g. a network blip after the first frame).
     h.fd.fault = (method, route) => (method === 'PATCH' && route.startsWith('/webhooks/') ? { status: 500, body: { code: 0, message: 'boom' } } : null);
     const spin = h.buttons(machine).find((b) => b.label?.startsWith('Spin'))!;

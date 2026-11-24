@@ -197,7 +197,7 @@ describe('blackjack via the Discord panel', () => {
     h = new CasinoHarness();
     const [host, guest, stranger] = [h.user('Host'), h.user('Guest'), h.user('Stranger')];
     const tables = h.seen(await h.slash(host, 'blackjack'));
-    const opener = await h.click(host, tables, 'Open Blackjack');
+    const opener = await h.click(host, tables, 'Open a Blackjack table');
     expect(opener.modal).not.toBeNull();
     const visibility = findComponents(opener.modal.components, 3).find((s) => s.custom_id === 'visibility')!;
     expect(visibility.options.map((o: { value: string }) => o.value)).toEqual(['public', 'private']);

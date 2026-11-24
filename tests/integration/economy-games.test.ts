@@ -32,7 +32,8 @@ describe('economy through Discord', () => {
     expect(h.balance(alice)).toBe(600 + h.db.get<{ n: number }>("SELECT COALESCE(SUM(amount),0) AS n FROM ledger WHERE user_id = ? AND type IN ('achievement_reward','mission_reward')", [alice.id])!.n);
     // The refreshed home screen now shows the countdown instead.
     const after = h.seen(await h.slash(alice, 'casino'))!;
-    expect(h.buttons(after).find((b) => b.label?.startsWith('Daily in'))?.disabled).toBe(true);
+    expect(h.buttons(after).some((b) => b.label?.startsWith('Daily'))).toBe(false); // nothing to claim: no button
+    expect(h.text(after)).toMatch(/Daily reward\*\* · Next <t:\d+:R>/);
     healthy();
   });
 
@@ -77,7 +78,7 @@ describe('other games through Discord', () => {
   it('spins the slots and ignores a duplicate spin click', async () => {
     h = new CasinoHarness();
     const alice = h.user('Alice');
-    const machine = h.seen(await h.click(alice, await gamesHub(alice), 'Play slots'))!;
+    const machine = h.seen(await h.click(alice, await gamesHub(alice), 'Slots'))!;
     const spin = h.buttons(machine).find((b) => b.label?.startsWith('Spin'))!;
     h.fd.click(alice, machine, spin.label!);
     h.fd.click(alice, machine, spin.label!);
@@ -90,7 +91,7 @@ describe('other games through Discord', () => {
   it('runs a shared roulette wheel: select → modal → spin → payout', async () => {
     h = new CasinoHarness();
     const [alice, bob] = [h.user('Alice'), h.user('Bob')];
-    const opened = await h.click(alice, await gamesHub(alice), 'Open the wheel');
+    const opened = await h.click(alice, await gamesHub(alice), 'Roulette');
     expect(opened.errors).toEqual([]);
     const wheel = h.app.roulette.wheelFor(h.guildId)!;
     const panel = () => h.fd.messages.get(h.app.roulette.peek(wheel.record.id)!.record.messageId!)!;
@@ -115,7 +116,7 @@ describe('other games through Discord', () => {
     h = new CasinoHarness();
     const [alice, bob, carol] = [h.user('Alice'), h.user('Bob'), h.user('Carol')];
     const challenge = async (from: typeof alice, to: typeof bob, amount: string) => {
-      const pick = await h.select(from, h.seen(await h.click(from, await gamesHub(from), 'Choose opponent')), 'cf:pick', [to.id]);
+      const pick = await h.select(from, h.seen(await h.click(from, await gamesHub(from), 'Coinflip')), 'cf:pick', [to.id]);
       expect(pick.modal).not.toBeNull();
       const sent = await h.submit(from, pick, { amount, call: 'heads' });
       expect(sent.errors).toEqual([]);

@@ -28,37 +28,37 @@ describe('casino navigation', () => {
     const home = h.seen(await h.slash(user, 'casino'))!;
     expect(h.enabled(home)).not.toContain('Quick seat');
     expect(h.enabled(home)).not.toContain('Play Blackjack');
-    await h.click(user, home, 'My table');
-    expect(h.text(home)).toContain('You don’t have a seat');
+    expect(h.text(home)).toContain('You are not seated anywhere'); // Home says where your table is (here: none)
 
     await h.click(user, home, 'Games');
-    await h.click(user, home, 'Hold’em tables');
-    expect(h.text(home)).toContain('Hold’em tables');
-    expect(h.buttons(home).map((button) => button.label)).not.toContain('Open Blackjack');
+    await h.click(user, home, 'Hold’em');
+    expect(h.text(home)).toContain('Hold’em');
+    expect(h.buttons(home).map((button) => button.label)).not.toContain('Open a Blackjack table');
     expect(h.buttons(home).map((button) => button.label)).not.toContain('Quick seat');
-    const modal = await h.click(user, home, 'Open Hold’em');
+    const modal = await h.click(user, home, 'Open a Hold’em table');
     await h.submit(user, modal, { buyin: '100', visibility: 'public', seats: '6' });
     const poker = h.app.poker.tableOfUser(h.guildId, user.id)!;
     expect(poker.record.threadId).toBeTruthy();
     expect(h.app.blackjack.tableOfUser(h.guildId, user.id)).toBeUndefined();
 
-    await h.click(user, home, 'Home');
-    await h.click(user, home, 'My table');
+    await h.click(user, home, 'Home'); // Home links straight back into the table's thread
     expect(h.buttons(home).some((button) => button.url?.endsWith('/' + poker.record.threadId))).toBe(true);
     await h.click(user, home, 'Games');
-    await h.click(user, home, 'Blackjack tables');
-    expect(h.text(home)).toContain('You already have a seat in Hold’em');
-    expect(h.enabled(home)).not.toContain('Open Blackjack');
-    expect(h.buttons(home).map((button) => button.label)).not.toContain('Open Hold’em');
+    await h.click(user, home, 'Blackjack');
+    expect(h.text(home)).toContain('You already have a seat');
+    expect(h.text(home)).toContain('(Hold’em)');
+    expect(h.buttons(home).some((button) => button.url?.endsWith('/' + poker.record.threadId))).toBe(true);
+    expect(h.enabled(home)).not.toContain('Open a Blackjack table');
+    expect(h.buttons(home).map((button) => button.label)).not.toContain('Open a Hold’em table');
 
     await h.click(user, home, 'Games');
-    await h.click(user, home, 'Play slots');
+    await h.click(user, home, 'Slots');
     expect(h.text(home)).toMatch(/Slots/);
     await h.click(user, home, 'Games');
-    await h.click(user, home, 'Choose opponent');
+    await h.click(user, home, 'Coinflip');
     expect(h.text(home)).toContain('Pick a friend');
     await h.click(user, home, 'Games');
-    const roulette = h.seen(await h.click(user, home, 'Open the wheel'))!;
+    const roulette = h.seen(await h.click(user, home, 'Roulette'))!;
     expect(h.text(roulette)).toContain('The wheel is ready');
     expect(h.fd.channelMessages(h.casino)).toHaveLength(1);
     expect(h.guard!.blockedCount).toBe(0);

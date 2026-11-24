@@ -9,6 +9,7 @@ import { EconomyService } from '../domain/economy/economy-service.js';
 import { GuildSettingsService } from '../domain/guild-settings-service.js';
 import { StatsService } from '../domain/stats-service.js';
 import { ProgressService } from '../domain/progress-service.js';
+import { MatchHistory } from '../domain/match-history.js';
 import { RoundRecorder } from '../domain/round-recorder.js';
 import { LeaderboardService } from '../domain/leaderboard-service.js';
 import { BlackjackTableService } from '../tables/blackjack-table-service.js';
@@ -37,6 +38,7 @@ export class CasinoApp {
   readonly stats: StatsService;
   readonly progress: ProgressService;
   readonly recorder: RoundRecorder;
+  readonly history: MatchHistory;
   readonly leaderboards: LeaderboardService;
   readonly blackjack: BlackjackTableService;
   readonly coinflip: CoinflipService;
@@ -55,7 +57,8 @@ export class CasinoApp {
     this.economy = new EconomyService(this.db, provider, this.clock);
     this.stats = new StatsService(this.db);
     this.progress = new ProgressService(this.db, this.economy, this.stats, provider, this.clock);
-    this.recorder = new RoundRecorder(this.db, this.economy, this.stats, this.progress, this.clock);
+    this.recorder = new RoundRecorder(this.db, this.economy, this.stats, this.progress, this.clock, provider);
+    this.history = new MatchHistory(this.db);
     this.leaderboards = new LeaderboardService(this.db, this.clock);
     const gameDeps = {
       db: this.db,

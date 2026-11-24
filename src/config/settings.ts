@@ -14,7 +14,13 @@ export interface GuildSettings {
     dailyReward: number;
     dailyStreakBonus: number;
     dailyStreakMaxDays: number;
+    reliefAmount: number;
+    reliefCooldownHours: number;
+    reliefTitle: boolean;
+    giftingEnabled: boolean;
+    giftDailyLimit: number;
   };
+  highlights: { enabled: boolean; bigNet: number; majorNet: number; minimumWager: number; cooldownSeconds: number };
   blackjack: {
     enabled: boolean;
     minBet: number;
@@ -50,13 +56,19 @@ export const DEFAULT_SETTINGS: GuildSettings = {
   animations: true,
   enabled: true,
   economy: {
-    startingBalance: 1000,
-    passivePerHour: 50,
+    startingBalance: 500,
+    passivePerHour: 20,
     passiveCapHours: 24,
-    dailyReward: 250,
-    dailyStreakBonus: 25,
+    dailyReward: 100,
+    dailyStreakBonus: 10,
     dailyStreakMaxDays: 7,
+    reliefAmount: 50,
+    reliefCooldownHours: 24,
+    reliefTitle: true,
+    giftingEnabled: false,
+    giftDailyLimit: 500,
   },
+  highlights: { enabled: true, bigNet: 500, majorNet: 1000, minimumWager: 50, cooldownSeconds: 300 },
   blackjack: {
     enabled: true,
     minBet: 10,
@@ -93,13 +105,14 @@ export type SettingSpec =
   | { key: string; group: SettingGroup; label: string; help: string; type: 'enum'; options: readonly string[] }
   | { key: string; group: SettingGroup; label: string; help: string; type: 'text'; maxLength: number };
 
-export type SettingGroup = 'general' | 'economy' | 'blackjack' | 'tables' | 'games';
+export type SettingGroup = 'general' | 'economy' | 'blackjack' | 'tables' | 'games' | 'highlights';
 
 export const SETTING_GROUPS: Record<SettingGroup, { label: string; description: string }> = {
   general: { label: 'General', description: 'Casino name and master switch' },
   economy: { label: 'Economy', description: 'Starting chips, passive income, daily rewards' },
   blackjack: { label: 'Blackjack', description: 'Limits, timers and house rules' },
   tables: { label: 'Tables', description: 'Table limits, threads and idle cleanup' },
+  highlights: { label: 'Highlights', description: 'Lobby activity thresholds and cooldown' },
   games: { label: 'Other games', description: 'Coinflip, roulette and slots' },
 };
 
@@ -116,6 +129,16 @@ export const SETTING_SPECS: readonly SettingSpec[] = [
   { key: 'economy.dailyStreakBonus', group: 'economy', label: 'Streak bonus / day', help: 'Extra chips per consecutive day', type: 'int', min: 0, max: 100_000 },
   { key: 'economy.dailyStreakMaxDays', group: 'economy', label: 'Streak bonus cap (days)', help: 'Bonus stops growing after this', type: 'int', min: 1, max: 30 },
 
+  { key: 'economy.reliefAmount', group: 'economy', label: 'Relief grant', help: 'Set to zero to close the relief fund', type: 'int', min: 0, max: 1000 },
+  { key: 'economy.reliefCooldownHours', group: 'economy', label: 'Relief cooldown (h)', help: 'Time between eligible relief claims', type: 'int', min: 1, max: 168 },
+  { key: 'economy.reliefTitle', group: 'economy', label: 'Sosse title', help: 'Offer an optional temporary casino profile title', type: 'bool' },
+  { key: 'economy.giftingEnabled', group: 'economy', label: 'Chip gifting', help: 'Allow small gifts between established accounts', type: 'bool' },
+  { key: 'economy.giftDailyLimit', group: 'economy', label: 'Daily gift limit', help: 'Maximum sent by one player per UTC day', type: 'int', min: 10, max: 5000 },
+  { key: 'highlights.enabled', group: 'highlights', label: 'Activity highlights', help: 'Show notable moments in the casino lobby', type: 'bool' },
+  { key: 'highlights.bigNet', group: 'highlights', label: 'Big-win net profit', help: 'Minimum profit for a big win', type: 'int', min: 1, max: 10_000_000 },
+  { key: 'highlights.majorNet', group: 'highlights', label: 'Major-win net profit', help: 'Minimum profit for a major win', type: 'int', min: 1, max: 10_000_000 },
+  { key: 'highlights.minimumWager', group: 'highlights', label: 'Highlight wager floor', help: 'Minimum stake for a big win or slots jackpot', type: 'int', min: 1, max: 10_000_000 },
+  { key: 'highlights.cooldownSeconds', group: 'highlights', label: 'Player cooldown (s)', help: 'Minimum time between win highlights per player', type: 'int', min: 0, max: 86400 },
   { key: 'blackjack.enabled', group: 'blackjack', label: 'Blackjack enabled', help: 'Allow new blackjack tables', type: 'bool' },
   { key: 'blackjack.minBet', group: 'blackjack', label: 'Minimum bet', help: 'Server-wide floor', type: 'int', min: 1, max: 1_000_000 },
   { key: 'blackjack.maxBet', group: 'blackjack', label: 'Maximum bet', help: 'Server-wide ceiling', type: 'int', min: 1, max: 10_000_000 },

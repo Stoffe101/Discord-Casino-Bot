@@ -21,10 +21,14 @@ legal advice.
 
 ## How this project stays on the right side
 
-- Chips are **fictional, free and non-transferable**: no purchases, no cash-out, no trading, no
-  player-to-player transfers, no redeemable prizes, no crypto, no payment code of any kind.
-- The only way chips move between players is a coinflip **duel** both players opt into; chips still
-  have no value outside the game and cannot leave it.
+- Chips are **fictional and free**. They have no real-world value. Purchases, sales, cash-out,
+  external trading, exchange for products or services, redeemable prizes, crypto, loans and interest
+  are prohibited. The bot contains no payment features.
+- Administrators may enable small, one-way chip gifts confined to the same private server. Gifting
+  is off by default, requires confirmation, and uses established accounts, opt-out and a daily
+  sender limit. Both ledger entries share a transfer reference. These controls limit some forms
+  of abuse, and operators must enforce the ban on outside trades. Discord's policy focuses on
+  wagers and prizes with real-world value, including exchangeable virtual currency.
 - Rewards (daily, passive, missions) never depend on bet size; XP has a daily soft cap; progression
   is cosmetic only. Leaderboard opt-out is available on the profile screen.
 - Intended for a **private community server**. Keep the bot unlisted and unmonetized.

@@ -84,7 +84,7 @@ describe('animated GIFs', () => {
     await h.settle();
     expect(kinds(h.fd.timeline.filter((e) => e.messageId === panel().id))).toEqual(['gif', 'png']);
     // Coinflip.
-    const card = h.seen(await h.submit(alex, await h.select(alex, await hub(alex), 'cf:pick', [hanna.id]), { amount: '25', call: 'tails' }))!;
+    const card = h.seen(await h.submit(alex, await h.select(alex, h.seen(await h.click(alex, await hub(alex), 'Choose opponent')), 'cf:pick', [hanna.id]), { amount: '25', call: 'tails' }))!;
     h.fd.timeline.length = 0;
     await h.click(hanna, card, /^Accept/);
     expect(kinds(h.fd.timeline.filter((e) => e.messageId === card.id))).toEqual(['gif', 'png']);
@@ -106,7 +106,10 @@ describe('animation timing (real timings, simulated latency)', () => {
     await h.advance(ALL_IN_DEAL_DELAY_MS);
     h.fd.timeline.length = 0;
     const first = h.fd.click(alex, h.tablePanel(tableId), 'Hit');
-    await new Promise((r) => setTimeout(r, 400)); // the first card's GIF is still playing
+    // The second Hit must use the new controls delivered with the first GIF.
+    const firstGifDelivered = () => h.fd.timeline.some((entry) => entry.messageId === panelId && entry.image?.filename.endsWith('.gif'));
+    for (let i = 0; i < 200 && !firstGifDelivered(); i++) await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(firstGifDelivered()).toBe(true);
     const second = h.fd.click(alex, h.tablePanel(tableId), 'Hit');
     await h.settle();
     expect(first.errors).toEqual([]);

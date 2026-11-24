@@ -180,7 +180,7 @@ describe('UI payloads', () => {
       const split2 = byAction(panel, 'bj', 'act').find((b) => parseCid(b.custom_id!).args[1] === 'split')!;
       expect(split2.disabled).toBeFalsy(); // 8,8 can split
       // A player who cannot afford it sees Double/Split disabled with an explanation.
-      app.economy.adminAdjust({ guildId: GUILD, userId: userId(2), amount: -850, reason: 'test', actorId: userId(9) });
+      app.economy.adminAdjust({ guildId: GUILD, userId: userId(2), amount: 50 - app.economy.requirePlayer(GUILD, userId(2)).balance, reason: 'test', actorId: userId(9) });
       panel = await blackjackPanel(app, app.blackjack.peek(tableId)!);
       const dbl = byAction(panel, 'bj', 'act').find((b) => parseCid(b.custom_id!).args[1] === 'double')!;
       expect(dbl.disabled).toBe(true);

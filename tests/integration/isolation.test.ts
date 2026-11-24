@@ -24,10 +24,10 @@ describe('multiple servers', () => {
 
     // Alice plays in both servers: two independent wallets.
     const homeA = h.seen(await h.slash(alice, 'casino'))!;
-    await h.click(alice, homeA, 'Daily 250');
+    await h.click(alice, homeA, 'Daily 100');
     await h.click(alice, h.seen(await h.slash(alice, 'casino', {}, bCasino)), 'Play Blackjack');
-    expect(h.app.economy.getWallet(a, alice.id).balance).toBeGreaterThanOrEqual(1250);
-    expect(h.app.economy.getWallet(b, alice.id).balance).toBeLessThan(1250);
+    expect(h.app.economy.getWallet(a, alice.id).balance).toBeGreaterThanOrEqual(600);
+    expect(h.app.economy.getWallet(b, alice.id).balance).toBeLessThan(600);
 
     // Server B's table panel was posted in server B (a thread, since threads are on in production).
     const tableB = h.app.blackjack.tableOfUser(b, alice.id)!;

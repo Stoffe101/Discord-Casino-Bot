@@ -97,8 +97,9 @@ describe('blackjack via the Discord panel', () => {
     expect(button(tableId, 'Hit')).toBeUndefined();
     expect(h.enabled(panelOf(tableId))).toEqual(expect.arrayContaining(['10', '25', 'Rebet']));
     // Balance = start + game result + any achievement/mission rewards credited along the way.
-    expect(h.balance(alice)).toBe(1000 + 100 + rewardsOf(alice));
-    expect(h.balance(bob)).toBe(1000 + 50 + rewardsOf(bob));
+    const start = h.app.settings.get(h.guildId).economy.startingBalance;
+    expect(h.balance(alice)).toBe(start + 100 + rewardsOf(alice));
+    expect(h.balance(bob)).toBe(start + 50 + rewardsOf(bob));
     expect(h.app.economy.reconcile()).toEqual([]);
     expect(h.fd.problems).toEqual([]);
     expect(h.guard!.blockedCount).toBe(0);

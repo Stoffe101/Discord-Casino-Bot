@@ -357,6 +357,7 @@ ${seatSummary(state, round, seat.userId).join('\n')}`));
   const log = recent.slice(state.phase === 'playing' ? -2 : -4).map((l) => `-# ${TONE_GLYPH[l.tone]} ${escapeMarkdown(l.text)}`);
   const full = state.seats.length >= record.config.maxSeats;
   const accent = state.phase === 'playing' && !dealing ? COLORS.gold : state.lastResult && !animating && state.phase === 'betting' ? COLORS.deepEmerald : COLORS.emerald;
+  const lobby = app.settings.lobby(record.guildId);
   return {
     files: [{ name: fileName, data: image.data, description: alt }],
     ...(anim ? { holdMs: anim.holdMs } : {}),
@@ -376,6 +377,7 @@ ${seatSummary(state, round, seat.userId).join('\n')}`));
         button({ id: cid('bj', 'rules', tableId), label: 'Rules', emoji: ICONS.help }),
         button({ id: cid('bj', 'home', tableId), label: 'Casino', emoji: ICONS.home }),
       ),
+      ...(lobby.channelId ? [row(linkButton('Return to lobby', channelUrl(record.guildId, lobby.channelId, lobby.messageId)))] : []),
     ],
   };
 }

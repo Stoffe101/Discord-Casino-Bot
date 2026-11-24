@@ -25,7 +25,7 @@ function services(options: { db?: Database; clock?: ManualClock; rng?: Rng } = {
   const clock = options.clock ?? new ManualClock();
   const scheduler = new ManualScheduler(clock);
   const settings = new Map<string, GuildSettings>();
-  const provider = (g: string) => settings.get(g) ?? (settings.set(g, resolveSettings({})), settings.get(g)!);
+  const provider = (g: string) => settings.get(g) ?? (settings.set(g, resolveSettings({ economy: { startingBalance: 1000 } })), settings.get(g)!);
   const economy = new EconomyService(db, provider, clock);
   const stats = new StatsService(db);
   const progress = new ProgressService(db, economy, stats, provider, clock);

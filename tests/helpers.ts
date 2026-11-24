@@ -26,7 +26,8 @@ export function createTestEnv(): TestEnv {
   const provider = (guildId: string): GuildSettings => {
     let s = settings.get(guildId);
     if (!s) {
-      s = resolveSettings({});
+      // Stable amounts for unit tests that assert exact legacy payouts and accrual.
+      s = resolveSettings({ economy: { startingBalance: 1000, passivePerHour: 50, dailyReward: 250, dailyStreakBonus: 25 } });
       settings.set(guildId, s);
     }
     return s;

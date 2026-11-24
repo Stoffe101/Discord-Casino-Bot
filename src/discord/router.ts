@@ -14,8 +14,9 @@ import {
 import type { CasinoApp } from '../app/casino-app.js';
 import { InsufficientFundsError, StaleActionError, UserError, isUserError } from '../core/errors.js';
 import { chips, escapeMarkdown, plural, signedChips, parseChipAmount } from '../core/format.js';
-import { shortCode } from '../core/random.js';
+import { newId, shortCode } from '../core/random.js';
 import { getSpec, type SettingGroup } from '../config/settings.js';
+import { MIN_GIFT } from '../domain/economy/economy-service.js';
 import { resetGuildData } from '../domain/dev-reset.js';
 import type { LeaderboardCategory, LeaderboardPeriod } from '../domain/leaderboard-service.js';
 import { LEADERBOARD_CATEGORIES } from '../domain/leaderboard-service.js';
@@ -28,9 +29,11 @@ import { cid, intArg, parseCid } from '../ui/custom-id.js';
 import { button, linkButton, row, withNote, type Screen } from '../ui/kit.js';
 import { COLORS, ICONS } from '../ui/theme.js';
 import { noticeScreen, errorScreen, NAV, type Viewer } from '../ui/screens/common.js';
-import { homeScreen, walletScreen, historyScreen } from '../ui/screens/home.js';
-import { profileScreen, achievementsScreen, styleScreen, applyCosmetic } from '../ui/screens/profile.js';
+import { homeScreen, walletScreen, historyScreen, walletStatsScreen } from '../ui/screens/home.js';
+import { profileScreen, preferencesScreen, achievementsScreen, styleScreen, applyCosmetic } from '../ui/screens/profile.js';
 import { leaderboardScreen } from '../ui/screens/leaderboard.js';
+import { confirmGiftScreen, giftAmountModal, giftingScreen } from '../ui/screens/wallet-social.js';
+import { matchDetailScreen, matchesScreen, parseHistoryGame } from '../ui/screens/match-history.js';
 import { rewardsScreen } from '../ui/screens/rewards.js';
 import {
   accessCodeModal,
@@ -56,6 +59,16 @@ type AckMode = 'update' | 'reply' | 'none';
 const ACK_GUARD_MS = 2_200;
 const PLAYER_ACTIONS = new Set<PlayerAction>(['hit', 'stand', 'double', 'split', 'surrender']);
 
+const GIFT_TTL_MS = 5 * 60_000;
+
+interface GiftOffer {
+  guildId: string;
+  senderId: string;
+  recipientId: string;
+  amount: number;
+  expiresAt: number;
+}
+
 /**
  * Routes every interaction. Handlers re-validate everything server-side (guild, table, phase,
  * player, sequence, funds) — custom IDs are treated as untrusted hints.
@@ -63,6 +76,7 @@ const PLAYER_ACTIONS = new Set<PlayerAction>(['hit', 'stand', 'double', 'split',
 export class InteractionRouter {
   private readonly claimed = new WeakSet<object>();
   private readonly seen = new Map<string, number>();
+  private readonly giftOffers = new Map<string, GiftOffer>();
   private readonly handledChallenges = new Set<string>();
   /** How we deferred each interaction, so later responses go to the right place. */
   private readonly deferredAs = new WeakMap<object, 'update' | 'reply'>();
@@ -466,6 +480,22 @@ export class InteractionRouter {
       case 'eco':
         arm(ephemeral ? 'update' : 'reply');
         return this.claimReward(i, viewer, action, args[0] ?? 'home');
+      case 'prefs': {
+        arm(ephemeral ? 'update' : 'reply');
+        const column = action === 'boards' ? 'leaderboard_opt_out' : action === 'highlights' ? 'highlights_opt_out' : null;
+        if (!column || (args[0] !== 'on' && args[0] !== 'off')) throw new UserError('Open your preferences again.');
+        this.app.db.run(`UPDATE players SET ${column} = ? WHERE guild_id = ? AND user_id = ?`, [args[0] === 'on' ? 0 : 1, viewer.guildId, viewer.userId]);
+        if (action === 'highlights') this.bot.requestLobby(viewer.guildId);
+        return this.show(i, preferencesScreen(this.app, viewer));
+      }
+      case 'match':
+        arm(ephemeral ? 'update' : 'reply');
+        if (!i.isStringSelectMenu()) throw new UserError('Choose a result or game from your match history.');
+        if (action === 'filter') return this.show(i, matchesScreen(this.app, viewer, parseHistoryGame(i.values[0])));
+        if (action === 'open') return this.show(i, matchDetailScreen(this.app, viewer, i.values[0] ?? '', parseHistoryGame(args[0]), intArg(args[1])));
+        throw new UserError('Open your match history again.');
+      case 'gift':
+        return this.gift(i, viewer, action, args[0] ?? '', arm);
       case 'tbl':
         return this.tables(i, viewer, action, args, arm);
       case 'lobby':
@@ -494,6 +524,16 @@ export class InteractionRouter {
         return this.show(i, walletScreen(this.app, viewer));
       case 'history':
         return this.show(i, historyScreen(this.app, viewer, intArg(args[0])));
+      case 'matches':
+        return this.show(i, matchesScreen(this.app, viewer, parseHistoryGame(args[0]), intArg(args[1])));
+      case 'walletstats':
+        return this.show(i, walletStatsScreen(this.app, viewer));
+      case 'gifting':
+        return this.show(i, giftingScreen(this.app, viewer));
+      case 'missions':
+        return this.show(i, rewardsScreen(this.app, viewer, true));
+      case 'preferences':
+        return this.show(i, preferencesScreen(this.app, viewer));
       case 'profile': {
         const target = args[0] ? await this.profileTarget(viewer.guildId, args[0]) : { userId: viewer.userId, displayName: viewer.displayName, avatarUrl: viewer.avatarUrl };
         return this.show(i, profileScreen(this.app, viewer, target));
@@ -541,6 +581,10 @@ export class InteractionRouter {
 
   private async claimReward(i: Component, viewer: Viewer, action: string, from: string): Promise<void> {
     let note: string | null = null;
+    if (action === 'relief') {
+      const claim = this.app.economy.claimRelief(viewer.guildId, viewer.userId, from === 'title');
+      return this.show(i, withNote(walletScreen(this.app, viewer), `### Relief received · +${chips(claim.amount)} chips`));
+    }
     if (action === 'passive') {
       const { amount } = this.app.economy.claimPassive(viewer.guildId, viewer.userId);
       if (amount === 0) throw new UserError('Nothing to collect yet — passive income builds up over time.', 'nothing', 'Not yet');
@@ -552,6 +596,41 @@ export class InteractionRouter {
     // Re-render the personal screen the button was on, with what was just collected.
     const screen = from === 'wallet' ? walletScreen(this.app, viewer) : from === 'rewards' ? rewardsScreen(this.app, viewer) : homeScreen(this.app, viewer);
     return this.show(i, note ? withNote(screen, note) : screen);
+  }
+
+  private async gift(i: Component, viewer: Viewer, action: string, arg: string, arm: (m: AckMode) => void): Promise<void> {
+    if (action === 'pick') {
+      this.requireOpen(viewer);
+      const settings = this.app.settings.get(viewer.guildId).economy;
+      if (!settings.giftingEnabled) throw new UserError('Chip gifting is disabled on this server.');
+      const user = i.isUserSelectMenu() ? i.users.first() : undefined;
+      if (!user || user.bot || user.id === viewer.userId) throw new UserError('Choose another player in this server.');
+      const recipient = this.app.economy.requirePlayer(viewer.guildId, user.id);
+      return this.showModal(i, giftAmountModal(user.id, recipient.display_name || user.username, settings.giftDailyLimit));
+    }
+    arm(this.fromEphemeral(i) ? 'update' : 'reply');
+    if (action === 'incoming' && (arg === 'on' || arg === 'off')) {
+      this.app.db.run('UPDATE players SET gifts_opt_out = ? WHERE guild_id = ? AND user_id = ?', [arg === 'on' ? 0 : 1, viewer.guildId, viewer.userId]);
+      return this.show(i, giftingScreen(this.app, viewer));
+    }
+    const offer = this.giftOffers.get(arg);
+    if (!offer || offer.guildId !== viewer.guildId || offer.senderId !== viewer.userId || offer.expiresAt <= this.app.clock.now()) {
+      return this.show(i, withNote(giftingScreen(this.app, viewer), '### This confirmation expired. Choose a recipient again.'));
+    }
+    if (action === 'cancel') {
+      this.giftOffers.delete(arg);
+      return this.show(i, giftingScreen(this.app, viewer));
+    }
+    if (action !== 'send') throw new UserError('Choose a recipient again.');
+    this.requireOpen(viewer);
+    const member = await i.guild?.members.fetch({ user: offer.recipientId, force: true }).catch(() => null);
+    if (!member || member.user.bot) throw new UserError('That recipient is no longer available in this server.');
+    if (this.giftOffers.get(arg) !== offer || offer.expiresAt <= this.app.clock.now()) {
+      throw new UserError('This confirmation is no longer active.');
+    }
+    const entry = this.app.economy.gift(viewer.guildId, viewer.userId, offer.recipientId, offer.amount, arg);
+    this.giftOffers.delete(arg);
+    return this.show(i, withNote(walletScreen(this.app, viewer), `### Gift sent · ${chips(-entry.amount)} chips`));
   }
 
   // ───────────────────────────── tables (finding / creating / joining) ─────────────────────────────
@@ -819,6 +898,7 @@ export class InteractionRouter {
       const bet = intArg(args[0]);
       // The spin is settled first (money is final); the reels then stop one after another.
       await this.app.slots.spin(viewer.guildId, viewer.userId, bet, intArg(args[1], -1));
+      this.bot.requestLobby(viewer.guildId);
       const reels = this.bot.animatesGames(viewer.guildId)
         ? [() => slotsScreen(this.app, viewer, bet, { animate: true }), () => slotsScreen(this.app, viewer, bet, { result: true })]
         : [() => slotsScreen(this.app, viewer, bet, { stopped: 0 }), () => slotsScreen(this.app, viewer, bet, { stopped: 2 }), () => slotsScreen(this.app, viewer, bet, { result: true })];
@@ -852,6 +932,7 @@ export class InteractionRouter {
       else if (action === 'cancel') challenge = await this.app.coinflip.cancel(id, viewer.userId);
       else return;
       if (action === 'accept' && challenge.status === 'resolved') {
+        this.bot.requestLobby(viewer.guildId);
         // The coin goes up first, then lands.
         await this.playFrames(
           i,
@@ -1019,6 +1100,25 @@ export class InteractionRouter {
         const number = type === 'straight' ? amount(field('number')) : undefined;
         await this.app.roulette.placeBet(wheelId, { roundId, userId: viewer.userId, displayName: viewer.displayName, type, number, amount: amount(field('amount'), { available: wallet(), max: this.app.settings.get(viewer.guildId).roulette.maxBet }) }, i);
         return this.settle(i);
+      }
+      case 'gift': {
+        arm(this.fromEphemeral(i) ? 'update' : 'reply');
+        this.requireOpen(viewer);
+        const settings = this.app.settings.get(viewer.guildId).economy;
+        if (!settings.giftingEnabled) throw new UserError('Chip gifting is disabled on this server.');
+        const recipientId = args[0] ?? '';
+        if (recipientId === viewer.userId) throw new UserError('Choose another player for your gift.');
+        const recipient = this.app.economy.requirePlayer(viewer.guildId, recipientId);
+        const sum = amount(field('amount'));
+        if (sum < MIN_GIFT || sum > settings.giftDailyLimit) throw new UserError(`A gift must be between ${MIN_GIFT} and ${settings.giftDailyLimit} chips.`);
+        const now = this.app.clock.now();
+        for (const [id, offer] of this.giftOffers) {
+          if (offer.expiresAt <= now) this.giftOffers.delete(id);
+        }
+        if (this.giftOffers.size >= 500) throw new UserError('Too many pending gift confirmations. Try again shortly.');
+        const id = newId();
+        this.giftOffers.set(id, { guildId: viewer.guildId, senderId: viewer.userId, recipientId, amount: sum, expiresAt: now + GIFT_TTL_MS });
+        return this.show(i, confirmGiftScreen(id, recipient.display_name || 'Player', sum));
       }
       case 'cf': {
         const opponentId = args[0] ?? '';

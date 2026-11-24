@@ -221,4 +221,17 @@ export const MIGRATIONS: readonly Migration[] = [
       CREATE INDEX highlights_recent ON highlights (guild_id, id DESC);
     `,
   },
+  {
+    id: 2,
+    name: 'wallet_and_activity_preferences',
+    sql: /* sql */ `
+      ALTER TABLE players ADD COLUMN relief_title_until INTEGER;
+      ALTER TABLE players ADD COLUMN gifts_opt_out INTEGER NOT NULL DEFAULT 0 CHECK (gifts_opt_out IN (0, 1));
+      ALTER TABLE players ADD COLUMN highlights_opt_out INTEGER NOT NULL DEFAULT 0 CHECK (highlights_opt_out IN (0, 1));
+      CREATE INDEX ledger_social_by_player ON ledger (guild_id, user_id, type, created_at DESC)
+        WHERE type IN ('emergency_relief', 'gift_sent');
+      CREATE INDEX round_results_by_user_game ON round_results (guild_id, user_id, game, created_at DESC);
+      CREATE INDEX highlights_by_player ON highlights (guild_id, user_id, kind, created_at DESC);
+    `,
+  },
 ];

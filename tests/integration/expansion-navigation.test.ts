@@ -25,10 +25,10 @@ describe('casino navigation', () => {
     const viewer = h.user('Viewer');
     const players = Array.from({ length: 31 }, (_, i) => h.user(`Player ${i}`));
     for (const [i, player] of players.entries()) {
-      h.app.economy.ensurePlayer(h.guildId, player.id, player.username);
+      h.app.economy.ensurePlayer(h.guildId, player.id, player.name);
       h.app.recorder.record({
         guildId: h.guildId, roundId: `fixture-${i}`, title: 'Fixture', game: 'blackjack',
-        players: [{ userId: player.id, wagered: 0, returned: 0, stats: { wins: 1 }, xp: 0, label: 'win' }],
+        players: [{ userId: player.id, wagered: 0, returned: 0, stats: { wins: 1 }, flags: [], xp: 0, label: 'win' }],
       });
     }
     const home = h.seen(await h.slash(viewer, 'casino'));

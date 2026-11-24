@@ -24,12 +24,12 @@ describe('economy through Discord', () => {
     h = new CasinoHarness();
     const alice = h.user('Alice');
     const home = h.seen(await h.slash(alice, 'casino'))!;
-    expect(h.enabled(home)).toContain('Daily 250');
-    h.fd.click(alice, home, 'Daily 250');
-    h.fd.click(alice, home, 'Daily 250');
+    expect(h.enabled(home)).toContain('Daily 100');
+    h.fd.click(alice, home, 'Daily 100');
+    h.fd.click(alice, home, 'Daily 100');
     await h.settle();
     expect(ledgerCount(alice.id, 'daily_reward')).toBe(1);
-    expect(h.balance(alice)).toBe(1250 + h.db.get<{ n: number }>("SELECT COALESCE(SUM(amount),0) AS n FROM ledger WHERE user_id = ? AND type IN ('achievement_reward','mission_reward')", [alice.id])!.n);
+    expect(h.balance(alice)).toBe(600 + h.db.get<{ n: number }>("SELECT COALESCE(SUM(amount),0) AS n FROM ledger WHERE user_id = ? AND type IN ('achievement_reward','mission_reward')", [alice.id])!.n);
     // The refreshed home screen now shows the countdown instead.
     const after = h.seen(await h.slash(alice, 'casino'))!;
     expect(h.buttons(after).find((b) => b.label?.startsWith('Daily in'))?.disabled).toBe(true);
@@ -42,12 +42,12 @@ describe('economy through Discord', () => {
     await h.slash(alice, 'casino');
     await h.advance(3 * 3600_000);
     let home = h.seen(await h.slash(alice, 'casino'))!;
-    expect(h.enabled(home)).toContain('Collect 150');
-    await h.click(alice, home, 'Collect 150');
+    expect(h.enabled(home)).toContain('Collect 60');
+    await h.click(alice, home, 'Collect 60');
     expect(ledgerCount(alice.id, 'passive_income')).toBe(1);
     await h.advance(72 * 3600_000);
     home = h.seen(await h.slash(alice, 'casino'))!;
-    expect(h.enabled(home)).toContain('Collect 1,200');
+    expect(h.enabled(home)).toContain('Collect 480');
     healthy();
   });
 
@@ -115,7 +115,7 @@ describe('other games through Discord', () => {
     h = new CasinoHarness();
     const [alice, bob, carol] = [h.user('Alice'), h.user('Bob'), h.user('Carol')];
     const challenge = async (from: typeof alice, to: typeof bob, amount: string) => {
-      const pick = await h.select(from, await gamesHub(from), 'cf:pick', [to.id]);
+      const pick = await h.select(from, h.seen(await h.click(from, await gamesHub(from), 'Choose opponent')), 'cf:pick', [to.id]);
       expect(pick.modal).not.toBeNull();
       const sent = await h.submit(from, pick, { amount, call: 'heads' });
       expect(sent.errors).toEqual([]);

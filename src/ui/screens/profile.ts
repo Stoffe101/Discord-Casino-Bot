@@ -1,5 +1,5 @@
 import type { CasinoApp } from '../../app/casino-app.js';
-import { chips, discordTime, percent, plural, signedChips } from '../../core/format.js';
+import { chips, discordTime, escapeMarkdown, percent, plural, signedChips } from '../../core/format.js';
 import { ACHIEVEMENTS, isAchieved } from '../../domain/achievements.js';
 import { COSMETICS, cosmetic, isCosmeticUnlocked, levelInfo, type CosmeticKind } from '../../domain/progression.js';
 import { stat } from '../../domain/stats-service.js';
@@ -24,8 +24,8 @@ export function profileScreen(app: CasinoApp, viewer: Viewer, target: ProfileTar
     return {
       components: [
         container(COLORS.charcoal, [
-        navRow('profile'),
-          text(`## ${target.displayName}\nThis player hasn't visited the casino yet.`),
+          navRow('profile'),
+          text(`## ${escapeMarkdown(target.displayName)}\nThis player hasn't visited the casino yet.`),
         ]),
       ],
     };
@@ -33,7 +33,8 @@ export function profileScreen(app: CasinoApp, viewer: Viewer, target: ProfileTar
   const info = levelInfo(player.xp);
   const stats = app.stats.snapshot(viewer.guildId, target.userId);
   const unlocked = app.progress.unlockedAchievements(viewer.guildId, target.userId);
-  const title = player.title_id ? cosmetic('title', player.title_id)?.name : undefined;
+  const reliefTitle = (player.relief_title_until ?? 0) > app.clock.now() && app.settings.get(viewer.guildId).economy.reliefTitle;
+  const title = reliefTitle ? 'Sosse' : player.title_id ? cosmetic('title', player.title_id)?.name : undefined;
   const richRank = app.leaderboards.rankOf(viewer.guildId, 'richest', target.userId);
 
   const bj = (s: string) => stat(stats, 'blackjack', s);
@@ -72,10 +73,10 @@ export function profileScreen(app: CasinoApp, viewer: Viewer, target: ProfileTar
         navRow('profile'),
         section(
           [
-            `## ${target.displayName}${title ? `\n-# *“${title}”*` : ''}`,
+            `## ${escapeMarkdown(target.displayName)}${title ? `\n-# *“${title}”*` : ''}`,
             `**Level ${info.level} · ${info.rank.name}**\n${progressBar(info.progress)} ${chips(info.into)} / ${chips(info.span)} XP`,
           ],
-          thumbnail(target.avatarUrl, `${target.displayName}'s avatar`),
+          thumbnail(target.avatarUrl, `${escapeMarkdown(target.displayName)}'s avatar`),
         ),
         separator(),
         text(
@@ -90,12 +91,25 @@ export function profileScreen(app: CasinoApp, viewer: Viewer, target: ProfileTar
         row(
           button({ id: cid('nav', 'achv', target.userId, 0), label: 'Achievements', emoji: ICONS.achievements }),
           self ? button({ id: cid('nav', 'style'), label: 'Customize', emoji: ICONS.style }) : null,
+          self ? button({ id: cid('nav', 'matches'), label: 'Match history', emoji: ICONS.history }) : null,
+          self ? button({ id: cid('nav', 'preferences'), label: 'Preferences', emoji: ICONS.settings }) : null,
           backId ? button({ id: backId, label: 'Back to leaderboard', emoji: ICONS.back }) : null,
-          self ? button({ id: cid('nav', 'privacy'), label: player.leaderboard_opt_out ? 'Show me on boards' : 'Hide me from boards' }) : null,
         ),
       ]),
     ],
   };
+}
+
+export function preferencesScreen(app: CasinoApp, viewer: Viewer): Screen {
+  const player = app.economy.requirePlayer(viewer.guildId, viewer.userId);
+  return { components: [container(COLORS.emerald, [
+    navRow('profile'),
+    text('## Preferences\nChoose whether you appear in public rankings and lobby highlights.'),
+    row(
+      button({ id: cid('prefs', 'boards', player.leaderboard_opt_out ? 'on' : 'off'), label: player.leaderboard_opt_out ? 'Show me on boards' : 'Hide me from boards' }),
+      button({ id: cid('prefs', 'highlights', player.highlights_opt_out ? 'on' : 'off'), label: player.highlights_opt_out ? 'Show my highlights' : 'Hide my highlights' }),
+    ),
+  ])] };
 }
 
 export const ACHIEVEMENTS_PAGE = 7;

@@ -99,7 +99,7 @@ describe('other game animations', () => {
     const panel = () => h.fd.messages.get(h.app.roulette.peek(record.id)!.record.messageId!)!;
     const select = findComponents(panel().components, 3)[0]!;
     await h.submit(alex, await h.select(alex, panel(), select.custom_id, ['red']), { amount: 'half' });
-    expect(h.app.roulette.peek(record.id)!.state.bets[0]!.amount).toBe(Math.min(500, Math.floor(1000 / 2)));
+    expect(h.app.roulette.peek(record.id)!.state.bets[0]!.amount).toBe(Math.min(500, Math.floor(h.app.settings.get(h.guildId).economy.startingBalance / 2)));
     await h.advance(h.app.settings.get(h.guildId).roulette.bettingSeconds * 1000 + 500);
     await h.app.roulette.idle();
     await h.settle();
@@ -115,7 +115,8 @@ describe('other game animations', () => {
     h = new CasinoHarness();
     h.fd.recording = true;
     const [alex, hanna] = [h.user('Alex'), h.user('Hanna')];
-    const sent = await h.submit(alex, await h.select(alex, await hub(alex), 'cf:pick', [hanna.id]), { amount: '1k', call: 'heads' });
+    h.app.settings.set(h.guildId, 'economy.startingBalance', 1000);
+    const sent = await h.submit(alex, await h.select(alex, h.seen(await h.click(alex, await hub(alex), 'Choose opponent')), 'cf:pick', [hanna.id]), { amount: '1k', call: 'heads' });
     const card = h.seen(sent)!;
     expect(h.app.economy.getWallet(h.guildId, alex.id).reserved).toBe(Math.min(1000, h.app.settings.get(h.guildId).coinflip.maxBet));
     await h.click(hanna, card, /^Accept/);

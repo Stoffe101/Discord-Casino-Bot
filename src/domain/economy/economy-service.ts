@@ -17,7 +17,10 @@ export type LedgerType =
   | 'push'
   | 'loss'
   | 'refund'
-  | 'admin_adjust';
+  | 'admin_adjust'
+  | 'emergency_relief'
+  | 'gift_sent'
+  | 'gift_received';
 
 export type GameId = 'blackjack' | 'roulette' | 'slots' | 'coinflip';
 
@@ -36,6 +39,9 @@ export interface PlayerRow {
   card_back_id: string;
   felt_id: string;
   leaderboard_opt_out: number;
+  relief_title_until: number | null;
+  gifts_opt_out: number;
+  highlights_opt_out: number;
   created_at: number;
   last_seen_at: number;
 }
@@ -84,6 +90,12 @@ export interface DailyStatus {
   streak: number;
   nextAt: number;
 }
+
+export type ReliefStatus =
+  | { eligible: true; amount: number; titleOffered: boolean }
+  | { eligible: false; reason: 'disabled' | 'funds' | 'rewards' | 'cooldown' | 'recent_gift'; nextAt?: number };
+
+export const MIN_GIFT = 10;
 
 export interface WalletView {
   balance: number;
@@ -209,6 +221,84 @@ export class EconomyService {
   }
 
   // ───────────────────────────── claims ─────────────────────────────
+
+  reliefStatus(guildId: string, userId: string): ReliefStatus {
+    const settings = this.settings(guildId).economy;
+    if (settings.reliefAmount === 0) return { eligible: false, reason: 'disabled' };
+    const wallet = this.getWallet(guildId, userId);
+    // Every current game holds unresolved wagers and potential payouts in escrow until settlement.
+    if (wallet.total > 0) return { eligible: false, reason: 'funds' };
+    if (wallet.passive.available > 0 || wallet.daily.available) return { eligible: false, reason: 'rewards' };
+    const now = this.clock.now();
+    const last = this.db.get<{ created_at: number }>(
+      "SELECT created_at FROM ledger WHERE guild_id = ? AND user_id = ? AND type = 'emergency_relief' ORDER BY created_at DESC LIMIT 1",
+      [guildId, userId],
+    );
+    const nextAt = last ? last.created_at + settings.reliefCooldownHours * HOUR : 0;
+    if (last && nextAt > now) return { eligible: false, reason: 'cooldown', nextAt };
+    const gift = this.db.get<{ created_at: number }>(
+      "SELECT created_at FROM ledger WHERE guild_id = ? AND user_id = ? AND type = 'gift_sent' ORDER BY created_at DESC LIMIT 1",
+      [guildId, userId],
+    );
+    if (gift && gift.created_at + DAY > now) return { eligible: false, reason: 'recent_gift', nextAt: gift.created_at + DAY };
+    return { eligible: true, amount: settings.reliefAmount, titleOffered: settings.reliefTitle };
+  }
+
+  claimRelief(guildId: string, userId: string, withTitle: boolean): LedgerRow {
+    return this.db.transaction(() => {
+      const status = this.reliefStatus(guildId, userId);
+      if (!status.eligible) {
+        const guidance = {
+          disabled: 'The relief fund is closed.',
+          funds: 'Relief is available once you have no available or committed chips.',
+          rewards: 'Collect the passive income or daily reward in your wallet first.',
+          cooldown: 'You recently received relief. Check your wallet for the next eligible time.',
+          recent_gift: 'Relief is available 24 hours after your last outgoing gift.',
+        };
+        throw new UserError(guidance[status.reason], 'relief_unavailable', 'Emerald Relief Fund');
+      }
+      const now = this.clock.now();
+      const entry = this.applyDelta(guildId, userId, {
+        delta: status.amount, reservedDelta: 0, type: 'emergency_relief', key: `relief:${now}`, memo: 'Emerald Relief Fund',
+      });
+      if (withTitle && status.titleOffered) {
+        this.db.run('UPDATE players SET relief_title_until = ? WHERE guild_id = ? AND user_id = ?', [now + HOUR / 2, guildId, userId]);
+      }
+      return entry;
+    });
+  }
+
+  gift(guildId: string, senderId: string, recipientId: string, amount: number, transferId: string): LedgerRow {
+    return this.db.transaction(() => {
+      const existing = this.findLedger(guildId, senderId, `gift:${transferId}:sent`);
+      if (existing) return existing;
+      const settings = this.settings(guildId).economy;
+      if (!settings.giftingEnabled) throw new UserError('Chip gifting is disabled on this server.');
+      if (senderId === recipientId) throw new UserError('Choose another player for your gift.');
+      if (!Number.isSafeInteger(amount) || amount < MIN_GIFT || amount > settings.giftDailyLimit) {
+        throw new UserError(`A gift must be between ${MIN_GIFT} and ${settings.giftDailyLimit} chips.`);
+      }
+      const sender = this.requirePlayer(guildId, senderId);
+      const recipient = this.requirePlayer(guildId, recipientId);
+      const now = this.clock.now();
+      if (sender.created_at + DAY > now || recipient.created_at + DAY > now) {
+        throw new UserError('Both players need a casino account at least 24 hours old.');
+      }
+      if (recipient.gifts_opt_out) throw new UserError('This player has turned off incoming gifts.');
+      const daily = this.db.get<{ sent: number }>(
+        "SELECT COALESCE(SUM(-amount), 0) AS sent FROM ledger WHERE guild_id = ? AND user_id = ? AND type = 'gift_sent' AND created_at >= ?",
+        [guildId, senderId, startOfUtcDay(now)],
+      )!.sent;
+      if (amount > settings.giftDailyLimit - daily) throw new UserError(`You have ${Math.max(0, settings.giftDailyLimit - daily)} chips left in your daily gift limit.`);
+      const sent = this.applyDelta(guildId, senderId, {
+        delta: -amount, reservedDelta: 0, type: 'gift_sent', key: `gift:${transferId}:sent`, reference: transferId, memo: 'Chip gift sent',
+      });
+      this.applyDelta(guildId, recipientId, {
+        delta: amount, reservedDelta: 0, type: 'gift_received', key: `gift:${transferId}:received`, reference: transferId, memo: 'Chip gift received',
+      });
+      return sent;
+    });
+  }
 
   /** Collect accrued passive income. Safe under concurrent presses: the second sees 0. */
   claimPassive(guildId: string, userId: string): { amount: number; balance: number } {
@@ -557,7 +647,11 @@ export class EconomyService {
     const reserved = player.reserved + change.reservedDelta;
     if (balance < 0) throw new InsufficientFundsError(-change.delta, player.balance);
     if (reserved < 0) throw new Error(`Reserved chips would go negative for ${userId}`);
-    const highest = Math.max(player.highest_balance, balance + reserved);
+    const total = balance + reserved;
+    if (![balance, reserved, total].every(Number.isSafeInteger)) {
+      throw new UserError('That chip movement would exceed the supported wallet limit.', 'wallet_limit');
+    }
+    const highest = Math.max(player.highest_balance, total);
     this.db.run('UPDATE players SET balance = ?, reserved = ?, highest_balance = ? WHERE guild_id = ? AND user_id = ?', [
       balance,
       reserved,

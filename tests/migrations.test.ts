@@ -24,6 +24,21 @@ describe('database & migrations', () => {
     }
   });
 
+  it('preserves balances and existing ledger rows when adding wallet preferences', () => {
+    const db = new Database(':memory:');
+    db.migrate(MIGRATIONS.slice(0, 1));
+    db.run("INSERT INTO players (guild_id, user_id, balance, highest_balance, passive_anchor_at, created_at, last_seen_at) VALUES ('g', 'u', 1000, 1000, 0, 0, 0)");
+    db.run("INSERT INTO ledger (id, guild_id, user_id, type, amount, balance_after, reserved_after, idempotency_key, created_at) VALUES ('row', 'g', 'u', 'initial_grant', 1000, 1000, 0, 'welcome', 0)");
+    const prior = db.get("SELECT * FROM ledger WHERE id = 'row'");
+    expect(db.migrate().applied).toEqual(MIGRATIONS.slice(1).map((migration) => migration.id));
+    expect(db.get("SELECT * FROM players WHERE guild_id = 'g' AND user_id = 'u'")).toMatchObject({
+      balance: 1000, gifts_opt_out: 0, highlights_opt_out: 0, relief_title_until: null,
+    });
+    expect(db.get("SELECT * FROM ledger WHERE id = 'row'")).toEqual(prior);
+    expect(() => db.run("UPDATE ledger SET amount = 0 WHERE id = 'row'")).toThrow(/append-only/);
+    db.close();
+  });
+
   it('persists to disk with WAL and survives reopening', () => {
     const dir = mkdtempSync(join(tmpdir(), 'casino-db-'));
     dirs.push(dir);

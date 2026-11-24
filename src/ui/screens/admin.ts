@@ -73,17 +73,21 @@ export function adjustModal(): ModalSpec {
 }
 
 export function auditScreen(app: CasinoApp, guildId: string): Screen {
-  const rows = app.db.all<{ user_id: string; amount: number; memo: string | null; actor_id: string | null; created_at: number }>(
-    "SELECT user_id, amount, memo, actor_id, created_at FROM ledger WHERE guild_id = ? AND type = 'admin_adjust' ORDER BY created_at DESC LIMIT 15",
+  const rows = app.db.all<{ user_id: string; amount: number; type: string; memo: string | null; actor_id: string | null; reference: string | null; created_at: number }>(
+    "SELECT user_id, amount, type, memo, actor_id, reference, created_at FROM ledger WHERE guild_id = ? AND type IN ('admin_adjust', 'gift_sent', 'gift_received', 'emergency_relief') ORDER BY created_at DESC, rowid DESC LIMIT 15",
     [guildId],
   );
-  const lines = rows.map(
-    (r) => `\`${signedChips(r.amount).padStart(8)}\` <@${r.user_id}> by <@${r.actor_id ?? '0'}> — ${escapeMarkdown(r.memo ?? '')} · ${discordTime(r.created_at)}`,
-  );
+  const labels: Record<string, string> = { gift_sent: 'Gift sent', gift_received: 'Gift received', emergency_relief: 'Relief grant' };
+  const lines = rows.map((entry) => {
+    const reason = entry.type === 'admin_adjust'
+      ? `by <@${entry.actor_id ?? '0'}> · ${escapeMarkdown(entry.memo ?? '')}`
+      : `${labels[entry.type]}${entry.reference ? ` · ref ${entry.reference.slice(0, 8)}` : ''}`;
+    return `**${signedChips(entry.amount)}** <@${entry.user_id}> · ${reason} · ${discordTime(entry.created_at)}`;
+  });
   return {
     components: [
       container(COLORS.charcoal, [
-        text(`## Audit log\n-# The last 15 administrative wallet adjustments.\n${lines.join('\n') || 'No adjustments yet.'}`),
+        text(`## Audit log\n-# Recent wallet adjustments, relief and gifts.\n${lines.join('\n') || 'No entries yet.'}`),
         row(button({ id: cid('adm', 'group', 'general'), label: 'Back', emoji: ICONS.back })),
       ]),
     ],

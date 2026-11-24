@@ -71,7 +71,8 @@ export function withNote(screen: Screen, note: string): Screen {
   const components = screen.components.map((c) => {
     if (done || c.type !== ComponentType.Container) return c;
     done = true;
-    return { ...c, components: [...c.components.slice(0, 1), text(note), ...c.components.slice(1)] };
+    const afterHeading = c.components[0]?.type === ComponentType.ActionRow ? 2 : 1;
+    return { ...c, components: [...c.components.slice(0, afterHeading), text(note), ...c.components.slice(afterHeading)] };
   });
   return { ...screen, components };
 }

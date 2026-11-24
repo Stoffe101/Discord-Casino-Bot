@@ -1,6 +1,6 @@
 import { createHash, randomInt } from 'node:crypto';
 import type { CasinoApp } from '../../app/casino-app.js';
-import { chips, countdown, discordTime, escapeMarkdown, signedChips } from '../../core/format.js';
+import { chips, countdown, discordTime, escapeMarkdown, signedChips, truncate } from '../../core/format.js';
 import type { Challenge } from '../../games/coinflip/coinflip-service.js';
 import { BET_TYPES, describeNumber, pocketColor, type RouletteBetType } from '../../games/roulette/engine.js';
 import { rouletteReady, rouletteSpinAt, type WheelSnapshot } from '../../games/roulette/roulette-service.js';
@@ -61,11 +61,10 @@ export function gamesHubScreen(app: CasinoApp, viewer: Viewer): Screen {
           return [
             section([
               `**${game.icon} ${game.label}** · ${game.description}\n-# ${enabled ? `${availability[game.id]} · ${chips(limits.minBet)}–${chips(limits.maxBet)} chips` : 'Closed'}`,
-            ], button({ id: game.play, label: game.id === 'blackjack' ? 'Browse tables' : game.id === 'roulette' ? 'Open the wheel' : game.id === 'slots' ? 'Play slots' : 'Play', tone: 'primary', disabled: !enabled })),
+            ], button({ id: game.play, label: game.id === 'blackjack' ? 'Browse tables' : game.id === 'roulette' ? 'Open the wheel' : game.id === 'slots' ? 'Play slots' : 'Choose opponent', tone: 'primary', disabled: !enabled })),
           ];
         }),
         row(...GAMES.map((game) => button({ id: game.rules, label: `${game.id === 'slots' ? 'Slots' : game.label} rules` }))),
-        gameEnabled(settings, 'coinflip') ? userSelect(cid('cf', 'pick'), 'Challenge a friend to coinflip…') : null,
       ]),
     ],
   };
@@ -137,6 +136,7 @@ export async function slotsScreen(app: CasinoApp, viewer: Viewer, bet: number, o
         row(
           button({ id: cid('sl', 'spin', amount, count), label: `Spin ${chips(amount)}`, tone: 'success', disabled: spinning || balance < amount }),
           button({ id: cid('sl', 'pay', amount), label: 'Paytable', disabled: spinning }),
+          button({ id: cid('nav', 'matches', 'slots'), label: 'Match history', disabled: spinning }),
         ),
       ]),
     ],
@@ -217,7 +217,7 @@ export async function roulettePanel(app: CasinoApp, wheel: Readonly<WheelSnapsho
         `${p.net > 0 ? '▲' : p.net < 0 ? '▼' : '■'} ${escapeMarkdown(p.displayName)} ${p.net > 0 ? `won **${chips(p.net)}**` : p.net < 0 ? `lost ${chips(-p.net)}` : 'broke even'}${won.length ? ` · ${won.join(', ')}` : ''}`,
       );
     }
-    const unlocked = result.players.flatMap((p) => p.achievements.map((a) => `${escapeMarkdown(p.displayName)} unlocked **${a}**`));
+    const unlocked = result.players.flatMap((p) => p.achievements.map((a) => `${escapeMarkdown(truncate(p.displayName, 26))} unlocked **${a}**`)).slice(0, 6);
     if (unlocked.length) lines.push(`-# ✦ ${unlocked.join(' · ')}`);
   }
   const byUser = new Map<string, string[]>();
@@ -225,12 +225,14 @@ export async function roulettePanel(app: CasinoApp, wheel: Readonly<WheelSnapsho
     const label = bet.type === 'straight' ? `#${bet.number}` : BET_TYPES.find((b) => b.type === bet.type)!.label;
     byUser.set(bet.userId, [...(byUser.get(bet.userId) ?? []), `${label} ${chips(bet.amount)}`]);
   }
-  const betsText = [...byUser.entries()].map(([userId, bets]) => `**${escapeMarkdown(state.names[userId] ?? 'Player')}** ${bets.join(' · ')}`).join('\n');
+  const betsText = [...byUser.entries()].slice(0, 10).map(([userId, bets]) =>
+    `**${escapeMarkdown(truncate(state.names[userId] ?? 'Player', 26))}** ${truncate(bets.join(' · '), 145)}`);
+  if (byUser.size > betsText.length) betsText.push(`-# +${byUser.size - betsText.length} more bettors`);
   const due = rouletteSpinAt(state);
   const ready = rouletteReady(state);
   const timing = due ? `spinning ${countdown(due, app.clock.now(), 'now — last bets!')}` : 'the wheel spins after the first bet';
   const voting = ready.bettors > 0
-    ? `**Ready to spin: ${ready.votes}/${ready.bettors}** · ${ready.required} required${state.readyAt && state.readyAt > app.clock.now() ? ` · early start opens ${discordTime(state.readyAt)}` : ''}`
+    ? `**Ready to spin: ${ready.votes}/${ready.bettors}** · ${ready.required} required`
     : null;
   return {
     files: [{ name: file, data: png, description: result ? `Roulette result ${result.number}` : 'Roulette wheel' }],
@@ -240,7 +242,7 @@ export async function roulettePanel(app: CasinoApp, wheel: Readonly<WheelSnapsho
         gallery([{ url: `attachment://${file}`, description: 'Roulette wheel' }]),
         lines.length ? text(lines.join('\n')) : null,
         separator(),
-        text(`**Spin ${state.spinNumber + 1}** · ${timing}${betsText ? `\n${betsText}` : '\n-# No bets yet.'}`),
+        text(`**Spin ${state.spinNumber + 1}** · ${timing}${betsText.length ? `\n${betsText.join('\n')}` : '\n-# No bets yet.'}`),
         voting ? text(voting) : null,
         select({
           id: cid('rl', 'bet', record.id, state.roundId),

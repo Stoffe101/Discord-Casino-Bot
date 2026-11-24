@@ -145,8 +145,8 @@ describe('InteractionRouter (headless)', () => {
     expect(kinds(calls)).toEqual(['reply']);
     expect(flagsOf(calls[0]) & MessageFlags.Ephemeral).toBeTruthy();
     expect(flagsOf(calls[0]) & MessageFlags.IsComponentsV2).toBeTruthy();
-    expect(textOf(calls[0])).toContain('1,000 chips');
-    expect(app.economy.getPlayer(GUILD, userId(1))!.balance).toBe(1000);
+    expect(textOf(calls[0])).toContain('500 chips');
+    expect(app.economy.getPlayer(GUILD, userId(1))!.balance).toBe(500);
   });
 
   it('navigates in place from a private panel, but opens a private reply from a public one', async () => {
@@ -159,11 +159,11 @@ describe('InteractionRouter (headless)', () => {
 
   it('claims the daily reward once and reports the second attempt as a friendly error', async () => {
     await run({ kind: 'button', user: 1, customId: 'eco:daily:wallet', ephemeralSource: true });
-    expect(app.economy.getPlayer(GUILD, userId(1))!.balance).toBe(1250);
+    expect(app.economy.getPlayer(GUILD, userId(1))!.balance).toBe(600);
     const again = await run({ kind: 'button', user: 1, customId: 'eco:daily:wallet', ephemeralSource: true });
     expect(kinds(again.calls)).toEqual(['reply']);
     expect(textOf(again.calls[0])).toContain('Already claimed');
-    expect(app.economy.getPlayer(GUILD, userId(1))!.balance).toBe(1250);
+    expect(app.economy.getPlayer(GUILD, userId(1))!.balance).toBe(600);
   });
 
   it('a chip click on the table panel places the bet and updates the panel in the same response', async () => {
@@ -224,7 +224,7 @@ describe('InteractionRouter (headless)', () => {
     const noReason = await run({ kind: 'command', user: 4, admin: true, commandName: 'casinoadmin', subcommand: 'adjust', options: { player: target, amount: 100, reason: '' } });
     expect(textOf(noReason.calls[0])).toContain('reason');
     await run({ kind: 'command', user: 4, admin: true, commandName: 'casinoadmin', subcommand: 'adjust', options: { player: target, amount: 100, reason: 'Tournament prize' } });
-    expect(app.economy.getPlayer(GUILD, userId(5))!.balance).toBe(1100);
+    expect(app.economy.getPlayer(GUILD, userId(5))!.balance).toBe(600);
     expect(app.economy.ledgerPage(GUILD, userId(5), 1)[0]).toMatchObject({ type: 'admin_adjust', actor_id: userId(4), memo: 'Tournament prize' });
   });
 
@@ -337,6 +337,6 @@ describe('InteractionRouter (headless)', () => {
     await bot.router.handle(f.i as never);
     await bot.router.handle(f.i as never);
     expect(kinds(f.calls)).toEqual(['reply']);
-    expect(app.economy.getPlayer(GUILD, userId(1))!.balance).toBe(1250);
+    expect(app.economy.getPlayer(GUILD, userId(1))!.balance).toBe(600);
   });
 });

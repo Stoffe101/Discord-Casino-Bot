@@ -121,7 +121,7 @@ async function coinflip(h: CasinoHarness, users: (n: string) => FakeUser): Promi
   const [alex, hanna] = [users('Alex'), users('Hanna')];
   const hub = h.seen(await h.click(alex, h.seen(await h.slash(alex, 'casino')), 'Games'))!;
   await sleep(THINK);
-  const pick = await h.select(alex, hub, 'cf:pick', [hanna.id]);
+  const pick = await h.select(alex, h.seen(await h.click(alex, hub, 'Choose opponent')), 'cf:pick', [hanna.id]);
   const sent = await h.submit(alex, pick, { amount: '100', call: 'heads' });
   const card = h.seen(sent)!;
   await sleep(THINK);

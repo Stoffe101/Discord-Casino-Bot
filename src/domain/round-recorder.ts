@@ -2,7 +2,8 @@ import type { Database } from '../db/database.js';
 import type { Clock } from '../core/clock.js';
 import { utcDayNumber } from '../core/clock.js';
 import { chips, signedChips } from '../core/format.js';
-import type { EconomyService, GameId } from './economy/economy-service.js';
+import { DEFAULT_SETTINGS } from '../config/settings.js';
+import type { EconomyService, GameId, SettingsProvider } from './economy/economy-service.js';
 import type { StatsService } from './stats-service.js';
 import type { ProgressService, XpGain } from './progress-service.js';
 import type { AchievementDef } from './achievements.js';
@@ -54,9 +55,6 @@ export interface RecordedRound {
   players: RecordedPlayer[];
 }
 
-/** Big-moment threshold for lobby highlights. */
-const HIGHLIGHT_NET = 500;
-
 /**
  * Settles a finished round in ONE transaction: marks the round settled (exactly once via the
  * game_rounds primary key), pays every player from their escrow, and updates statistics,
@@ -69,6 +67,7 @@ export class RoundRecorder {
     private readonly stats: StatsService,
     private readonly progress: ProgressService,
     private readonly clock: Clock,
+    private readonly settings: SettingsProvider = () => DEFAULT_SETTINGS,
   ) {}
 
   isRecorded(roundId: string): boolean {
@@ -175,11 +174,22 @@ export class RoundRecorder {
     const achievements = this.progress.evaluateAchievements(guildId, p.userId, flags);
     const finalXp = { ...xp, after: this.progress.levelOf(guildId, p.userId) };
 
-    if (net >= HIGHLIGHT_NET || flags.has('slots_jackpot')) {
-      this.addHighlight(guildId, p.userId, 'big_win', `won **${chips(net)}** at ${gameLabel(game)}`, now);
-    }
-    for (const a of achievements.filter((x) => x.secret)) {
-      this.addHighlight(guildId, p.userId, 'achievement', `unlocked **${a.name}**`, now);
+    const highlights = this.settings(guildId).highlights;
+    if (highlights.enabled && !this.economy.requirePlayer(guildId, p.userId).highlights_opt_out) {
+      const enoughWager = p.wagered >= highlights.minimumWager;
+      const event = enoughWager && flags.has('slots_jackpot') ? 'Slots jackpot'
+        : net >= highlights.majorNet ? 'Major win'
+        : enoughWager && net >= highlights.bigNet ? flags.has('roulette_straight_win') ? 'Straight-up win' : 'Big win'
+        : null;
+      if (event && net > 0 && !this.db.get(
+        "SELECT id FROM highlights WHERE guild_id = ? AND user_id = ? AND kind = 'big_win' AND created_at > ? LIMIT 1",
+        [guildId, p.userId, now - highlights.cooldownSeconds * 1000],
+      )) {
+        this.addHighlight(guildId, p.userId, 'big_win', `**${event}** · +${chips(net)} net at ${gameLabel(game)} · round ${roundId.slice(0, 8)}`, now);
+      }
+      for (const achievement of achievements.filter((item) => item.secret)) {
+        this.addHighlight(guildId, p.userId, 'achievement', `unlocked **${achievement.name}**`, now);
+      }
     }
     return { userId: p.userId, net, xp: finalXp, achievements, missions };
   }

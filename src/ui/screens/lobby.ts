@@ -1,5 +1,6 @@
 import type { CasinoApp } from '../../app/casino-app.js';
 import { discordTime, escapeMarkdown, truncate } from '../../core/format.js';
+import { recentCasinoActivity } from '../../domain/casino-activity.js';
 import { bannerSvg } from '../../render/game-images.js';
 import { cid } from '../custom-id.js';
 import { button, container, gallery, option, row, select, separator, text, type Screen } from '../kit.js';
@@ -19,16 +20,8 @@ export async function lobbyScreen(app: CasinoApp, guildId: string): Promise<Scre
   const wheel = app.roulette.wheelFor(guildId);
   const tableLines = tables.slice(0, 8).map((t) => `**${escapeMarkdown(t.record.name)}**${t.record.isPrivate ? ' 🔒' : ''} — ${tableSummary(t)}`);
   if (wheel) tableLines.push(`**Roulette wheel** — ${wheel.state.bets.length ? 'bets are on the table' : 'waiting for bets'} · spin ${wheel.state.spinNumber + 1}`);
-  const highlights = app.db.all<{ user_id: string; text: string; created_at: number }>(
-    'SELECT h.user_id, h.text, h.created_at FROM highlights h WHERE h.guild_id = ? ORDER BY h.id DESC LIMIT 3',
-    [guildId],
-  );
-  const names = new Map(
-    highlights.map((h) => [h.user_id, app.economy.getPlayer(guildId, h.user_id)?.display_name || 'A player'] as const),
-  );
-  const highlightText = highlights.length
-    ? `-# ✦ ${highlights.map((h) => `${escapeMarkdown(names.get(h.user_id)!)} ${h.text}`).join(' · ')}`
-    : '-# ✦ Big wins and rare achievements will be celebrated here.';
+  const highlights = recentCasinoActivity(app, guildId, 3);
+  const highlightText = highlights.length ? `### Casino activity\n${highlights.join('\n')}` : null;
   const closed = !settings.enabled;
   return {
     files: [{ name: file, data: png, description: `${settings.casinoName} banner` }],
@@ -64,7 +57,7 @@ export async function lobbyScreen(app: CasinoApp, guildId: string): Promise<Scre
           button({ id: cid('nav', 'wallet'), label: 'Wallet', emoji: ICONS.wallet }),
           button({ id: cid('nav', 'rewards'), label: 'Daily', emoji: ICONS.rewards }),
           button({ id: cid('nav', 'lb', 'net', 'week', 0), label: 'Leaderboards', emoji: ICONS.leaderboard }),
-          button({ id: cid('nav', 'games'), label: 'More games', emoji: ICONS.games }),
+          button({ id: cid('nav', 'games'), label: 'Games', emoji: ICONS.games }),
           button({ id: cid('nav', 'help', 'start'), label: 'Help', emoji: ICONS.help }),
         ),
         separator(),

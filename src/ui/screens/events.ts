@@ -2,7 +2,7 @@ import type { CasinoApp } from '../../app/casino-app.js';
 import { discordTime, escapeMarkdown, plural, truncate } from '../../core/format.js';
 import type { CasinoEvent, EventActor, EventGame } from '../../domain/casino-events.js';
 import { cid } from '../custom-id.js';
-import { button, container, linkButton, modal, option, row, section, select, selectLabel, text, textInputLabel, type Screen } from '../kit.js';
+import { button, container, linkButton, modal, option, progressBar, row, section, select, selectLabel, text, textInputLabel, type Screen } from '../kit.js';
 import { COLORS, ICONS } from '../theme.js';
 import { channelUrl, navRow } from './common.js';
 
@@ -26,11 +26,11 @@ export function eventsScreen(app: CasinoApp, actor: EventActor, requested = 0): 
     components: [
       container(COLORS.gold, [
         navRow('games'),
-        text('## Casino events\n-# Scheduled Blackjack and Hold’em sessions'),
+        text(`## ${ICONS.events} Casino events\n-# Game nights with friends: register, then join the table when it starts.`),
         ...current.map((event) => section([
-          `**${escapeMarkdown(event.title)}** · ${gameName(event.game)}\n${discordTime(event.starts_at, 'f')} · ${event.registered}/${event.max_players} registered · ${STATE_LABELS[event.state]}`,
-        ], button({ id: cid('evt', 'open', event.id), label: 'Details', emoji: ICONS.events, tone: 'primary' }))),
-        current.length ? null : text('No upcoming events.'),
+          `${event.game === 'poker' ? ICONS.poker : ICONS.blackjack} **${escapeMarkdown(event.title)}** · ${gameName(event.game)}${event.access_code ? ` ${ICONS.lock}` : ''}\n${discordTime(event.starts_at, 'f')} (${discordTime(event.starts_at)})\n-# ${progressBar(event.max_players ? event.registered / event.max_players : 0, 6)} ${event.registered}/${event.max_players} registered · ${STATE_LABELS[event.state]}`,
+        ], button({ id: cid('evt', 'open', event.id), label: 'Details', emoji: ICONS.events }))),
+        current.length ? null : text(app.events.canManage(actor) ? '-# Nothing scheduled yet. Create the first game night below.' : '-# Nothing scheduled yet. Organizers can create game nights here.'),
         pages > 1 ? row(
           button({ id: cid('nav', 'events', page - 1), label: 'Previous', emoji: ICONS.prev, disabled: page === 0 }),
           button({ id: cid('nav', 'events', page + 1), label: 'Next', emoji: ICONS.next, disabled: page + 1 >= pages }),

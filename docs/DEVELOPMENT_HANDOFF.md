@@ -1,123 +1,172 @@
 # Grand Casino Expansion handoff
 
-The expansion lives on `feat/grand-casino-expansion`, based on `57f31ad` from
-`feat/emerald-room-v1`. Use `git log -4 --oneline` for the current tip and milestone
-commits. Keep the draft PR stacked on `feat/emerald-room-v1`.
+The expansion is on `feat/grand-casino-expansion` and stacks on `feat/emerald-room-v1`.
+[PR #2](https://github.com/Stoffe101/Discord-Casino-Bot/pull/2) remains a draft. The
+previous test build was `0a3ad3c`. The current test runtime is `061452b`; its
+checkout, process record and database backup are local to the expansion worktree.
 
-## Player-facing changes
+## Player experience
 
-- Home links directly to the four playable games. Personal screens share a five-button navigation
-  row. Leaderboard profile links carry the originating category, period and page in an owner- and
-  guild-bound component ID, so Back works across process restarts.
-- Games lists the playable games and rules. The table browser has paged public, available-seat and
-  game filters. Blackjack still uses one seat per player per guild and its existing private
-  access-code and thread flows. The browser currently lists Blackjack.
-- Wallet has separate transaction, match, chip statistics, rewards, missions and gifting screens.
-  Match details query settled records for the authenticated player in the current guild. Slots
-  reuse existing round detail on restart. New spins store exact reel stops. Older spins retain the
-  recorded payline and use the idle artwork when the stops are unavailable.
-- Roulette uses a strict majority of current bettors after an eight-second minimum by default.
-  Bettors can withdraw votes. New or changed bets reset the bettor's vote. The service queues bets,
-  votes, deadline checks and settlement together and persists the quorum and timing in the wheel
-  aggregate. An open wager modal is stamped with its round and rejected if it crosses a spin.
-- The Emerald Relief Fund grants 50 chips to eligible empty wallets with a rolling 24-hour
-  cooldown. It checks held wagers, daily and passive rewards and recent outgoing gifts. The
-  optional Sosse casino title expires after 30 minutes and is rendered from SQLite timestamps.
-  Server nickname changes require separate future work and permission.
-- Gifting is off by default. It requires two established accounts, a current recipient in the
-  server, a recipient who accepts incoming gifts, a private confirmation, and available
-  chips. Both ledger entries commit together with a shared reference. Expired or abandoned
-  confirmations may be reopened after a restart. Gifts do not enter gameplay statistics.
-- The existing lobby activity feed uses configurable profit and stake thresholds, a per-player
-  cooldown and opt-out. Activity updates share the lobby debounce. Genuine all-in event metadata
-  and dedicated highlight artwork are still future work.
+- Home puts the spendable balance and game actions first, followed by rewards and recent
+  casino activity. Wallet groups rewards and transactions separately. Games adds original
+  SVG illustrations, short descriptions, table activity and direct play or rules buttons.
+- Blackjack uses larger cards and tighter positions on small tables. Navigation and secondary
+  actions sit together directly below the shared table. The deal control identifies its original
+  betting round, and a click racing the automatic deal acknowledges the existing round or
+  refreshes the panel. The first animation has a 1,100 ms render budget during actionable play.
+  When it runs over budget the static state can take over. Normal deal, draw and reveal
+  animations remain available.
+- Hold’em has persistent public and private tables, six default seats, blinds, dealer rotation,
+  timeouts, sit-out, buy-ins, cash-outs and private My hand controls. Public panels render only
+  the authorized projection, with back-facing cards in the deal animation and only showdown
+  cards revealed. Stacks remain in table escrow. A hand settles and rolls stacks into the
+  next hand atomically, with no rake. Blackjack and Hold’em share seat exclusivity.
+- The table browser lists Blackjack, Hold’em, roulette and upcoming events. Event organizers
+  create single-table sessions, set registration and capacity, and explicitly assign a
+  matching table they have opened. Start times require a date and UTC offset. Registrations,
+  invite codes and state recover from SQLite. The first version has no automatic table
+  assignment, waitlist, entry fees, pings or Discord-native event announcements.
+- Relief considers the lowest opening stake or buy-in across the enabled games. Held stakes,
+  table stacks, active reward availability, cooldown and recent outgoing gifts still affect
+  eligibility. Gifting is enabled by default while explicit guild overrides take precedence.
+  Actual Discord nickname changes remain unimplemented. The existing optional casino-only
+  Sosse title still expires after 30 minutes.
+- Highlights use recorded net winnings and the current privacy setting and cooldown. Hold’em
+  all-in recognition requires the entire starting stack to remain committed after any refunds,
+  a configurable stake floor and a qualifying profit. Pot-win highlights use the player's
+  payout share and net profit. Notable Blackjack split wins and roulette straight wins use
+  recorded outcomes. Dedicated highlight artwork and cross-game all-in classification remain open.
 
-## Database and economy
+Hold’em is enabled explicitly on the isolated test database. Other guilds still need
+`poker.enabled=true` through the existing administrator settings. Before enabling on a
+separate runtime, verify that Discord can create and manage the casino's public and private
+child threads and send messages in them. Deployments can configure an organizer role through
+`eventOrganizerRole`. The default restricts event management to server managers.
 
-Migration 2 adds three player preference fields and indexes for match filters, the social ledger
-and activity lookups. Historical ledger entries and account balances are preserved. Legacy
-roulette aggregates initialize a fresh window once, while new aggregates retain their saved
-absolute deadlines and votes. Gift and relief mutations stay in `EconomyService`.
+## Verification
 
-The new defaults are 500 starting chips, 20 passive chips per hour, a 24-hour passive cap, a
-100-chip daily reward and a 10-chip streak increment. Stored administrator overrides win.
-Existing balances use their original grant. Future passive and daily claims use the current guild
-settings, including accrued passive earnings still outstanding at deployment.
+`npm run typecheck`, `npm run lint`, `npm test -- --maxWorkers=3` and
+`npm run build` passed locally on Windows. The suite ran 366 tests, including
+the exhaustive 2,598,960-hand evaluator, service recovery on every poker street,
+multiway side pots, two six-seat tables alongside Blackjack, privacy projections, event
+scheduling and assignment, Blackjack delay and stale interactions, and relief at one or two chips.
 
-`npm run simulate:economy` compares the previous and current defaults using 12 seeded player
-profiles, production statistics and rewards, Blackjack, roulette, slots and coinflip. It uses the
-pure poker engine to model zero-sum redistribution in the disposable database. The gift variant
-moves 100 chips by day 30 and 325 by day 90. It leaves total supply unchanged.
+The delayed-deal regression injected 160 ms of Fake Discord latency. It reproduced state
+committing while the old panel still offered Deal now. The stale click now reconciles safely.
+The initial `/casino` and the Home-tab update produced the same visible component tree and
+attachment references with Components V2 and private visibility. The user confirmed the
+buttons were visible on their latest attempt before the rollout. The original missing controls
+did not recur, and their original cause remains unknown.
 
-| Defaults | Days | Chips created | Chips removed | Median | Mean | Balance range |
-| --- | ---: | ---: | ---: | ---: | ---: | --- |
-| Previous | 30 | 219,675 | 8,876 | 17,327 | 17,567 | 8,460–28,085 |
-| Current | 30 | 102,090 | 8,876 | 6,889 | 7,768 | 3,610–12,675 |
-| Previous | 90 | 650,190 | 26,950 | 53,053 | 51,937 | 26,370–75,360 |
-| Current | 90 | 298,665 | 26,950 | 22,458 | 22,643 | 10,752–34,945 |
+### Timing
 
-The scenario had zero insufficient opening stakes after rewards, zero relief claims, and clean
-ledger reconciliation in all runs. Passive income remains the largest source of chips. Treat these
-figures as one low-stakes scenario. Separate integration tests exercise zero balances, open
-escrows, relief and cooldowns.
+These are local single samples from the real router, services and renderers against Fake Discord
+with 40 ms added request latency. The settle column waits for queued follow-up work, with
+animations encoded and zero deliberate animation hold.
 
-## Poker continuation
+| Interaction | Acknowledged (ms) | Queues drained (ms) |
+| --- | ---: | ---: |
+| Home slash, cold artwork | 74 | 76 |
+| Home tab, cached artwork | 46 | 46 |
+| Games | 88 | 89 |
+| Wallet | 76 | 77 |
+| Match history | 45 | 45 |
+| Browse tables | 46 | 46 |
+| Blackjack quick seat and panel creation | 47 | 309 |
+| Blackjack join | 46 | 139 |
+| Blackjack wager | 136 | 151 |
+| Blackjack deal | 567 | 735 |
+| Blackjack hit | 398 | 566 |
+| Blackjack stand and settlement | 1,019 | 1,187 |
+| Roulette open | 47 | 339 |
+| Roulette wager modal / submit | 46 / 47 | 47 / 62 |
+| Roulette ready vote | 45 | 61 |
+| Slots open / spin | 62 / 323 | 62 / 416 |
 
-The headless engine implements the four betting streets, blinds, heads-up order, full raises and
-cumulative short all-ins, uncalled-bet refunds, best-five rankings, side pots, split pots and odd
-chips. Public projections contain only the current board and legitimately revealed cards. The
-engine receives funded stacks from its caller. There are currently no player-facing Poker buttons
-or slash commands.
+In that manual deal sample, commit and render start both took place 1 ms after deal began.
+The first GIF finished at +513 ms and Fake Discord acknowledged at +566 ms. The final
+still was acknowledged at +704 ms. The automatic timing race is covered separately by
+the regression. Discord's network receipt and actual client media painting were outside
+this sample.
 
-1. Add a poker table aggregate using the existing table-seat uniqueness constraint. Track table
-   stacks as wallet escrow, including money committed to an active hand. Validate stack and wallet
-   totals in the same SQLite transaction as every buy-in, cash-out, hand completion and refund.
-2. Persist the active hand and its sequence with that aggregate. Bind action components to the
-   guild, table, hand and version. Start with automatic timeout actions and an explicit atomic
-   void/refund policy for a corrupted snapshot. Cover join/leave and sit-out behavior between
-   hands before exposing the table.
-3. Connect the service to guarded child threads and the table browser. Pass only
-   `publicPokerHand` to shared renders and only the authenticated player's private projection
-   to My Hand. Put reveal animations after the engine authorizes each street.
-4. Add poker-specific round results and match details, then exercise two six-seat tables,
-   concurrent Blackjack, reconnects at every street, side-pot settlement, stale duplicate
-   actions, and privacy across text, attachments, logs and history.
+The real Discord REST bench edited one synthetic message in the allowlisted channel, then removed it.
+Discord accepted all 19 selected payloads. Median request time was 537 ms and maximum was
+4,834 ms. Home and Wallet were both 394 ms, cached Home 247 ms, the Blackjack deal GIF
+3,357 ms and Poker deal GIF 537 ms. These counts include service queues and attachment uploads.
+Even some text-only edits took several seconds late in the sequence. The run did not isolate
+Discord rate limiting from transport and queue delays.
 
-Rules sources include [Robert’s Rules of Poker](https://www.pagat.com/docs/RobsPkrRules11.pdf) for
-cash-game minimum bets and raises and the [Poker TDA rules](https://www.pokertda.com/view-poker-tda-rules/)
-for reopening after cumulative short all-ins and odd-chip allocation.
+The desktop client displayed the before/after Home, Wallet, Games and Blackjack fixture payloads
+on the verified secondary display. The Hold’em table and event details were also inspected.
+Cropped screenshots are under the gitignored `recordings/premium-review/`. The Blackjack
+comparison uses a five-seat fixture. The small-table renderer is covered in headless validation.
+Live mobile layout, exact client-paint timings and a two-player private Hold’em hand still need
+human confirmation. The REST bench used synthetic data, including for personal views.
 
-## Verification and running
+The 30-player, six-thread Fake Discord run settled 12 hands. It recorded 165 interactions, no
+late or missing acknowledgements, 849 ms p95 and 991 ms max acknowledgement, and no ledger,
+isolation, payload or escrow errors. RSS rose from 144 to 224 MB. The separate crash simulation
+restored three live tables and settled 30 hands. Game action p95 was 10.43 ms and panel rendering
+p95 was 312.14 ms. The suite also covers ten active roulette bettors, vote changes, wallet
+operations, third-party clicks, missing panels and the allowlist. These results are from several
+scenarios with different configurations.
 
-```powershell
-npm ci
-npm run check
-npm run simulate:economy
-npm run simulate -- --tables 3 --players 4 --rounds 10 --crash
-npm run render-preview
-npm run record -- roulette --latency 100 --think 100
-```
+### Seeded economy
 
-The local Windows type check, lint, build and all 355 tests passed. The restart simulation settled 30 hands on three tables. Ledger reconciliation and chip
-conservation passed, with zero held escrows and zero payload errors. It measured local p95 of
-9.80 ms for game actions and 527.79 ms for panel rendering. The poker tests exhaustively check
-2,598,960 five-card hands and exercise hundreds of seeded betting paths.
+`npm run simulate:economy` uses production poker escrow, varied stakes and longer sessions
+in disposable databases. Defaults remain 500 starting chips with no existing balance resets.
 
-The live bench sends the simulated catalogue through the real bot REST API with the existing
-test-mode allowlist. Discord accepted all 60 screens and the test message was removed. The median
-request took 358 ms and the slowest took 5,185 ms. The guard blocked zero requests. The bench
-uses a temporary message and no gateway session. Games, Wallet and
-Roulette were visually inspected in the verified secondary-monitor Discord window. The stable bot
-was still answering production interactions, so manual click behavior for the expansion remains
-to be checked on a staging bot. The live bench does not verify mobile rendering or actual
-interaction acknowledgements. Use the fake Discord integration suite for behavior and the
-catalogue/preview commands for repeatable visual fixtures. Screenshots from the real server
-belong outside source control.
+| 90-day scenario, 12 players | Chips created | Chips removed | Median | Insufficient opening stakes |
+| --- | ---: | ---: | ---: | ---: |
+| Previous defaults | 802,576 | 154,167 | 54,075 | 0 |
+| Current defaults | 444,911 | 151,480 | 16,520 | 0 |
+| Current defaults with gifts | 444,911 | 151,480 | 16,507.5 | 0 |
 
-For a staging login, create a local `.env` from `.env.example` and supply a separate bot
-application's credentials plus the verified test guild and channel IDs. Keep test mode enabled and
-set `DATABASE_PATH=./data/grand-test.db` before running `npm run build` and `npm start`.
-Existing commands are unchanged. A staging application needs initial command registration.
-To reuse the live token, coordinate a maintenance window and stop the existing gateway process
-first. Use SQLite backup before any migration of live data, and verify with
-`npm run reconcile` against the target database while no other process is writing to it.
+Current defaults saw 544 sessions and 295 chips net redistributed through settled Hold’em. Gifting
+moved another 325 chips between wallets with no supply change. Passive income remains the largest
+issuance source. These seeded scenarios illustrate affordability and inflation under their activity
+model.
+
+## Database and release
+
+Migration 3 adds `casino_events`, event registrations and their lookup indexes. Poker uses the
+existing game tables, seats, escrows and round tables. Existing ledger rows, preferences and
+admin overrides are preserved. Before the test switch, SQLite's backup API created an online
+snapshot and an independent migration rehearsal. Schema 2 upgraded to 3 with SQLite integrity
+and application reconciliation verified. The isolated test snapshot contained one player,
+565 available chips, six ledger entries, two rounds and no held escrows or active tables.
+The automated recovery tests provide coverage for active rounds. The live test database had
+no rounds in progress at cutover.
+
+The cutover made a second SQLite backup after the old gateway stopped. The local backup is
+`data/grand-test-pre-premium-2026-11-24T21-20-02-858Z.db`. The previous compiled runtime is
+under `data/rollback-dist-0a3ad3c/`. After starting the new gateway, ledger reconciliation
+reported zero problems, the guard confirmed the designated channel and its verified child
+threads, and Discord returned the edited lobby with its Events control. No explicit gifting
+override was present on the test guild, so its new default took effect.
+
+For a future coordinated rollout:
+
+1. Verify the target environment, worktree, bot identity and database path. Run the tests,
+   build and rehearse the migration on a separate SQLite backup. Compare the reconciliation
+   report, row counts, available balances, held escrows and administrator overrides.
+2. Wait for active play to finish. Stop the confirmed previous gateway process, take a fresh
+   SQLite backup, and start exactly one process against the intended database. Check startup
+   recovery, the lobby and reconciliation. For the existing test runtime, use the current
+   staging environment files and `node --enable-source-maps dist/main.js`.
+3. To roll back, stop the new gateway and preserve its database and WAL state using SQLite backup.
+   Start the prior build against a separate copy of the pre-switch snapshot. Point the database
+   setting at that copy. If players have used the new build, the snapshot predates their activity.
+   Reconcile or carry forward those changes before reopening the old build for play. Keep the new
+   database intact.
+
+## Remaining client checks
+
+- Run a fresh `/casino`, check that the complete Home controls are immediately visible, then
+  open Games and return. Repeat on a narrower Discord window or mobile and check wrapping.
+- Join a Blackjack table with a second player. Leave the betting panel open through the deadline,
+  press Deal now if a stale control is still visible, and verify one deal and one wallet charge.
+- Open a private Hold’em table with two real Discord users. Verify the invitation, private
+  thread access, each player's My hand, flop through showdown, and both cash-outs.
+- Create an event with a future offset-qualified time. Have a second player register, assign
+  an owned matching table, start when ready and confirm the table link from both accounts.

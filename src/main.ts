@@ -1,3 +1,4 @@
+import { existsSync, rmSync } from 'node:fs';
 import { ConfigError, loadEnvFile, readEnv } from './config/env.js';
 import { Logger } from './core/logger.js';
 import { openDatabase, type Database } from './db/database.js';
@@ -69,6 +70,17 @@ async function main(): Promise<void> {
 
   process.on('SIGINT', () => void shutdown('SIGINT', 0));
   process.on('SIGTERM', () => void shutdown('SIGTERM', 0));
+  // Windows can't send Ctrl+C to a hidden background process, and Stop-Process is a hard kill.
+  // A deploy script asks for a graceful stop by creating "<database>.stop" next to the database:
+  // the bot drains in-flight panel work, settles nothing new, closes the database and exits 0.
+  const stopFile = `${env.databasePath}.stop`;
+  rmSync(stopFile, { force: true });
+  setInterval(() => {
+    if (existsSync(stopFile)) {
+      rmSync(stopFile, { force: true });
+      void shutdown('stop requested', 0);
+    }
+  }, 1_000).unref();
   process.on('unhandledRejection', (reason) => logger.error('unhandled rejection', { reason: reason instanceof Error ? reason : String(reason) }));
   process.on('uncaughtException', (error) => {
     logger.error('uncaught exception', { error });

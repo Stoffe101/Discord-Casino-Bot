@@ -210,7 +210,8 @@ export class RoundRecorder {
       const event = enoughWager && flags.has('slots_jackpot') ? 'Slots jackpot'
         : notable && stack && p.wagered === stack.before && p.wagered >= highlights.allInStake ? 'All-in win'
         : notable && stack && p.returned >= highlights.pokerReturn ? 'Hold’em pot win'
-        : net >= highlights.majorNet ? 'Major win'
+        // Major is a higher tier of a big win: it keeps the wager floor and the big-win profit.
+        : notable && net >= highlights.majorNet ? 'Major win'
         : notable && flags.has('roulette_straight_win') ? 'Straight-up win'
         : notable && flags.has('bj_split_both_won') ? 'Both split hands won'
         : notable ? 'Big win'

@@ -47,6 +47,8 @@ import type {
 export const TURN_GRACE_MS = 2_000;
 /** When every seated player has bet, the deal happens this soon (lets people change their bet). */
 export const ALL_IN_DEAL_DELAY_MS = 1_500;
+/** A solo player's deal follows their bet after this beat (enough to add another chip). */
+export const SOLO_DEAL_DELAY_MS = 700;
 /** Consecutive timeouts before a player is automatically sat out. */
 export const TIMEOUTS_BEFORE_SIT_OUT = 2;
 /** Consecutive hands dealt without this player betting before they are sat out. */
@@ -922,7 +924,8 @@ export class BlackjackTableService {
     if (state.phase !== 'betting' || state.deadline === null) return;
     const active = state.seats.filter((s) => !s.sittingOut && !s.leaving);
     if (active.length > 0 && active.every((s) => state.bets[s.userId])) {
-      state.deadline = Math.min(state.deadline, now + ALL_IN_DEAL_DELAY_MS);
+      // Alone at the table there is nobody to wait for: a short beat to stack another chip, then deal.
+      state.deadline = Math.min(state.deadline, now + (state.seats.length === 1 ? SOLO_DEAL_DELAY_MS : ALL_IN_DEAL_DELAY_MS));
     }
   }
 

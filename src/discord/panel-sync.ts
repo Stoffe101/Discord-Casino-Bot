@@ -111,13 +111,24 @@ export class PanelSync<Hint = unknown> {
     return slot.pending;
   }
 
-  private async holdUnlessClicked(slot: Slot<Hint>, ms: number): Promise<boolean> {
+  /**
+   * A newer change is waiting that makes what is on screen obsolete: someone clicked the panel, or
+   * another animated change arrived (a hit from the private My hand view, a timeout, the dealer's
+   * turn). Plain redraws (a bet, a countdown) wait for the current animation instead.
+   */
+  private superseded(key: string, slot: Slot<Hint>): boolean {
+    const next = slot.pending;
+    if (!next) return false;
+    return next.carriers.length > 0 || (this.options.frames?.(key, next.hint) ?? 0) > 0;
+  }
+
+  private async holdUnlessClicked(key: string, slot: Slot<Hint>, ms: number): Promise<boolean> {
     const until = Date.now() + ms;
     while (Date.now() < until) {
-      if (slot.retired || slot.pending?.carriers.length) return true;
+      if (slot.retired || this.superseded(key, slot)) return true;
       await sleep(Math.min(40, until - Date.now()));
     }
-    return Boolean(slot.pending?.carriers.length);
+    return this.superseded(key, slot);
   }
 
   private async run(key: string, slot: Slot<Hint>): Promise<void> {
@@ -132,6 +143,11 @@ export class PanelSync<Hint = unknown> {
         const delay = typeof this.options.frameDelayMs === 'function' ? this.options.frameDelayMs(job.hint) : (this.options.frameDelayMs ?? 900);
         let interrupted = false;
         for (let frame = 0; frame < frames && !interrupted; frame++) {
+          // Never encode an animation that a newer change has already overtaken.
+          if (this.superseded(key, slot)) {
+            interrupted = true;
+            break;
+          }
           const started = Date.now();
           const hold = await this.renderAndSend(key, slot, frame, carriers, job.hint);
           if (slot.retired) return;
@@ -140,7 +156,7 @@ export class PanelSync<Hint = unknown> {
           if (hold !== undefined) {
             // An animated frame (GIF) only starts playing once Discord has it, so its hold counts
             // from now. A player's click cuts it short: their action is never kept waiting.
-            interrupted = await this.holdUnlessClicked(slot, hold * (this.options.holdScale ?? 1));
+            interrupted = await this.holdUnlessClicked(key, slot, hold * (this.options.holdScale ?? 1));
           } else {
             // A still frame paces by cadence: the time the send took counts towards its slot, so a
             // slow connection doesn't stretch the animation (a short minimum hold keeps it readable).

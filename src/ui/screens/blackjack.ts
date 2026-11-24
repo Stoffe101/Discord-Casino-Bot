@@ -417,7 +417,9 @@ export async function blackjackPanel(
         button({ id: cid('bj', 'rebet', tableId), label: 'Rebet', tone: 'primary', emoji: ICONS.refresh }),
         button({ id: cid('bj', 'betx', tableId), label: 'Custom bet' }),
         button({ id: cid('bj', 'clear', tableId), label: 'Clear bet', disabled: betCount === 0 }),
-        betCount > 0 ? button({ id: cid('bj', 'deal', tableId, state.roundId), label: dealDue ? 'Dealing…' : 'Deal now (host)', tone: 'success', disabled: dealDue }) : null,
+        // Only while someone is still deciding: once everyone is in, the deal is moments away anyway
+        // (and a manual deal would only race it).
+        betCount > 0 && deciding.length > 0 ? button({ id: cid('bj', 'deal', tableId, state.roundId), label: dealDue ? 'Dealing…' : 'Deal now (host)', tone: 'success', disabled: dealDue }) : null,
       ),
     );
   }

@@ -230,7 +230,10 @@ export class EconomyService {
     if (!guild.enabled || settings.reliefAmount === 0 || !Number.isFinite(minimum)) return { eligible: false, reason: 'disabled' };
     const wallet = this.getWallet(guildId, userId);
     if (wallet.reserved > 0 || wallet.balance >= minimum) return { eligible: false, reason: 'funds' };
-    if (wallet.passive.available > 0 || wallet.daily.available) return { eligible: false, reason: 'rewards' };
+    // Rewards only stand in for relief when collecting them would afford a game; a chip or two of
+    // passive income that accrued since the wallet was drawn must not lock a broke player out.
+    const claimable = wallet.passive.available + (wallet.daily.available ? wallet.daily.amount : 0);
+    if (claimable > 0 && wallet.balance + claimable >= minimum) return { eligible: false, reason: 'rewards' };
     const now = this.clock.now();
     const last = this.db.get<{ created_at: number }>(
       "SELECT created_at FROM ledger WHERE guild_id = ? AND user_id = ? AND type = 'emergency_relief' ORDER BY created_at DESC LIMIT 1",

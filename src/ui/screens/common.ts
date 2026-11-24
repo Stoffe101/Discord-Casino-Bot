@@ -80,7 +80,7 @@ export function errorScreen(title: string, body: string, withHome = true): Scree
     title,
     body,
     tone: 'error',
-    buttons: withHome ? [button({ id: NAV.home, label: 'Casino home', emoji: ICONS.home })] : [],
+    buttons: withHome ? [button({ id: NAV.home, label: 'Home', emoji: ICONS.home })] : [],
   });
 }
 
@@ -99,5 +99,5 @@ export function returnToCasino(app: CasinoApp, guildId: string, fallbackChannelI
   const channelId = lobby.channelId ?? fallbackChannelId;
   return channelId
     ? linkButton('Return to casino', channelUrl(guildId, channelId, lobby.messageId), ICONS.home)
-    : button({ id: NAV.home, label: 'Casino home', emoji: ICONS.home });
+    : button({ id: NAV.home, label: 'Home', emoji: ICONS.home });
 }

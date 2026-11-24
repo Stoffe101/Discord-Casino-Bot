@@ -204,7 +204,7 @@ export function historyScreen(app: CasinoApp, viewer: Viewer, page: number): Scr
           button({ id: cid('nav', 'history', 'page'), label: `Page ${p + 1} of ${pages}`, disabled: true }),
           button({ id: cid('nav', 'history', p + 1), emoji: ICONS.next, disabled: p >= pages - 1 }),
           button({ id: cid('nav', 'walletstats'), label: 'Stats', emoji: ICONS.stats }),
-          button({ id: cid('nav', 'wallet', 'back'), label: 'Wallet', emoji: ICONS.back }),
+          button({ id: cid('nav', 'wallet', 'back'), label: 'Back to wallet', emoji: ICONS.back }),
         ),
       ]),
     ],

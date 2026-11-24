@@ -1,7 +1,7 @@
 import type { CasinoApp } from '../../app/casino-app.js';
 import { discordTime, escapeMarkdown } from '../../core/format.js';
 import { recentCasinoActivity } from '../../domain/casino-activity.js';
-import { bannerSvg } from '../../render/game-images.js';
+import { lobbySign } from '../../render/floor-art.js';
 import { button, container, gallery, row, separator, text, type Screen } from '../kit.js';
 import { COLORS, ICONS } from '../theme.js';
 import { NAV } from './common.js';
@@ -13,27 +13,26 @@ import { tableSummary } from './blackjack.js';
  */
 export async function lobbyScreen(app: CasinoApp, guildId: string): Promise<Screen> {
   const settings = app.settings.get(guildId);
-  const { key, png } = await app.images.render(bannerSvg(settings.casinoName), 800);
-  const file = `banner-${key}.png`;
+  const sign = await lobbySign(settings.casinoName);
   const tables = app.blackjack.openTables(guildId);
   const poker = app.poker.openTables(guildId);
   const wheel = app.roulette.wheelFor(guildId);
   const tableLines = [
     ...tables.filter((table) => !table.record.isPrivate).slice(0, 3)
-      .map((table) => '♠ **' + escapeMarkdown(table.record.name) + '** · ' + tableSummary(table)),
+      .map((table) => ICONS.blackjack + ' **' + escapeMarkdown(table.record.name) + '** · ' + tableSummary(table)),
     ...poker.filter((table) => !table.record.isPrivate).slice(0, 3)
-      .map((table) => '♦ **' + escapeMarkdown(table.record.name) + '** · Hold’em · ' + table.state.seats.length + '/' + table.record.config.maxSeats + ' seated'),
+      .map((table) => ICONS.poker + ' **' + escapeMarkdown(table.record.name) + '** · Hold’em · ' + table.state.seats.length + '/' + table.record.config.maxSeats + ' seated'),
   ];
-  if (wheel) tableLines.push('**Roulette** · ' + (wheel.state.bets.length ? 'taking bets' : 'wheel open'));
+  if (wheel) tableLines.push(ICONS.roulette + ' **Roulette** · ' + (wheel.state.bets.length ? 'taking bets' : 'wheel open'));
   const highlights = recentCasinoActivity(app, guildId, 3);
   const highlightText = highlights.length ? `### Casino activity\n${highlights.join('\n')}` : null;
   const events = app.events.upcoming(guildId).slice(0, 2);
   const closed = !settings.enabled;
   return {
-    files: [{ name: file, data: png, description: `${settings.casinoName} banner` }],
+    files: sign ? [sign] : [],
     components: [
       container(closed ? COLORS.charcoal : COLORS.emerald, [
-        gallery([{ url: `attachment://${file}`, description: `${settings.casinoName}` }]),
+        sign ? gallery([{ url: `attachment://${sign.name}`, description: sign.description }]) : text(`# ${escapeMarkdown(settings.casinoName)}`),
         text(
           closed
             ? '### The casino is closed\nAn admin has closed the doors for now. Your chips are safe.'

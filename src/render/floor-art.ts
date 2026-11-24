@@ -182,6 +182,37 @@ export function floorSvg(open: Record<FloorTile, boolean>): string {
   return svgDoc(FLOOR_W, FLOOR_H, `<rect width="${FLOOR_W}" height="${FLOOR_H}" rx="16" fill="url(#floorGlow)"/>` + body, DEFS);
 }
 
+/**
+ * The public lobby's sign: the casino's name in gold over deep emerald, with the games laid out
+ * along the right like a lit gaming floor seen through the door.
+ */
+export function lobbySignSvg(name: string): string {
+  const W = 960;
+  const H = 300;
+  const pieces: Array<[FloorTile, number, number, number]> = [
+    ['roulette', 585, 34, 0.8],
+    ['blackjack', 694, 110, 0.64],
+    ['slots', 792, 30, 0.58],
+    ['coinflip', 806, 156, 0.5],
+  ];
+  const title = name.length > 22 ? 36 : name.length > 16 ? 44 : 50;
+  return svgDoc(W, H,
+    `<rect width="${W}" height="${H}" rx="18" fill="url(#floorGlow)"/>`
+      + `<path d="M470 0 H${W} V${H} H400 Z" fill="#0f3a2a" opacity=".75"/>`
+      + `<path d="M470 0 L400 ${H}" stroke="${GOLD}" stroke-opacity=".35" stroke-width="2"/>`
+      + pieces.map(([id, x, y, s]) => `<g transform="translate(${x} ${y}) scale(${s})">${ART[id]()}</g>`).join('')
+      + `<rect x="10" y="10" width="${W - 20}" height="${H - 20}" rx="12" fill="none" stroke="${GOLD}" stroke-opacity=".5" stroke-width="1.5"/>`
+      + `<text x="48" y="92" font-family="Manrope" font-weight="800" font-size="17" letter-spacing="6" fill="${GOLD}">A PRIVATE CASINO</text>`
+      + `<text x="46" y="${92 + title + 18}" font-family="Cinzel" font-weight="900" font-size="${title}" fill="${CREAM}">${esc(name)}</text>`
+      + `<path d="M48 ${92 + title + 40}h300" stroke="${GOLD}" stroke-width="1.5" opacity=".7"/>`
+      + `<text x="48" y="${92 + title + 74}" font-family="Manrope" font-weight="700" font-size="19" fill="#cfe3d8">Blackjack · Hold’em · Roulette · Slots · Coinflip</text>`,
+    DEFS);
+}
+
+export function lobbySign(name: string): Promise<ArtFile | undefined> {
+  return cached(`lobby-${name}`, async () => ({ name: 'emerald-lobby.png', data: await svgToPng(lobbySignSvg(name), 960), description: `${name}: a private casino with Blackjack, Hold’em, Roulette, Slots and Coinflip.` }));
+}
+
 /** One game's illustration on its own, square, for thumbnails (table lobbies, events). */
 export function gameBadgeSvg(id: FloorTile): string {
   return svgDoc(240, 240,

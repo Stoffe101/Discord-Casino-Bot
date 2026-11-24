@@ -56,7 +56,7 @@ describe('economy through Discord', () => {
     const alice = h.user('Alice');
     h.app.settings.set(h.guildId, 'economy.startingBalance', 50);
     const home = h.seen(await h.slash(alice, 'casino'))!;
-    await h.click(alice, home, 'Play Blackjack');
+    await h.openBlackjack(alice, home);
     const tableId = h.app.blackjack.tableOfUser(h.guildId, alice.id)!.record.id;
     const rec = await h.click(alice, h.tablePanel(tableId), '100');
     const notice = h.seen(rec)!;

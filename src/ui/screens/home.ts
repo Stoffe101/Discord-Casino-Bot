@@ -1,14 +1,12 @@
 import type { CasinoApp } from '../../app/casino-app.js';
-import { chips, discordTime, durationShort, escapeMarkdown, plural, signedChips } from '../../core/format.js';
+import { chips, discordTime, durationShort, escapeMarkdown, signedChips } from '../../core/format.js';
 import { recentCasinoActivity } from '../../domain/casino-activity.js';
 import type { LedgerRow } from '../../domain/economy/economy-service.js';
-import { GAMES, gameEnabled } from '../game-menu.js';
+import { GAMES } from '../game-menu.js';
 import { cid } from '../custom-id.js';
 import { button, container, row, separator, text, type Screen } from '../kit.js';
 import { COLORS, ICONS } from '../theme.js';
-import { NAV, casinoName, channelUrl, levelLine, name, navRow, type Viewer } from './common.js';
-import { linkButton } from '../kit.js';
-import { pokerUrl } from './poker.js';
+import { NAV, casinoName, levelLine, name, navRow, type Viewer } from './common.js';
 import { balanceText, dashboardArt, rewardSummary } from './dashboard.js';
 
 /** Claim buttons shared by Home, Wallet and Rewards. */
@@ -40,24 +38,11 @@ export function claimButtons(app: CasinoApp, viewer: Viewer, from: 'home' | 'wal
 export async function homeScreen(app: CasinoApp, viewer: Viewer): Promise<Screen> {
   const player = app.economy.ensurePlayer(viewer.guildId, viewer.userId, viewer.displayName);
   const wallet = app.economy.getWallet(viewer.guildId, viewer.userId);
-  const tables = app.blackjack.openTables(viewer.guildId);
   const activity = recentCasinoActivity(app, viewer.guildId, 2);
-  const seated = tables.reduce((total, table) => total + table.state.seats.length, 0);
-  const mine = app.blackjack.tableOfUser(viewer.guildId, viewer.userId);
-  const myPoker = app.poker.tableOfUser(viewer.guildId, viewer.userId);
   const settings = app.settings.get(viewer.guildId);
   const art = await dashboardArt('home');
   const sameBrand = settings.casinoName === 'The Emerald Room' && art.component;
   const nameLine = `${name(viewer.displayName)} · ${levelLine(player.xp)}`;
-
-  const pokerLink = myPoker && pokerUrl(myPoker.record);
-  const playButton = myPoker
-    ? pokerLink ? linkButton('Your table', pokerLink, ICONS.poker) : button({ id: cid('pk', 'hand', myPoker.record.id), label: 'Your table', emoji: ICONS.poker })
-    : mine
-    ? mine.record.threadId || mine.record.channelId
-      ? linkButton('Your table', channelUrl(viewer.guildId, (mine.record.threadId ?? mine.record.channelId)!, mine.record.threadId ? null : mine.record.messageId), ICONS.blackjack)
-      : button({ id: cid('bj', 'seat', mine.record.id), label: 'Your table', emoji: ICONS.blackjack, tone: 'primary' })
-    : button({ id: cid('tbl', 'quick'), label: 'Play Blackjack', emoji: ICONS.blackjack, tone: 'primary', disabled: !gameEnabled(settings, 'blackjack') });
 
   return {
     files: art.files,
@@ -67,12 +52,7 @@ export async function homeScreen(app: CasinoApp, viewer: Viewer): Promise<Screen
         art.component,
         text(`${sameBrand ? '' : `# ${escapeMarkdown(settings.casinoName)}\n`}${balanceText(wallet)}\n-# ${nameLine}`),
         row(
-          playButton,
-          ...GAMES.filter((game) => game.id !== 'blackjack' && (game.id !== 'poker' || (settings.poker.enabled && !myPoker))).map((game) =>
-            button({ id: game.play, label: game.id === 'slots' ? 'Slots' : game.label, emoji: game.icon, disabled: !gameEnabled(settings, game.id) })),
-        ),
-        text(tables.length ? `-# ${plural(tables.length, 'open table')} · ${plural(seated, 'seated player')}` : '-# No Blackjack tables open'),
-        row(
+          button({ id: NAV.myTable, label: 'My table', emoji: ICONS.tables }),
           button({ id: NAV.tables, label: 'Browse tables', emoji: ICONS.tables }),
           button({ id: NAV.events, label: 'Events', emoji: ICONS.events }),
           button({ id: NAV.help, label: 'Help', emoji: ICONS.help }),

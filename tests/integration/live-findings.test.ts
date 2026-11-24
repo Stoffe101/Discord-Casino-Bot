@@ -20,14 +20,14 @@ const RELATIVE = /<t:\d+:R>/;
 
 async function soloTable(shoe: string[]) {
   const alex = h.user('Alex');
-  await h.click(alex, h.seen(await h.slash(alex, 'casino')), 'Play Blackjack');
+  await h.openBlackjack(alex);
   const tableId = h.app.blackjack.tableOfUser(h.guildId, alex.id)!.record.id;
   await h.app.blackjack.debugSetShoe(tableId, shoe as Card[]);
   return { alex, tableId };
 }
 
 describe('countdowns never outlive their deadline', () => {
-  it('blackjack betting: the live countdown gives way to "dealing now" shortly before the deal', async () => {
+  it('blackjack betting: the live countdown gives way to "dealing shortly" shortly before the deal', async () => {
     h = new CasinoHarness();
     const { alex, tableId } = await soloTable(['TS', '9C', '8D', '8H']);
     const hanna = h.user('Hanna');
@@ -36,7 +36,7 @@ describe('countdowns never outlive their deadline', () => {
     expect(h.text(h.tablePanel(tableId))).toMatch(/dealing <t:\d+:R>/);
     const windowMs = h.app.settings.get(h.guildId).blackjack.bettingSeconds * 1000;
     await h.advance(windowMs - COUNTDOWN_CUTOFF_MS + 50);
-    expect(h.text(h.tablePanel(tableId))).toContain('dealing now…');
+    expect(h.text(h.tablePanel(tableId))).toContain('dealing shortly…');
     expect(h.text(h.tablePanel(tableId))).not.toMatch(RELATIVE);
     await h.advance(COUNTDOWN_CUTOFF_MS);
     expect(h.text(h.tablePanel(tableId))).toContain('Alex to act');
@@ -48,7 +48,7 @@ describe('countdowns never outlive their deadline', () => {
     const { alex, tableId } = await soloTable(['TS', '9C', '8D', '8H']);
     await h.click(alex, h.tablePanel(tableId), '25');
     expect(ALL_IN_DEAL_DELAY_MS).toBeLessThanOrEqual(COUNTDOWN_CUTOFF_MS);
-    expect(h.text(h.tablePanel(tableId))).toContain('dealing now…');
+    expect(h.text(h.tablePanel(tableId))).toContain('dealing shortly…');
     expect(h.text(h.tablePanel(tableId))).not.toMatch(RELATIVE);
   });
 

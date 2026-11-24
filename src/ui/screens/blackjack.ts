@@ -3,8 +3,8 @@ import { COUNTDOWN_CUTOFF_MS, chips, countdown, escapeMarkdown, discordTime, plu
 import { eventsScreen } from './events.js';
 import { pokerUrl } from './poker.js';
 import { cardLabel } from '../../games/cards.js';
-import { currentTurnUserId, describeRules, describeTotal, handValue, isNaturalCards, type BlackjackRules } from '../../games/blackjack/engine.js';
-import { renderTableSvg } from '../../render/table-image.js';
+import { currentTurnUserId, describeRules, describeTotal, handValue, type BlackjackRules } from '../../games/blackjack/engine.js';
+import { isMultiplayerLayout, renderTableSvg } from '../../render/table-image.js';
 import { rulesFromSettings } from '../../tables/blackjack-table-service.js';
 import { buildTableView, describeTableForAlt } from '../../tables/table-view.js';
 import type { LastRoundResult, LogEntry, RenderHint, ResultSeat, TableSnapshot } from '../../tables/types.js';
@@ -31,7 +31,7 @@ import {
   type Screen,
 } from '../kit.js';
 import { COLORS, ICONS } from '../theme.js';
-import { NAV, channelUrl, navRow, type Viewer } from './common.js';
+import { NAV, channelUrl, navRow, returnToCasino, type Viewer } from './common.js';
 
 const CHIP_VALUES = [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10_000, 25_000, 50_000, 100_000, 250_000, 500_000, 1_000_000];
 
@@ -72,10 +72,10 @@ function tableLocation(snapshot: Readonly<TableSnapshot>): string | null {
 
 // ───────────────────────────── table browser ─────────────────────────────
 
-export const TABLE_FILTERS = ['all', 'blackjack', 'poker', 'roulette', 'seats', 'public', 'active', 'events'] as const;
+export const TABLE_FILTERS = ['all', 'blackjack', 'poker', 'roulette', 'seats', 'public', 'active', 'events', 'mine'] as const;
 export type TableFilter = typeof TABLE_FILTERS[number];
 const TABLE_FILTER_LABELS: Record<TableFilter, string> = {
-  all: 'All games', blackjack: 'Blackjack', poker: 'Hold’em', roulette: 'Roulette', seats: 'Available seats', public: 'Public tables', active: 'In play', events: 'Scheduled events',
+  all: 'All games', blackjack: 'Blackjack', poker: 'Hold’em', roulette: 'Roulette', seats: 'Available seats', public: 'Public tables', active: 'In play', events: 'Scheduled events', mine: 'My table',
 };
 const TABLES_PER_PAGE = 3;
 
@@ -111,9 +111,11 @@ export function tablesScreen(app: CasinoApp, viewer: Viewer, filter: TableFilter
       players: [], active: wheel.state.bets.length > 0, join: cid('rl', 'open'),
     }] : []),
   ];
-  const allowed = TABLE_FILTERS.filter((kind) => kind !== 'poker' || settings.poker.enabled || poker.length > 0);
+  const focusedGame = filter === 'blackjack' || filter === 'poker' ? filter : null;
+  const myView = filter === 'mine';
+  const allowed = TABLE_FILTERS.filter((kind) => kind !== 'mine' && (kind !== 'poker' || settings.poker.enabled || poker.length > 0));
   const filtered = entries.filter((entry) => filter === 'all' || filter === entry.kind || (filter === 'seats' && entry.canJoin)
-    || (filter === 'active' && entry.active) || (filter === 'public' && !entry.record.isPrivate));
+    || (filter === 'active' && entry.active) || (filter === 'public' && !entry.record.isPrivate) || (myView && entry.record.id === mine));
   const pages = Math.max(1, Math.ceil(filtered.length / TABLES_PER_PAGE));
   const current = Math.min(pages - 1, Math.max(0, page));
   const sections = filtered.slice(current * TABLES_PER_PAGE, (current + 1) * TABLES_PER_PAGE).flatMap((entry) => {
@@ -129,28 +131,35 @@ export function tablesScreen(app: CasinoApp, viewer: Viewer, filter: TableFilter
       !wheelEntry && entry.url && !entry.record.isPrivate && !seated ? row(linkButton('Spectate', entry.url, ICONS.spectate)) : null,
     ];
   });
+  const title = myView ? 'My table' : focusedGame ? TABLE_FILTER_LABELS[focusedGame] + ' tables' : 'Casino tables';
+  const empty = myView ? 'You don’t have a seat at a table. Open Games to choose one.'
+    : focusedGame ? 'No ' + TABLE_FILTER_LABELS[focusedGame] + ' tables are open. You can start one below.' : 'No tables match this filter.';
+  const matching = filtered.length ? plural(filtered.length, 'open table') : empty;
+  const hasOtherGameSeat = !!mine && (focusedGame === 'blackjack' ? !myBlackjack : focusedGame === 'poker' && !myPoker);
   return {
     components: [
       container(COLORS.emerald, [
         navRow('games'),
-        text(`## Casino tables\n-# ${filtered.length ? plural(filtered.length, 'matching table') : 'No tables match this filter.'}`),
-        select({ id: cid('tbl', 'filter'), placeholder: 'Filter tables', options: allowed.map((value) => option(TABLE_FILTER_LABELS[value], value, undefined, undefined, value === filter)) }),
+        text('## ' + title + '\n' + matching),
+        !focusedGame && !myView
+          ? select({ id: cid('tbl', 'filter'), placeholder: 'Filter tables', options: allowed.map((value) => option(TABLE_FILTER_LABELS[value], value, undefined, undefined, value === filter)) })
+          : null,
+        hasOtherGameSeat ? text('You already have a seat in ' + (myBlackjack ? 'Blackjack' : 'Hold’em') + '. Leave it before joining or opening another table.') : null,
+        focusedGame === 'blackjack' ? row(button({ id: cid('tbl', 'create'), label: 'Open Blackjack', emoji: ICONS.blackjack, tone: 'primary', disabled: !!mine || !settings.enabled || !settings.blackjack.enabled })) : null,
+        focusedGame === 'poker' ? row(button({ id: cid('pk', 'create'), label: 'Open Hold’em', emoji: ICONS.poker, tone: 'primary', disabled: !!mine || !settings.enabled || !settings.poker.enabled })) : null,
+        !focusedGame && !myView ? row(
+          button({ id: cid('nav', 'tables', 'blackjack'), label: 'Blackjack tables', emoji: ICONS.blackjack }),
+          settings.poker.enabled ? button({ id: cid('nav', 'tables', 'poker'), label: 'Hold’em tables', emoji: ICONS.poker }) : null,
+        ) : null,
+        mineUrl && !myView ? row(linkButton('Return to your table', mineUrl, ICONS.back)) : null,
       ]),
-      container(COLORS.deepEmerald, [
-        ...sections,
-        mineUrl ? row(linkButton('Return to your table', mineUrl, ICONS.back)) : null,
-        row(
-          !mine ? button({ id: cid('tbl', 'quick'), label: 'Quick seat', emoji: ICONS.blackjack, tone: 'success', disabled: !settings.enabled || !settings.blackjack.enabled }) : null,
-          button({ id: cid('tbl', 'create'), label: 'Open a table', tone: 'primary', disabled: !!mine || !settings.enabled || !settings.blackjack.enabled }),
-          settings.poker.enabled ? button({ id: cid('pk', 'create'), label: 'Open Hold’em', emoji: ICONS.poker, tone: 'primary', disabled: !!mine || !settings.enabled }) : null,
-        ),
-        pages > 1 ? row(
-          button({ id: cid('nav', 'tables', filter, current - 1), label: 'Previous', emoji: ICONS.back, disabled: current === 0 }),
-          button({ id: cid('nav', 'tables', filter, current), label: `Refresh ${current + 1}/${pages}`, emoji: ICONS.refresh }),
-          button({ id: cid('nav', 'tables', filter, current + 1), label: 'Next', emoji: ICONS.next, disabled: current + 1 === pages }),
-        ) : row(button({ id: cid('nav', 'tables', filter, current), label: 'Refresh', emoji: ICONS.refresh })),
-      ]),
-    ],
+      sections.length ? container(COLORS.deepEmerald, sections) : null,
+      pages > 1 ? row(
+        button({ id: cid('nav', 'tables', filter, current - 1), label: 'Previous', emoji: ICONS.back, disabled: current === 0 }),
+        button({ id: cid('nav', 'tables', filter, current), label: 'Refresh ' + (current + 1) + '/' + pages, emoji: ICONS.refresh }),
+        button({ id: cid('nav', 'tables', filter, current + 1), label: 'Next', emoji: ICONS.next, disabled: current + 1 === pages }),
+      ) : row(button({ id: cid('nav', 'tables', filter, current), label: 'Refresh', emoji: ICONS.refresh })),
+    ].filter((component) => component !== null),
   };
 }
 
@@ -210,11 +219,11 @@ function seatSummary(state: TableSnapshot['state'], round: NonNullable<TableSnap
     const hands = rs.hands
       .map((h) => {
         const { total } = handValue(h.cards);
-        const tag = h.surrendered ? ' surrendered' : total > 21 ? ' bust' : !h.fromSplit && isNaturalCards(h.cards) ? ' blackjack' : h.doubled ? ' doubled' : '';
-        return `${h.cards.map(cardLabel).join(' ')} **${describeTotal(h.cards, h.fromSplit)}**${tag}`;
+        const tag = h.surrendered ? ' · surrendered' : total > 21 ? ' · bust' : h.doubled ? ' · doubled' : '';
+        return `${h.cards.map(cardLabel).join('  ')} → **${describeTotal(h.cards, h.fromSplit)}**${tag}`;
       })
       .join('  ·  ');
-    return `${rs.userId === activeUserId ? '▸' : '　'} ${name} — ${hands}`;
+    return `${rs.userId === activeUserId ? '▸ ' : ''}**${name}** · ${hands}`;
   });
 }
 
@@ -226,6 +235,7 @@ export async function blackjackPanel(
   const { record, state } = snapshot;
   const rules = tableRules(app, snapshot);
   const view = buildTableView(snapshot, rules, options);
+  const multiplayer = isMultiplayerLayout(view);
   // An animated frame carries a GIF (cards in motion); every other frame is a sharp static PNG.
   const anim = options.animation ? await tableAnimation(app, snapshot, options.animation) : null;
   const image = anim ? anim.file : await (async () => {
@@ -242,6 +252,7 @@ export async function blackjackPanel(
   const tableId = record.id;
   const parts: ReturnType<typeof text>[] = [];
   const rows: ReturnType<typeof row>[] = [];
+  let handList: ReturnType<typeof text> | null = null;
   // A deal that leads into play carries the live text and controls with its GIF: players can act
   // the moment the cards are in, instead of waiting for the animation and then the still. A deal
   // that ends the hand at once (a dealer blackjack) keeps the outcome out of the text until it lands.
@@ -277,8 +288,7 @@ export async function blackjackPanel(
           `-# Bet ${chips(hand.bet)} · dealer shows ${cardLabel(up)} · ${state.deadline && state.deadline - app.clock.now() > COUNTDOWN_CUTOFF_MS ? `decide ${discordTime(state.deadline)}, then the hand stands automatically` : 'time is nearly up — the hand stands automatically'}`,
       ),
     );
-    if (round.seats.length > 1) parts.push(text(`-# The table
-${seatSummary(state, round, seat.userId).join('\n')}`));
+    if (round.seats.length > 1) handList = text('### Player hands\n' + seatSummary(state, round, seat.userId).join('\n'));
     const seq = round.seq;
     const id = (action: string) => cid('bj', 'act', tableId, action, seq);
     rows.push(
@@ -320,7 +330,10 @@ ${seatSummary(state, round, seat.userId).join('\n')}`));
       for (const s of result.seats) {
         const verdict = s.net > 0 ? `▲ ${escapeMarkdown(s.displayName)} won **${chips(s.net)}**` : s.net < 0 ? `▼ ${escapeMarkdown(s.displayName)} lost ${chips(-s.net)}` : `■ ${escapeMarkdown(s.displayName)} broke even`;
         const detail = s.hands
-          .map((h) => (h.outcome === 'blackjack' ? 'blackjack!' : h.outcome === 'bust' ? 'bust' : h.outcome === 'surrender' ? 'surrendered' : `${h.total}${h.doubled ? ' doubled' : ''}`))
+          .map((h) => {
+            const outcome = h.outcome === 'blackjack' ? 'Blackjack' : h.outcome === 'bust' ? 'Bust' : h.outcome === 'surrender' ? 'Surrendered' : String(h.total);
+            return multiplayer ? h.cards.map(cardLabel).join('  ') + ' → **' + outcome + '**' : outcome + (h.doubled ? ' doubled' : '');
+          })
           .join(' / ');
         lines.push(`${verdict} · ${detail}${s.timedOut ? ' · ran out of time' : ''}`);
       }
@@ -338,7 +351,7 @@ ${seatSummary(state, round, seat.userId).join('\n')}`));
       for (const line of extras.slice(0, 3)) lines.push(`-# ✦ ${line}`);
     }
     const betCount = Object.keys(state.bets).length;
-    const dealDue = state.deadline !== null && state.deadline - app.clock.now() <= COUNTDOWN_CUTOFF_MS;
+    const dealDue = state.deadline !== null && state.deadline <= app.clock.now();
     const placed = state.seats.filter((s) => state.bets[s.userId]).map((s) => `${escapeMarkdown(s.displayName)} **${chips(state.bets[s.userId]!)}**`);
     const deciding = state.seats.filter((s) => !state.bets[s.userId] && !s.sittingOut).map((s) => escapeMarkdown(s.displayName));
     const away = state.seats.filter((s) => !state.bets[s.userId] && s.sittingOut).map((s) => escapeMarkdown(s.displayName));
@@ -352,7 +365,7 @@ ${seatSummary(state, round, seat.userId).join('\n')}`));
     const heading = result && !result.voided ? '**Next hand** · ' : '### Place your bets\n';
     const timing =
       betCount > 0 && state.deadline
-        ? `dealing ${countdown(state.deadline, app.clock.now(), 'now…')}`
+        ? 'dealing ' + countdown(state.deadline, app.clock.now(), dealDue ? 'now…' : 'shortly…')
         : state.seats.length === 0
           ? 'take a seat to play'
           : 'press a chip to bet — the deal starts shortly after the first bet';
@@ -375,20 +388,24 @@ ${seatSummary(state, round, seat.userId).join('\n')}`));
   const recent = animating ? [] : showingResults ? state.log.filter((l) => l.at > state.lastResult!.settledAt) : state.log;
   // While a hand is in play the table summary shows the state; keep only the latest moves.
   const log = recent.slice(state.phase === 'playing' ? -2 : -4).map((l) => `-# ${TONE_GLYPH[l.tone]} ${escapeMarkdown(l.text)}`);
+  const art = gallery([{ url: 'attachment://' + fileName, description: alt }]);
+  const controls = animating ? [] : rows;
   const full = state.seats.length >= record.config.maxSeats;
   const accent = state.phase === 'playing' && !dealing ? COLORS.gold : state.lastResult && !animating && state.phase === 'betting' ? COLORS.deepEmerald : COLORS.emerald;
-  const lobby = app.settings.lobby(record.guildId);
   return {
     files: [{ name: fileName, data: image.data, description: alt }],
     ...(anim ? { holdMs: anim.holdMs } : {}),
     components: [
       container(accent, [
         text(header),
-        gallery([{ url: `attachment://${fileName}`, description: alt }]),
+        multiplayer ? null : art,
         ...parts,
+        ...(multiplayer ? controls : []),
+        multiplayer ? art : null,
+        handList,
         log.length ? separator() : null,
         log.length ? text(log.join('\n')) : null,
-        ...(animating ? [] : rows),
+        ...(multiplayer ? [] : controls),
       ]),
       container(COLORS.deepEmerald, [row(
         button({ id: cid('bj', 'join', tableId), label: full ? 'Table full' : 'Take a seat', emoji: ICONS.tables, tone: 'success', disabled: full }),
@@ -397,7 +414,7 @@ ${seatSummary(state, round, seat.userId).join('\n')}`));
         button({ id: cid('bj', 'rules', tableId), label: 'Rules', emoji: ICONS.help }),
         button({ id: cid('bj', 'home', tableId), label: 'Casino', emoji: ICONS.home }),
       ),
-      lobby.channelId ? row(linkButton('Return to lobby', channelUrl(record.guildId, lobby.channelId, lobby.messageId), ICONS.back)) : null,
+      row(returnToCasino(app, record.guildId, record.channelId)),
       ]),
     ],
   };
@@ -409,12 +426,12 @@ function listOf(items: string[]): string {
 }
 
 /** Shown on the panel's message once a table is closed. */
-export function closedTablePanel(name: string, reason: string): Screen {
+export function closedTablePanel(app: CasinoApp, location: { guildId: string; channelId: string | null; name: string }, reason: string): Screen {
   return {
     components: [
       container(COLORS.charcoal, [
-        text(`## ♠ ${escapeMarkdown(name)} — closed\n-# ${escapeMarkdown(reason.charAt(0).toUpperCase() + reason.slice(1))}. Any open bets were refunded. Thanks for playing!`),
-        row(button({ id: cid('bj', 'home', 'closed'), label: 'Open the casino', emoji: ICONS.home })),
+        text(`## ${escapeMarkdown(location.name)} · Closed\n-# ${escapeMarkdown(reason.charAt(0).toUpperCase() + reason.slice(1))}. Remaining chips were returned to Wallet.`),
+        row(returnToCasino(app, location.guildId, location.channelId)),
       ]),
     ],
   };

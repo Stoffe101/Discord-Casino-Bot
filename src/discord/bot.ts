@@ -24,9 +24,7 @@ import { roulettePanel, coinflipMessage } from '../ui/screens/games.js';
 import { lobbyScreen } from '../ui/screens/lobby.js';
 import { assertValidScreen } from '../ui/validate.js';
 import type { Screen } from '../ui/kit.js';
-import { container, text } from '../ui/kit.js';
-import { COLORS } from '../ui/theme.js';
-import { PanelSync, sleep } from './panel-sync.js';
+import { PanelSync, sleep, type PanelLocation } from './panel-sync.js';
 import { DISCORD_ERRORS, createOptions, discordErrorCode, editOptions, primaryFileName } from './payload.js';
 import { InteractionRouter } from './router.js';
 import type { AdmissionCandidate, OutboundGuard } from './outbound-guard.js';
@@ -562,22 +560,26 @@ export class CasinoBot {
   }
 
   private async onTableClosed(snap: TableSnapshot | PokerSnapshot, reason: string, game: 'blackjack' | 'poker' = 'blackjack'): Promise<void> {
-    (game === 'poker' ? this.pokerPanels : this.tablePanels).forget(snap.record.id);
     this.app.events.tableClosed(snap.record.guildId, snap.record.id);
     this.requestLobby(snap.record.guildId);
-    const channelId = snap.record.threadId ?? snap.record.channelId;
-    if (!channelId || !snap.record.messageId) return;
-    try {
-      const channel = await this.client.channels.fetch(channelId);
-      if (!channel?.isTextBased()) return;
-      if (channel.isThread() && channel.archived) await channel.setArchived(false).catch(() => undefined);
-      await channel.messages.edit(snap.record.messageId, editOptions(this.checked(closedTablePanel(snap.record.name, reason))));
-      if (channel.isThread()) {
-        await channel.setLocked(true).catch(() => undefined);
-        await channel.setArchived(true, 'Table closed').catch(() => undefined);
-      }
-    } catch (error) {
-      this.logger.debug('closing panel update failed', { code: discordErrorCode(error) });
+    await (game === 'poker' ? this.pokerPanels : this.tablePanels).retire(snap.record.id);
+    await this.closePanel(snap.record, reason);
+  }
+
+  private async closePanel(record: PanelLocation & { guildId: string; name: string }, reason: string): Promise<void> {
+    const channelId = record.threadId ?? record.channelId;
+    if (!channelId) return;
+    const channel = await this.client.channels.fetch(channelId).catch(() => null);
+    if (!channel?.isTextBased()) return;
+    if (channel.isThread() ? !this.allowsThread(channel) : !this.allowsChannel(channel.id)) return;
+    const screen = this.checked(closedTablePanel(this.app, record, reason));
+    if (record.messageId && (!channel.isThread() || !channel.archived)) {
+      await channel.messages.edit(record.messageId, editOptions(screen)).catch((error: unknown) =>
+        this.logger.debug('closing panel update failed', { code: discordErrorCode(error) }));
+    }
+    if (channel.isThread() && (!channel.locked || !channel.archived)) {
+      await channel.edit({ locked: true, archived: true, reason: 'Casino table closed' }).catch((error: unknown) =>
+        this.logger.warn('closing table thread failed', { threadId: channel.id, code: discordErrorCode(error) }));
     }
   }
 
@@ -614,21 +616,9 @@ export class CasinoBot {
   }
 
   private async onWheelClosed(wheel: WheelSnapshot): Promise<void> {
-    this.wheelPanels.forget(wheel.record.id);
     this.requestLobby(wheel.record.guildId);
-    const channelId = wheel.record.threadId ?? wheel.record.channelId;
-    if (!channelId || !wheel.record.messageId) return;
-    try {
-      const channel = await this.client.channels.fetch(channelId);
-      if (!channel?.isTextBased()) return;
-      await channel.messages.edit(
-        wheel.record.messageId,
-        editOptions({ components: [container(COLORS.charcoal, [text('## 🎡 Roulette — closed\n-# The wheel closed after a quiet spell. Open it again from the casino.')])] }),
-      );
-      if (channel.isThread()) await channel.setArchived(true).catch(() => undefined);
-    } catch {
-      // Best effort.
-    }
+    await this.wheelPanels.retire(wheel.record.id);
+    await this.closePanel({ ...wheel.record, name: 'Roulette' }, 'closed after inactivity');
   }
 
   async coinflipScreen(challengeId: string, options: { flipping?: boolean; animate?: boolean } = {}): Promise<Screen | null> {

@@ -24,7 +24,7 @@ describe('animated GIFs', () => {
     h = new CasinoHarness({ allowThreads: true, animations: true });
     h.fd.recording = true;
     const [alex, hanna] = [h.user('Alex'), h.user('Hanna')];
-    await h.click(alex, h.seen(await h.slash(alex, 'casino')), 'Play Blackjack');
+    await h.openBlackjack(alex);
     const tableId = h.app.blackjack.tableOfUser(h.guildId, alex.id)!.record.id;
     const panelId = h.tablePanel(tableId).id;
     await h.app.blackjack.debugSetShoe(tableId, ['TS', '5C', '6D', '4H', '6S', 'TD', '3C', '2H', 'KD'] as Card[]);
@@ -98,7 +98,7 @@ describe('animation timing (real timings, simulated latency)', () => {
     h.fd.recording = true;
     h.fd.latencyMs = 100;
     const alex = h.user('Alex');
-    await h.click(alex, h.seen(await h.slash(alex, 'casino')), 'Play Blackjack');
+    await h.openBlackjack(alex);
     const tableId = h.app.blackjack.tableOfUser(h.guildId, alex.id)!.record.id;
     const panelId = h.tablePanel(tableId).id;
     await h.app.blackjack.debugSetShoe(tableId, ['2S', '9C', '3D', '7H', '4C', '5H', '2C'] as Card[]);
@@ -126,7 +126,7 @@ describe('animation timing (real timings, simulated latency)', () => {
     h.fd.recording = true;
     h.fd.latencyMs = 100;
     const alex = h.user('Alex');
-    await h.click(alex, h.seen(await h.slash(alex, 'casino')), 'Play Blackjack');
+    await h.openBlackjack(alex);
     const tableId = h.app.blackjack.tableOfUser(h.guildId, alex.id)!.record.id;
     const panelId = h.tablePanel(tableId).id;
     // Alex 2+3 vs dealer 9 (7 in the hole); the hit draws a 4.
@@ -153,7 +153,7 @@ describe('animation timing (real timings, simulated latency)', () => {
     h = new CasinoHarness({ animations: true });
     h.fd.recording = true;
     const [alex, hanna] = [h.user('Alex'), h.user('Hanna')];
-    await h.click(alex, h.seen(await h.slash(alex, 'casino')), 'Play Blackjack');
+    await h.openBlackjack(alex);
     const tableId = h.app.blackjack.tableOfUser(h.guildId, alex.id)!.record.id;
     const panelId = h.tablePanel(tableId).id;
     // Dealer shows a king and holds an ace: the hand ends at the deal.
@@ -174,7 +174,7 @@ describe('My hand (private view)', () => {
   it('shows your hand with a tip, acts privately, and keeps the table panel in step', async () => {
     h = new CasinoHarness({ allowThreads: true });
     const [alex, hanna] = [h.user('Alex'), h.user('Hanna')];
-    await h.click(alex, h.seen(await h.slash(alex, 'casino')), 'Play Blackjack');
+    await h.openBlackjack(alex);
     const tableId = h.app.blackjack.tableOfUser(h.guildId, alex.id)!.record.id;
     // Alex 8,8 vs dealer 10 → basic strategy: split.
     await h.app.blackjack.debugSetShoe(tableId, ['8S', '9C', 'TD', '8H', '9H', '7C', '3D', '2S'] as Card[]);

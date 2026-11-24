@@ -36,6 +36,7 @@ export interface PanelSyncOptions<Hint> {
 
 interface Slot<Hint> {
   running: boolean;
+  retired: boolean;
   /** The hint of the job being rendered and sent right now (with its animation hold). */
   current: { hint: Hint | undefined } | null;
   pending: { hint: Hint | undefined; carriers: Carrier[] } | null;
@@ -63,9 +64,10 @@ export class PanelSync<Hint = unknown> {
   request(key: string, hint?: Hint, carrier?: Carrier): void {
     let slot = this.slots.get(key);
     if (!slot) {
-      slot = { running: false, current: null, pending: null, lastFile: null, lastSentAt: 0 };
+      slot = { running: false, retired: false, current: null, pending: null, lastFile: null, lastSentAt: 0 };
       this.slots.set(key, slot);
     }
+    if (slot.retired) return;
     if (!slot.pending) slot.pending = { hint, carriers: [] };
     else if (hint !== undefined && (slot.pending.hint === undefined || this.options.frames?.(key, hint))) slot.pending.hint = hint;
     if (carrier) {
@@ -75,8 +77,13 @@ export class PanelSync<Hint = unknown> {
     if (!slot.running) void this.run(key, slot);
   }
 
-  forget(key: string): void {
-    this.slots.delete(key);
+  async retire(key: string): Promise<void> {
+    const slot = this.slots.get(key);
+    if (!slot) return;
+    slot.retired = true;
+    slot.pending = null;
+    while (slot.running) await sleep(25);
+    if (this.slots.get(key) === slot) this.slots.delete(key);
   }
 
   /** True while a job matching ``test`` is queued for this panel or being shown (with its hold). */
@@ -107,7 +114,7 @@ export class PanelSync<Hint = unknown> {
   private async holdUnlessClicked(slot: Slot<Hint>, ms: number): Promise<boolean> {
     const until = Date.now() + ms;
     while (Date.now() < until) {
-      if (slot.pending?.carriers.length) return true;
+      if (slot.retired || slot.pending?.carriers.length) return true;
       await sleep(Math.min(40, until - Date.now()));
     }
     return Boolean(slot.pending?.carriers.length);
@@ -116,7 +123,7 @@ export class PanelSync<Hint = unknown> {
   private async run(key: string, slot: Slot<Hint>): Promise<void> {
     slot.running = true;
     try {
-      while (slot.pending) {
+      while (!slot.retired && slot.pending) {
         const job = slot.pending;
         slot.pending = null;
         slot.current = { hint: job.hint };
@@ -127,6 +134,7 @@ export class PanelSync<Hint = unknown> {
         for (let frame = 0; frame < frames && !interrupted; frame++) {
           const started = Date.now();
           const hold = await this.renderAndSend(key, slot, frame, carriers, job.hint);
+          if (slot.retired) return;
           if (hold === 'skip') break; // preserve carriers for the authoritative still
           carriers = [];
           if (hold !== undefined) {
@@ -146,6 +154,7 @@ export class PanelSync<Hint = unknown> {
           queued.carriers.unshift(...carriers);
           continue;
         }
+        if (slot.retired) return;
         await this.renderAndSend(key, slot, undefined, carriers, job.hint);
       }
     } catch (error) {
@@ -153,7 +162,7 @@ export class PanelSync<Hint = unknown> {
     } finally {
       slot.running = false;
       slot.current = null;
-      if (slot.pending) void this.run(key, slot);
+      if (!slot.retired && slot.pending) void this.run(key, slot);
     }
   }
 
@@ -176,6 +185,7 @@ export class PanelSync<Hint = unknown> {
   private async renderAndSend(key: string, slot: Slot<Hint>, frame: number | undefined, carriers: Carrier[], hint?: Hint): Promise<number | undefined | 'skip'> {
     const spacing = (this.options.minIntervalMs ?? 300) - (Date.now() - slot.lastSentAt);
     if (spacing > 0 && carriers.length === 0 && frame === undefined) await sleep(spacing);
+    if (slot.retired) return 'skip';
     let screen: Screen | null = null;
     const renderStarted = Date.now();
     try {
@@ -189,11 +199,13 @@ export class PanelSync<Hint = unknown> {
     } catch (error) {
       this.options.logger.error(`${this.options.name} render failed`, { key, error });
     }
+    if (slot.retired) return 'skip';
     const fresh = carriers.filter((c) => !c.deferred && !c.replied && Date.now() - c.createdTimestamp < CARRIER_MAX_AGE_MS);
     const chosen = screen ? fresh.at(-1) : undefined;
     for (const c of carriers) {
       if (c !== chosen && !c.deferred && !c.replied) await c.deferUpdate().catch(() => undefined);
     }
+    if (slot.retired) return 'skip';
     if (!screen) return undefined;
     const file = primaryFileName(screen);
     const reuse = file !== null && file === slot.lastFile;

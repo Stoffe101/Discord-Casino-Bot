@@ -3,7 +3,7 @@ import { cid } from './custom-id.js';
 import { ICONS } from './theme.js';
 
 export const GAMES = [
-  { id: 'blackjack', label: 'Blackjack', icon: ICONS.blackjack, description: 'Play the dealer at a shared table.', play: cid('nav', 'tables'), rules: cid('nav', 'bjrules') },
+  { id: 'blackjack', label: 'Blackjack', icon: ICONS.blackjack, description: 'Play the dealer at a shared table.', play: cid('nav', 'tables', 'blackjack'), rules: cid('nav', 'bjrules') },
   { id: 'poker', label: 'Hold’em', icon: ICONS.poker, description: 'Play no-limit Texas Hold’em with friends.', play: cid('nav', 'tables', 'poker'), rules: cid('nav', 'pkrules') },
   { id: 'roulette', label: 'Roulette', icon: ICONS.roulette, description: 'Take a spot on the shared European wheel.', play: cid('rl', 'open'), rules: cid('rl', 'help') },
   { id: 'slots', label: 'Emerald Slots', icon: ICONS.slots, description: 'Three reels and one payline on your private machine.', play: cid('nav', 'slots'), rules: cid('sl', 'pay') },

@@ -22,7 +22,7 @@ describe('blackjack animation frames', () => {
     h = new CasinoHarness({ allowThreads: true });
     h.fd.recording = true;
     const [alex, hanna] = [h.user('Alex'), h.user('Hanna')];
-    await h.click(alex, h.seen(await h.slash(alex, 'casino')), 'Play Blackjack');
+    await h.openBlackjack(alex);
     const tableId = h.app.blackjack.tableOfUser(h.guildId, alex.id)!.record.id;
     const panelId = h.tablePanel(tableId).id;
     // Alex 10+9, Hanna 10+7 · dealer 6 up, 10 hole, then draws 5 (21).
@@ -35,7 +35,7 @@ describe('blackjack animation frames', () => {
     expect(dealIndex).toBeGreaterThan(-1);
     expect(frames[dealIndex]!.buttons.map((b) => b.label)).not.toContain('Hit'); // no controls mid-deal
     expect(frames.at(-1)!.text).toContain('Alex to act');
-    expect(frames.at(-1)!.text).toContain('Hanna — 10♣ 7♠ **17**'); // every hand in the summary
+    expect(frames.at(-1)!.text).toContain('**Hanna** · 10♣  7♠ → **17**'); // every hand in the summary
     expect(frames.at(-1)!.text).toContain('dealer shows 6♦');
 
     await h.click(alex, h.tablePanel(tableId), 'Stand');
@@ -55,7 +55,7 @@ describe('blackjack animation frames', () => {
   it('marks the card that just arrived', async () => {
     h = new CasinoHarness();
     const alex = h.user('Alex');
-    await h.click(alex, h.seen(await h.slash(alex, 'casino')), 'Play Blackjack');
+    await h.openBlackjack(alex);
     const tableId = h.app.blackjack.tableOfUser(h.guildId, alex.id)!.record.id;
     await h.app.blackjack.debugSetShoe(tableId, ['5S', '9D', '4H', 'TD', '3C'] as Card[]);
     await h.click(alex, h.tablePanel(tableId), '25');
@@ -156,7 +156,7 @@ describe('animation safety', () => {
     h = new CasinoHarness();
     h.app.settings.set(h.guildId, 'blackjack.maxSeats', 7);
     const players = Array.from({ length: 7 }, (_, i) => h.user(`${'W'.repeat(28)}${i}`));
-    await h.click(players[0]!, h.seen(await h.slash(players[0]!, 'casino')), 'Play Blackjack');
+    await h.openBlackjack(players[0]!);
     const tableId = h.app.blackjack.tableOfUser(h.guildId, players[0]!.id)!.record.id;
     for (const p of players) await h.click(p, h.tablePanel(tableId), '25');
     await h.advance(ALL_IN_DEAL_DELAY_MS);

@@ -2,7 +2,7 @@ import type { CasinoApp } from '../../app/casino-app.js';
 import { chips, escapeMarkdown } from '../../core/format.js';
 import { levelInfo } from '../../domain/progression.js';
 import { cid } from '../custom-id.js';
-import { button, container, row, text, type Screen } from '../kit.js';
+import { button, container, linkButton, row, text, type Screen } from '../kit.js';
 import { COLORS, ICONS } from '../theme.js';
 
 /** Who is looking at a screen. Built by the Discord layer from the interaction. */
@@ -24,6 +24,7 @@ export const NAV = {
   leaderboard: cid('nav', 'lb', 'net', 'all', 0),
   rewards: cid('nav', 'rewards'),
   tables: cid('nav', 'tables'),
+  myTable: cid('nav', 'tables', 'mine'),
   games: cid('nav', 'games'),
   events: cid('nav', 'events'),
   help: cid('nav', 'help', 'start'),
@@ -88,4 +89,13 @@ export function casinoName(app: CasinoApp, guildId: string): string {
 /** Discord link to a channel or thread (opens it when clicked). */
 export function channelUrl(guildId: string, channelId: string, messageId?: string | null): string {
   return `https://discord.com/channels/${guildId}/${channelId}${messageId ? `/${messageId}` : ''}`;
+}
+
+/** Return to the persistent lobby from any table thread or private receipt. */
+export function returnToCasino(app: CasinoApp, guildId: string, fallbackChannelId?: string | null) {
+  const lobby = app.settings.lobby(guildId);
+  const channelId = lobby.channelId ?? fallbackChannelId;
+  return channelId
+    ? linkButton('Return to casino', channelUrl(guildId, channelId, lobby.messageId), ICONS.home)
+    : button({ id: NAV.home, label: 'Casino home', emoji: ICONS.home });
 }

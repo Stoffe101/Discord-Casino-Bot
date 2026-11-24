@@ -5,8 +5,9 @@ import { parseChipAmount } from '../core/format.js';
 import { pokerActions, type PokerAction } from '../games/poker/engine.js';
 import { intArg, parseCid } from '../ui/custom-id.js';
 import type { ModalSpec, Screen } from '../ui/kit.js';
-import { noticeScreen, type Viewer } from '../ui/screens/common.js';
+import { noticeScreen, returnToCasino, type Viewer } from '../ui/screens/common.js';
 import { joinPokerModal, openPokerModal, playerPokerScreen, pokerJoinedScreen, pokerRaiseModal } from '../ui/screens/poker.js';
+import { tablesScreen } from '../ui/screens/blackjack.js';
 import type { CasinoBot } from './bot.js';
 
 interface PokerResponses {
@@ -34,6 +35,10 @@ export class PokerInteractions {
     if (action === 'create') {
       const settings = this.app.settings.get(viewer.guildId);
       if (!settings.enabled || !settings.poker.enabled) throw new UserError('Hold’em is closed on this server.');
+      if (this.app.blackjack.tableOfUser(viewer.guildId, viewer.userId) || this.app.poker.tableOfUser(viewer.guildId, viewer.userId)) {
+        ui.arm(i);
+        return ui.show(i, tablesScreen(this.app, viewer, 'mine'));
+      }
       return ui.modal(i, openPokerModal(this.app, viewer.guildId));
     }
     const [id = '', handId = '', seq = '', value = ''] = args;
@@ -58,14 +63,16 @@ export class PokerInteractions {
     }
     if (action === 'leave') {
       await service.leave(id, viewer.userId);
-      const current = this.table(viewer, id);
-      return ui.show(i, current.state.seats.some((seat) => seat.userId === viewer.userId)
-        ? playerPokerScreen(current, viewer)
-        : noticeScreen({ title: 'Seat released', body: 'Your remaining table chips were returned to Wallet.' }));
+      const waiting = service.peek(id)?.state.seats.some((seat) => seat.userId === viewer.userId);
+      return ui.show(i, noticeScreen({
+        title: waiting ? 'Leaving after the hand' : 'Seat released',
+        body: waiting ? 'Your stack returns to Wallet when the hand settles.' : 'Your remaining table chips were returned to Wallet.',
+        buttons: [returnToCasino(this.app, viewer.guildId, table.record.channelId)],
+      }));
     }
     if (action === 'close') {
       await service.close(id, 'closed by the host', viewer.userId);
-      return ui.show(i, noticeScreen({ title: 'Table closed', body: 'Remaining stacks were returned to their wallets.' }));
+      return ui.show(i, noticeScreen({ title: 'Table closed', body: 'Remaining stacks were returned to their wallets.', buttons: [returnToCasino(this.app, viewer.guildId, table.record.channelId)] }));
     }
     if (action === 'sit') {
       if (handId !== 'in' && handId !== 'out') throw new StaleActionError('Refresh your poker controls.');

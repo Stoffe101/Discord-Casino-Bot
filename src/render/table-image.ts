@@ -12,6 +12,12 @@ import { esc, fitText, n, pill, svgDoc } from './svg.js';
 export const TABLE_W = 960;
 const DEALER_H = 262;
 const ROW_H = 236;
+const MULTIPLAYER_DEALER_H = 196;
+const MULTIPLAYER_ROW_H = 204;
+
+export function isMultiplayerLayout(view: TableView): boolean {
+  return view.seats.filter((seat) => seat.userId !== null).length >= 3;
+}
 const MARGIN = 22;
 const GAP = 14;
 
@@ -58,16 +64,15 @@ function freshGlow(x: number, y: number, w: number, h: number): string {
     `<rect x="${n(x - 2.5)}" y="${n(y - 2.5)}" width="${n(w + 5)}" height="${n(h + 5)}" rx="${n(w * 0.1)}" fill="none" stroke="#f2d78a" stroke-width="2.5"/>`;
 }
 
-function handsLayout(hands: HandView[], areaW: number): { cardW: number; offset: number; handW: number[]; gap: number } {
-  const gap = hands.length > 1 ? 12 : 0;
-  let cardW = hands.length === 1 ? (areaW >= 400 ? 100 : 84) : hands.length === 2 ? 70 : 54;
-  for (;;) {
-    const offset = cardW * 0.36;
-    const handW = hands.map((h) => cardW + Math.max(0, h.cards.length - 1) * offset);
-    const total = handW.reduce((a, b) => a + b, 0) + gap * (hands.length - 1);
-    if (total <= areaW || cardW <= 34) return { cardW, offset, handW, gap };
-    cardW -= 4;
-  }
+function handsLayout(hands: HandView[], areaW: number, compact: boolean): { cardW: number; offset: number; handW: number[]; gap: number } {
+  const gaps = Math.max(0, hands.length - 1);
+  const gap = gaps ? 9 : 0;
+  const span = hands.reduce((sum, hand) => sum + 1 + Math.max(0, hand.cards.length - 1) * 0.43, 0);
+  const preferred = hands.length <= 1 ? (compact ? 96 : 110) : hands.length === 2 ? 75 : 56;
+  const cardW = span ? Math.min(preferred, (areaW - gaps * gap) / span) : preferred;
+  const offset = cardW * 0.43;
+  const handW = hands.map((hand) => cardW + Math.max(0, hand.cards.length - 1) * offset);
+  return { cardW, offset, handW, gap };
 }
 
 export interface CardSpot {
@@ -75,18 +80,22 @@ export interface CardSpot {
   y: number;
 }
 
-/** Results show a large net badge under the hands, so leave more room at the bottom. */
+function handTop(view: TableView): number {
+  return isMultiplayerLayout(view) ? 36 : 50;
+}
+
+/** Leave room for the card total and any result or turn labels. */
 function handAreaHeight(seat: SeatView, h: number, view: TableView): number {
-  return h - 50 - (view.mode === 'results' && seat.net !== null ? 64 : 40);
+  return h - handTop(view) - (view.mode === 'results' && seat.net !== null ? 58 : 42);
 }
 
 /** Where every card of a seat's hands sits (always laid out for the full hand, even mid-animation). */
 export function seatHandLayout(seat: SeatView, x: number, y: number, w: number, h: number, view: TableView) {
-  const { cardW, offset, handW, gap } = handsLayout(seat.hands, w - 28);
+  const { cardW, offset, handW, gap } = handsLayout(seat.hands, w - 26, isMultiplayerLayout(view));
   const cardH = (cardW * CARD_H) / CARD_W;
   const totalW = handW.reduce((a, b) => a + b, 0) + gap * (seat.hands.length - 1);
-  const areaTop = y + 50;
-  const cy = areaTop + (handAreaHeight(seat, h, view) - cardH) / 2;
+  const areaTop = y + handTop(view);
+  const cy = areaTop + Math.max(0, (handAreaHeight(seat, h, view) - cardH) / 2);
   let hx = x + (w - totalW) / 2;
   const hands = seat.hands.map((hand, i) => {
     const spot = { x: hx, y: cy, width: handW[i]!, cards: hand.cards.map((_, c) => ({ x: hx + c * offset, y: cy })) };
@@ -114,18 +123,21 @@ function seatPanel(seat: SeatView, x: number, y: number, w: number, h: number, v
   parts.push(
     `<text x="${n(x + 22)}" y="${n(y + 29)}" text-anchor="middle" font-family="Manrope" font-weight="800" font-size="13" fill="${seat.active ? '#1d1405' : '#e8d9a8'}">${seat.seatIndex + 1}</text>`,
   );
-  const name = fitText(fontSafe(seat.name), 19, w - (seat.bet ? 140 : 60));
+  const name = fitText(fontSafe(seat.name), 21, w - (seat.bet ? 129 : 60));
   parts.push(
-    `<text x="${n(x + 42)}" y="${n(y + 31)}" font-family="Manrope" font-weight="800" font-size="19" fill="${occupied ? '#f6f1e3' : '#8fae9f'}">${esc(name)}</text>`,
+    `<text x="${n(x + 42)}" y="${n(y + 31)}" font-family="Manrope" font-weight="800" font-size="21" fill="${occupied ? '#f6f1e3' : '#8fae9f'}">${esc(name)}</text>`,
   );
-  if (seat.bet) {
+  const compactResult = isMultiplayerLayout(view) && view.mode === 'results' && seat.net !== null;
+  if (compactResult && seat.status) {
+    parts.push(badge(seat.status, x + w - 13, y + 25, 16, 'end'));
+  } else if (seat.bet) {
     const label = seat.bet.toLocaleString('en-US');
     parts.push(chip(x + w - 26, y + 24, 12, seat.bet));
     parts.push(
       `<text x="${n(x + w - 44)}" y="${n(y + 30)}" text-anchor="end" font-family="Manrope" font-weight="800" font-size="17" fill="#e8c565">${esc(label)}</text>`,
     );
   }
-  const areaTop = y + 50;
+  const areaTop = y + handTop(view);
   const areaH = handAreaHeight(seat, h, view);
   if (seat.hands.length > 0) {
     const layout = seatHandLayout(seat, x, y, w, h, view);
@@ -175,21 +187,21 @@ function seatPanel(seat: SeatView, x: number, y: number, w: number, h: number, v
       `<text x="${n(x + w / 2)}" y="${n(areaTop + areaH / 2 + 6)}" text-anchor="middle" font-family="Cinzel" font-weight="700" font-size="16" fill="rgba(232,217,168,0.45)" letter-spacing="3">OPEN SEAT</text>`,
     );
   }
-  if (seat.status) {
+  if (seat.status && !(isMultiplayerLayout(view) && seat.hands.length)) {
     const isNet = view.mode === 'results' && seat.net !== null;
-    parts.push(badge(seat.status, x + w / 2, y + h - (isNet ? 19 : 18), isNet ? 16 : 13));
+    parts.push(badge(seat.status, x + w / 2, y + h - 16, isNet ? 16 : 13));
   }
   void view;
   return parts.join('');
 }
 
 /** Where the dealer's cards sit, centred for the full hand. */
-export function dealerLayout(count: number): { cardW: number; cardH: number; cards: CardSpot[] } {
-  const cardW = 96;
-  const offset = 46;
+export function dealerLayout(count: number, compact = false): { cardW: number; cardH: number; cards: CardSpot[] } {
+  const cardW = compact ? 84 : 96;
+  const offset = compact ? 40 : 46;
   const totalW = cardW + Math.max(0, count - 1) * offset;
   const startX = TABLE_W / 2 - totalW / 2;
-  return { cardW, cardH: (cardW * CARD_H) / CARD_W, cards: Array.from({ length: count }, (_, i) => ({ x: startX + i * offset, y: 50 })) };
+  return { cardW, cardH: (cardW * CARD_H) / CARD_W, cards: Array.from({ length: count }, (_, i) => ({ x: startX + i * offset, y: compact ? 42 : 50 })) };
 }
 
 /** The card shoe (where dealt cards come from) and the dealer's chip tray (where lost bets go). */
@@ -200,8 +212,10 @@ export const TRAY = { x: TABLE_W / 2 - 200, y: 112 };
 export function seatRects(view: TableView): Array<{ x: number; y: number; w: number; h: number } | undefined> {
   const occupants = view.seats.filter((seat) => seat.userId !== null);
   const visible = occupants.length ? occupants : view.seats.slice(0, 1);
-  const perRow = visible.length <= 3 ? visible.length : visible.length === 4 ? 2 : visible.length <= 6 ? 3 : 4;
-  const rowHeight = visible.length <= 2 ? ROW_H + 36 : ROW_H;
+  const compact = isMultiplayerLayout(view);
+  const perRow = visible.length <= 4 ? visible.length : visible.length <= 6 ? 3 : 4;
+  const rowHeight = compact ? MULTIPLAYER_ROW_H : ROW_H + 36;
+  const dealerHeight = compact ? MULTIPLAYER_DEALER_H : DEALER_H;
   const panelW = Math.min(620, (TABLE_W - MARGIN * 2 - GAP * (perRow - 1)) / perRow);
   const rects: ReturnType<typeof seatRects> = [];
   for (const [i, seat] of visible.entries()) {
@@ -210,7 +224,7 @@ export function seatRects(view: TableView): Array<{ x: number; y: number; w: num
     const rowW = count * panelW + (count - 1) * GAP;
     rects[seat.seatIndex] = {
       x: (TABLE_W - rowW) / 2 + (i % perRow) * (panelW + GAP),
-      y: DEALER_H + row * (rowHeight + GAP), w: panelW, h: rowHeight,
+      y: dealerHeight + row * (rowHeight + GAP), w: panelW, h: rowHeight,
     };
   }
   return rects;
@@ -218,12 +232,13 @@ export function seatRects(view: TableView): Array<{ x: number; y: number; w: num
 
 function dealerArea(view: TableView): string {
   const parts: string[] = [];
-  const cardW = 96;
-  const cardH = (cardW * CARD_H) / CARD_W;
+  const compact = isMultiplayerLayout(view);
   const cards = view.dealer.cards;
-  const cy = 50;
+  const spots = dealerLayout(cards.length, compact);
+  const { cardW, cardH } = spots;
+  const cy = compact ? 42 : 50;
   parts.push(
-    `<text x="${TABLE_W / 2}" y="40" text-anchor="middle" font-family="Cinzel" font-weight="900" font-size="20" fill="#e8c565" letter-spacing="6">DEALER</text>`,
+    `<text x="${TABLE_W / 2}" y="33" text-anchor="middle" font-family="Cinzel" font-weight="900" font-size="20" fill="#e8c565" letter-spacing="6">DEALER</text>`,
   );
   if (cards.length === 0) {
     const message = view.mode === 'betting' ? 'BETS ARE OPEN' : view.mode === 'dealing' ? 'DEALING' : 'PLACE YOUR BETS';
@@ -234,7 +249,6 @@ function dealerArea(view: TableView): string {
       `<text x="${TABLE_W / 2}" y="${cy + cardH / 2 + 36}" text-anchor="middle" font-family="Manrope" font-weight="700" font-size="16" fill="rgba(232,217,168,0.8)" letter-spacing="1">${esc(`Bets ${view.minBet.toLocaleString('en-US')} – ${view.maxBet.toLocaleString('en-US')}`)}</text>`,
     );
   } else {
-    const spots = dealerLayout(cards.length);
     const shown = view.dealer.visible ?? cards.length;
     cards.slice(0, shown).forEach((card, i) => {
       const at = spots.cards[i]!;
@@ -264,6 +278,7 @@ function shoeDecor(view: TableView): string {
 export function renderTableSvg(view: TableView, overlay = ''): string {
   const felt = FELTS[view.feltId] ?? FELTS.emerald!;
   const rects = seatRects(view);
+  const compact = isMultiplayerLayout(view);
   const height = rects.reduce((last, rect) => Math.max(last, rect ? rect.y + rect.h : 0), DEALER_H) + MARGIN;
   const defs =
     cardDefs() +
@@ -275,16 +290,18 @@ export function renderTableSvg(view: TableView, overlay = ''): string {
   // Padded rail and gold pinstripe.
   parts.push(`<rect x="5" y="5" width="${TABLE_W - 10}" height="${height - 10}" rx="26" fill="none" stroke="${felt.rail}" stroke-width="10"/>`);
   parts.push(`<rect x="13" y="13" width="${TABLE_W - 26}" height="${height - 26}" rx="20" fill="none" stroke="${felt.line}" stroke-opacity="0.55" stroke-width="1.5"/>`);
-  parts.push(
-    `<text font-family="Cinzel" font-weight="700" font-size="13" fill="${felt.line}" fill-opacity="0.75" letter-spacing="2.5"><textPath href="#arc" startOffset="50%" text-anchor="middle">${esc(view.rulesArc)}</textPath></text>`,
-  );
-  parts.push(
-    `<text x="34" y="${DEALER_H - 14}" font-family="Cinzel" font-weight="900" font-size="15" fill="${felt.line}" fill-opacity="0.85" letter-spacing="3">${esc(fitText(fontSafe(view.name, 'TABLE').toUpperCase(), 15, 300, 'display'))}</text>`,
-  );
-  if (view.roundNumber > 0) {
+  if (!compact) {
     parts.push(
-      `<text x="${TABLE_W - 34}" y="${DEALER_H - 14}" text-anchor="end" font-family="Cinzel" font-weight="900" font-size="15" fill="${felt.line}" fill-opacity="0.85" letter-spacing="3">HAND ${view.roundNumber}</text>`,
+      `<text font-family="Cinzel" font-weight="700" font-size="13" fill="${felt.line}" fill-opacity="0.75" letter-spacing="2.5"><textPath href="#arc" startOffset="50%" text-anchor="middle">${esc(view.rulesArc)}</textPath></text>`,
     );
+    parts.push(
+      `<text x="34" y="${DEALER_H - 14}" font-family="Cinzel" font-weight="900" font-size="15" fill="${felt.line}" fill-opacity="0.85" letter-spacing="3">${esc(fitText(fontSafe(view.name, 'TABLE').toUpperCase(), 15, 300, 'display'))}</text>`,
+    );
+    if (view.roundNumber > 0) {
+      parts.push(
+        `<text x="${TABLE_W - 34}" y="${DEALER_H - 14}" text-anchor="end" font-family="Cinzel" font-weight="900" font-size="15" fill="${felt.line}" fill-opacity="0.85" letter-spacing="3">HAND ${view.roundNumber}</text>`,
+      );
+    }
   }
   parts.push(shoeDecor(view));
   parts.push(dealerArea(view));

@@ -16,15 +16,16 @@ describe('full-stack harness smoke test', () => {
     const home = h.seen(rec)!;
     expect(home.forUser).toBe(alice.id);
     expect(h.text(home)).toContain('Alice');
-    expect(h.enabled(home)).toContain('Play Blackjack');
+    expect(h.enabled(home)).toContain('My table');
+    expect(h.enabled(home)).not.toContain('Play Blackjack');
     expect(h.fd.problems).toEqual([]);
   });
 
-  it('quick seat opens a table panel in #casino (threads are disabled in test mode)', async () => {
+  it('opens Blackjack from the Games screen in #casino (threads are disabled in test mode)', async () => {
     h = new CasinoHarness();
     const alice = h.user('Alice');
     const home = h.seen(await h.slash(alice, 'casino'));
-    const rec = await h.click(alice, home, 'Play Blackjack');
+    const rec = await h.openBlackjack(alice, home);
     expect(rec.errors).toEqual([]);
     const tables = h.app.blackjack.allOpenTables();
     expect(tables).toHaveLength(1);

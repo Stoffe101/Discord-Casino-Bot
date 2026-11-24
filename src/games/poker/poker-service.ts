@@ -291,22 +291,27 @@ export class PokerTableService {
     db.run("UPDATE game_tables SET status = 'closed', closed_at = ?, state_json = '{}' WHERE id = ?", [clock.now(), id]);
   }
 
+  private isIdle(table: PokerSnapshot, now: number): boolean {
+    if (table.state.hand) return false;
+    const { idleMinutes, idleEmptyMinutes } = this.deps.settings(table.record.guildId).tables;
+    const limit = table.state.seats.length ? idleMinutes : idleEmptyMinutes;
+    return now - table.record.lastActivityAt >= limit * 60_000;
+  }
+
   async sweepIdle(): Promise<void> {
     const now = this.deps.clock.now();
     for (const table of this.openTables()) {
-      const minutes = this.deps.settings(table.record.guildId).tables.idleMinutes;
-      if (!table.state.hand && now - table.record.lastActivityAt >= minutes * 60_000) {
-        // The queue rechecks the snapshot so an interaction arriving first wins.
-        void this.queue.run(table.record.id, () => {
-          const current = this.peek(table.record.id);
-          if (current?.record.version === table.record.version && !current.state.hand) {
-            this.deps.db.transaction(() => this.refundAndClose(table.record.guildId, table.record.id, 'closed after inactivity'));
-            this.tables.delete(table.record.id);
-            this.deps.scheduler.clear('poker:' + table.record.id);
-            this.observer.closed(table, 'closed after inactivity');
-          }
-        }).catch(() => this.deps.logger.warn('Poker idle close failed', { tableId: table.record.id }));
-      }
+      if (!this.isIdle(table, now)) continue;
+      const { id } = table.record;
+      await this.queue.run(id, () => {
+        const current = this.tables.get(id);
+        if (!current || !this.isIdle(current, now)) return;
+        const reason = 'closed after inactivity';
+        this.deps.db.transaction(() => this.refundAndClose(current.record.guildId, id, reason));
+        this.tables.delete(id);
+        this.deps.scheduler.clear('poker:' + id);
+        this.observer.closed(current, reason);
+      }).catch(() => this.deps.logger.warn('Poker idle close failed', { tableId: id }));
     }
   }
 

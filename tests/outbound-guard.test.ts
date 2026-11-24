@@ -186,7 +186,7 @@ describe('OutboundGuard inside the running bot (full stack)', () => {
     const path = `${process.env.TEMP ?? '/tmp'}/casino-guard-${Date.now()}-${Math.random().toString(36).slice(2)}.db`;
     const before = new CasinoHarness({ guard: false, dbPath: path });
     const alice = before.user('Alice');
-    await before.click(alice, before.seen(await before.slash(alice, 'casino')), 'Play Blackjack');
+    await before.openBlackjack(alice);
     const tableId = before.app.blackjack.allOpenTables()[0]!.record.id;
     const threadId = before.app.blackjack.peek(tableId)!.record.threadId;
     expect(threadId).not.toBeNull();
@@ -208,7 +208,7 @@ describe('OutboundGuard inside the running bot (full stack)', () => {
     const admin = h.user('Admin', true);
     await h.slash(admin, 'casinoadmin', { subcommand: 'setup' });
     const alice = h.user('Alice');
-    await h.click(alice, h.seen(await h.slash(alice, 'casino')), 'Play Blackjack');
+    await h.openBlackjack(alice);
     const tableId = h.app.blackjack.allOpenTables()[0]!.record.id;
     await h.click(alice, h.tablePanel(tableId), /^25$|25/);
     await h.advance(60_000); // betting window → deal → turn timer → auto-stand → settle

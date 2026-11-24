@@ -80,7 +80,7 @@ export const DEFAULT_SETTINGS: GuildSettings = {
     maxBet: 500,
     maxSeats: 5,
     turnSeconds: 30,
-    bettingSeconds: 20,
+    bettingSeconds: 12,
     insuranceSeconds: 12,
     decks: 6,
     dealerHitsSoft17: false,
@@ -96,8 +96,8 @@ export const DEFAULT_SETTINGS: GuildSettings = {
   tables: {
     maxTables: 6,
     useThreads: true,
-    idleEmptyMinutes: 10,
-    idleMinutes: 30,
+    idleEmptyMinutes: 3,
+    idleMinutes: 5,
   },
   coinflip: { enabled: true, minBet: 10, maxBet: 1000, expirySeconds: 120 },
   roulette: { enabled: true, minBet: 10, maxBet: 500, bettingSeconds: 25, minimumReadySeconds: 8 },
@@ -171,7 +171,7 @@ export const SETTING_SPECS: readonly SettingSpec[] = [
   { key: 'tables.maxTables', group: 'tables', label: 'Max open tables', help: 'Across all games', type: 'int', min: 1, max: 25 },
   { key: 'tables.useThreads', group: 'tables', label: 'Use table threads', help: 'Off = post tables in the casino channel', type: 'bool' },
   { key: 'tables.idleEmptyMinutes', group: 'tables', label: 'Close empty tables after (min)', help: 'Tables with nobody seated', type: 'int', min: 2, max: 1440 },
-  { key: 'tables.idleMinutes', group: 'tables', label: 'Close idle tables after (min)', help: 'No bets placed in this long', type: 'int', min: 5, max: 1440 },
+  { key: 'tables.idleMinutes', group: 'tables', label: 'Close idle tables after (min)', help: 'Closes between hands after this much inactivity', type: 'int', min: 5, max: 1440 },
 
   { key: 'coinflip.enabled', group: 'games', label: 'Coinflip duels', help: 'Player-vs-player flips', type: 'bool' },
   { key: 'coinflip.minBet', group: 'games', label: 'Coinflip min', help: 'Minimum duel stake', type: 'int', min: 1, max: 1_000_000 },

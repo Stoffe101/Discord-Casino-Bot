@@ -20,6 +20,50 @@ describe('casino navigation', () => {
     }
   });
 
+  it('opens game-specific screens and keeps Home and My table free of quick seating', async () => {
+    h = new CasinoHarness({ allowThreads: true });
+    await h.boot();
+    h.app.settings.set(h.guildId, 'poker.enabled', true);
+    const user = h.user('Player');
+    const home = h.seen(await h.slash(user, 'casino'))!;
+    expect(h.enabled(home)).not.toContain('Quick seat');
+    expect(h.enabled(home)).not.toContain('Play Blackjack');
+    await h.click(user, home, 'My table');
+    expect(h.text(home)).toContain('You don’t have a seat');
+
+    await h.click(user, home, 'Games');
+    await h.click(user, home, 'Hold’em tables');
+    expect(h.text(home)).toContain('Hold’em tables');
+    expect(h.buttons(home).map((button) => button.label)).not.toContain('Open Blackjack');
+    expect(h.buttons(home).map((button) => button.label)).not.toContain('Quick seat');
+    const modal = await h.click(user, home, 'Open Hold’em');
+    await h.submit(user, modal, { buyin: '100', visibility: 'public', seats: '6' });
+    const poker = h.app.poker.tableOfUser(h.guildId, user.id)!;
+    expect(poker.record.threadId).toBeTruthy();
+    expect(h.app.blackjack.tableOfUser(h.guildId, user.id)).toBeUndefined();
+
+    await h.click(user, home, 'Home');
+    await h.click(user, home, 'My table');
+    expect(h.buttons(home).some((button) => button.url?.endsWith('/' + poker.record.threadId))).toBe(true);
+    await h.click(user, home, 'Games');
+    await h.click(user, home, 'Blackjack tables');
+    expect(h.text(home)).toContain('You already have a seat in Hold’em');
+    expect(h.enabled(home)).not.toContain('Open Blackjack');
+    expect(h.buttons(home).map((button) => button.label)).not.toContain('Open Hold’em');
+
+    await h.click(user, home, 'Games');
+    await h.click(user, home, 'Play slots');
+    expect(h.text(home)).toMatch(/Slots/);
+    await h.click(user, home, 'Games');
+    await h.click(user, home, 'Choose opponent');
+    expect(h.text(home)).toContain('Pick a friend');
+    await h.click(user, home, 'Games');
+    const roulette = h.seen(await h.click(user, home, 'Open the wheel'))!;
+    expect(h.text(roulette)).toContain('The wheel is ready');
+    expect(h.fd.channelMessages(h.casino)).toHaveLength(1);
+    expect(h.guard!.blockedCount).toBe(0);
+  });
+
   it('returns to the exact weekly leaderboard page after a profile visit', async () => {
     h = new CasinoHarness();
     const viewer = h.user('Viewer');

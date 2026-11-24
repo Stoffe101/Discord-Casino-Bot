@@ -152,7 +152,7 @@ describe('BlackjackTableService', () => {
       const t = await seatPlayers(h, 2);
       await h.tables.placeBet(t, u(1), 50);
       const first = h.tables.peek(t)!.state.deadline!;
-      expect(first).toBe(h.clock.now() + 20_000);
+      expect(first).toBe(h.clock.now() + 12_000);
       await h.tables.placeBet(t, u(2), 50);
       expect(h.tables.peek(t)!.state.deadline).toBe(h.clock.now() + ALL_IN_DEAL_DELAY_MS);
       await h.tick(ALL_IN_DEAL_DELAY_MS);

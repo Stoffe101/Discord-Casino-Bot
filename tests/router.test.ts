@@ -235,9 +235,9 @@ describe('InteractionRouter (headless)', () => {
     expect(kinds(custom.calls)).toEqual(['showModal']);
     const create = await run({ kind: 'button', user: 2, customId: 'tbl:create' });
     expect(kinds(create.calls)).toEqual(['showModal']);
-    // Someone already seated is told to leave first instead.
+    // Someone already seated can recover their existing table.
     const blocked = await run({ kind: 'button', user: 1, customId: 'tbl:create' });
-    expect(textOf(blocked.calls[0])).toContain('already seated');
+    expect(textOf(blocked.calls[0])).toContain('My table');
   });
 
   it('custom bet modal places the bet and validates numbers', async () => {

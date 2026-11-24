@@ -3,7 +3,7 @@ import type { TableView } from '../tables/table-view.js';
 import { cardBack, cardFace } from './cards.js';
 import type { GifFrame } from './gif.js';
 import { n } from './svg.js';
-import { SHOE, TRAY, chip, dealerLayout, renderTableSvg, seatHandLayout, seatRects } from './table-image.js';
+import { SHOE, TRAY, chip, dealerLayout, renderTableSvg, isMultiplayerLayout, seatHandLayout, seatRects } from './table-image.js';
 
 /**
  * Card and chip motion for the blackjack table, as GIF frames.
@@ -45,7 +45,7 @@ interface Spot {
 
 function locate(view: TableView, to: CardTarget): Spot | null {
   if ('dealer' in to) {
-    const layout = dealerLayout(view.dealer.cards.length);
+    const layout = dealerLayout(view.dealer.cards.length, isMultiplayerLayout(view));
     const at = layout.cards[to.dealer];
     return at ? { x: at.x, y: at.y, w: layout.cardW, card: view.dealer.cards[to.dealer] ?? null } : null;
   }

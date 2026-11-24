@@ -23,7 +23,8 @@ it('runs a public Hold’em table inside Discord, with private actions and refun
   const alice = h.user('Alice');
   const bob = h.user('Bob');
   const home = h.seen(await h.slash(alice, 'casino'))!;
-  const browser = h.seen(await h.click(alice, home, 'Browse tables'))!;
+  const games = h.seen(await h.click(alice, home, 'Games'))!;
+  const browser = h.seen(await h.click(alice, games, 'Hold’em tables'))!;
   const creation = await h.click(alice, browser, 'Open Hold’em');
   const opened = await h.submit(alice, creation, { name: 'Green Room', visibility: ['public'], seats: '6', buyin: '200' });
   expect(h.text(h.seen(opened))).toContain('seated');

@@ -113,7 +113,7 @@ describe('UI payloads', () => {
       auditScreen(app, GUILD),
       adminTablesScreen(app, GUILD),
       await lobbyScreen(app, GUILD),
-      closedTablePanel('Table 01', 'idle'),
+      closedTablePanel(app, { guildId: GUILD, channelId: null, name: 'Table 01' }, 'idle'),
     ];
     for (const s of screens) expectValid(s);
   });

@@ -92,7 +92,8 @@ describe('UI regressions from live testing', () => {
   });
 
   it('closed tables read naturally', () => {
-    expect(textOf(closedTablePanel('Table 01', 'empty table'))).toContain('Empty table. Any open bets were refunded.');
+    const { app } = makeApp();
+    expect(textOf(closedTablePanel(app, { guildId: G, channelId: null, name: 'Table 01' }, 'empty table'))).toContain('Empty table. Remaining chips were returned to Wallet.');
   });
 
   it('profile: singular/plural counts', async () => {

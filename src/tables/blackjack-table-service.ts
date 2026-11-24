@@ -46,7 +46,7 @@ import type {
 /** Extra time after a visible turn deadline before the timeout fires (network latency). */
 export const TURN_GRACE_MS = 2_000;
 /** When every seated player has bet, the deal happens this soon (lets people change their bet). */
-export const ALL_IN_DEAL_DELAY_MS = 3_000;
+export const ALL_IN_DEAL_DELAY_MS = 1_500;
 /** Consecutive timeouts before a player is automatically sat out. */
 export const TIMEOUTS_BEFORE_SIT_OUT = 2;
 /** Consecutive hands dealt without this player betting before they are sat out. */
@@ -338,11 +338,12 @@ export class BlackjackTableService {
    * Close a table. Allowed between rounds; `force` (admins, unrecoverable errors) also voids a
    * round in progress, refunding every stake atomically.
    */
-  async closeTable(tableId: string, reason: string, options: { force?: boolean; actorId?: string } = {}): Promise<void> {
+  async closeTable(tableId: string, reason: string, options: { force?: boolean; actorId?: string; idleAsOf?: number } = {}): Promise<void> {
     await this.queue.run(tableId, () => {
       const rt = this.tables.get(tableId);
       if (!rt) return;
       const { record, state } = rt;
+      if (options.idleAsOf !== undefined && !this.idleReason(record, state, options.idleAsOf)) return;
       if (options.actorId && options.actorId !== record.ownerId && !options.force) {
         throw new UserError('Only the table host can close this table.', 'not_host');
       }
@@ -635,22 +636,27 @@ export class BlackjackTableService {
     }
   }
 
-  /** Close tables that have been idle too long (never while a round is in progress). */
+  private idleReason(record: TableRecord, state: BlackjackTableState, now: number): string | undefined {
+    if (state.phase !== 'betting' || Object.keys(state.bets).length > 0) return;
+    const { idleEmptyMinutes, idleMinutes } = this.settings(record.guildId).tables;
+    const empty = state.seats.length === 0;
+    if (now - record.lastActivityAt >= (empty ? idleEmptyMinutes : idleMinutes) * 60_000) {
+      return empty ? 'empty table' : 'closed after inactivity';
+    }
+  }
+
+  /** Close idle tables without racing a queued wager or a seating change. */
   async sweepIdle(): Promise<string[]> {
     const closed: string[] = [];
     const now = this.clock.now();
     for (const { record, state } of this.allOpenTables()) {
-      if (state.phase !== 'betting' || Object.keys(state.bets).length > 0) continue;
-      const { idleEmptyMinutes, idleMinutes } = this.settings(record.guildId).tables;
-      const idleFor = now - record.lastActivityAt;
-      const limit = (state.seats.length === 0 ? idleEmptyMinutes : idleMinutes) * 60_000;
-      if (idleFor >= limit) {
-        try {
-          await this.closeTable(record.id, state.seats.length === 0 ? 'empty table' : 'no bets for a while');
-          closed.push(record.id);
-        } catch (error) {
-          this.logger.warn('idle close failed', { tableId: record.id, error });
-        }
+      const reason = this.idleReason(record, state, now);
+      if (!reason) continue;
+      try {
+        await this.closeTable(record.id, reason, { idleAsOf: now });
+        if (!this.tables.has(record.id)) closed.push(record.id);
+      } catch (error) {
+        this.logger.warn('idle close failed', { tableId: record.id, error });
       }
     }
     return closed;

@@ -4,7 +4,7 @@ import { casinoArtwork } from '../../render/casino-art.js';
 import { gallery, type Screen } from '../kit.js';
 
 /** Supply the illustration and its reference together, including on a renderer failure. */
-export async function dashboardArt(kind: 'home' | 'wallet' | 'games' | 'games-holdem') {
+export async function dashboardArt(kind: 'home' | 'wallet') {
   const file = await casinoArtwork(kind);
   return {
     files: file ? [file] : undefined,

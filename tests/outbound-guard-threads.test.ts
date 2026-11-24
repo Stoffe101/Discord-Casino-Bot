@@ -159,7 +159,7 @@ describe('table threads in test mode (full stack)', () => {
   it('creates the table thread under #casino, plays inside it and archives it on close', async () => {
     h = new CasinoHarness({ allowThreads: true });
     const [alice, bob] = [h.user('Alice'), h.user('Bob')];
-    await h.click(alice, h.seen(await h.slash(alice, 'casino')), 'Play Blackjack');
+    await h.openBlackjack(alice);
     const record = h.app.blackjack.tableOfUser(h.guildId, alice.id)!.record;
     const thread = h.fd.channels.get(record.threadId!)!;
     expect(thread.parentId).toBe(h.casino);
@@ -175,7 +175,7 @@ describe('table threads in test mode (full stack)', () => {
     await h.app.blackjack.clearBet(record.id, bob.id);
     await h.app.blackjack.closeTable(record.id, 'closed by the host', { actorId: alice.id });
     await h.settle();
-    expect(h.text(h.fd.messages.get(record.messageId!)!)).toContain('closed');
+    expect(h.text(h.fd.messages.get(record.messageId!)!)).toContain('Closed');
     expect(thread.locked).toBe(true);
     expect(thread.archived).toBe(true);
     expect(h.guard!.blockedCount).toBe(0);
@@ -185,8 +185,8 @@ describe('table threads in test mode (full stack)', () => {
   it('private tables use a private #casino thread and add the joining player', async () => {
     h = new CasinoHarness({ allowThreads: true });
     const [host, guest] = [h.user('Host'), h.user('Guest')];
-    const tables = h.seen(await h.click(host, h.seen(await h.slash(host, 'casino')), 'Browse tables'));
-    const opener = await h.click(host, tables, 'Open a table');
+    const tables = h.seen(await h.slash(host, 'blackjack'));
+    const opener = await h.click(host, tables, 'Open Blackjack');
     await h.submit(host, opener, { visibility: 'private' });
     const record = h.app.blackjack.tableOfUser(h.guildId, host.id)!.record;
     expect(h.fd.channels.get(record.threadId!)?.type).toBe(12);
@@ -210,8 +210,8 @@ describe('table threads in test mode (full stack)', () => {
     h = new CasinoHarness({ allowThreads: true });
     for (let i = 0; i < 3; i++) {
       const host = h.user(`Host${i}`);
-      const tables = h.seen(await h.click(host, h.seen(await h.slash(host, 'casino')), 'Browse tables'));
-      const opener = await h.click(host, tables, 'Open a table');
+      const tables = h.seen(await h.slash(host, 'blackjack'));
+      const opener = await h.click(host, tables, 'Open Blackjack');
       await h.submit(host, opener, { visibility: 'public' });
     }
     const open = h.app.blackjack.allOpenTables();

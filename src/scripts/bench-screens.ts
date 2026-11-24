@@ -154,7 +154,7 @@ export async function buildScreens(guildId: string, channelId: string): Promise<
   await add('admin-tables', adminTablesScreen(app, guildId));
   await add('notice', noticeScreen({ title: 'Bet placed', body: 'You have **150** chips on the table.', tone: 'success' }));
   await add('error', errorScreen('Something went wrong', "That didn't work — sorry about that. Nothing was charged."));
-  await add('closed-table', closedTablePanel('The Velvet Rope', 'the host closed the table'));
+  await add('closed-table', closedTablePanel(app, { guildId, channelId, name: 'The Velvet Rope' }, 'the host closed the table'));
   await app.shutdown();
   app.settings.set(guildId, 'poker.enabled', true);
   await add('games-with-poker', gamesHubScreen(app, viewer));

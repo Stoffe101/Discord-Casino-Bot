@@ -22,12 +22,13 @@ import {
   separator,
   text,
   textInputLabel,
+  thumbnail,
   userSelect,
   type ModalSpec,
   type Screen,
 } from '../kit.js';
 import { COLORS, ICONS } from '../theme.js';
-import { dashboardArt } from './dashboard.js';
+import { casinoArtwork } from '../../render/casino-art.js';
 import { NAV, navRow, type Viewer } from './common.js';
 
 /** Extra time after a GIF's own length, so clients that load it a moment late still see it end. */
@@ -47,36 +48,44 @@ export async function gamesHubScreen(app: CasinoApp, viewer: Viewer): Promise<Sc
   const tables = app.blackjack.openTables(viewer.guildId);
   const tableCount = tables.length;
   const seated = tables.reduce((count, table) => count + table.state.seats.length, 0);
-  const art = await dashboardArt(settings.poker.enabled ? 'games-holdem' : 'games');
   const games = GAMES.filter((game) => game.id !== 'poker' || settings.poker.enabled);
   const availability = {
-    poker: `${app.poker.openTables(viewer.guildId).length} open tables · blinds ${chips(settings.poker.smallBlind)}/${chips(settings.poker.bigBlind)}`,
-    blackjack: `${tableCount} open ${tableCount === 1 ? 'table' : 'tables'} · ${seated} seated`,
-    roulette: app.roulette.wheelFor(viewer.guildId) ? 'Wheel open' : 'Open a shared wheel',
-    slots: `${(exactReturnToPlayer().rtp * 100).toFixed(1)}% theoretical return`,
+    poker: 'Blinds ' + chips(settings.poker.smallBlind) + '/' + chips(settings.poker.bigBlind) + ' · '
+      + app.poker.openTables(viewer.guildId).length + ' open',
+    blackjack: tableCount + ' open · ' + seated + ' seated',
+    roulette: app.roulette.wheelFor(viewer.guildId) ? 'Wheel open' : 'Shared wheel',
+    slots: (exactReturnToPlayer().rtp * 100).toFixed(1) + '% theoretical return',
     coinflip: 'Two players',
   };
+  const labels = {
+    blackjack: 'Blackjack tables', poker: 'Hold’em tables', roulette: 'Open the wheel', slots: 'Play slots', coinflip: 'Choose opponent',
+  };
+  const cards = await Promise.all(games.map(async (game) => {
+    const artwork = await casinoArtwork(game.id);
+    const enabled = gameEnabled(settings, game.id);
+    const range = game.id === 'poker'
+      ? 'Buy-in ' + chips(settings.poker.minBuyIn) + '–' + chips(settings.poker.maxBuyIn)
+      : chips(settings[game.id].minBet) + '–' + chips(settings[game.id].maxBet) + ' chips';
+    const details = '### ' + game.label + '\n' + game.description + '\n' + (enabled ? availability[game.id] + ' · ' + range : 'Closed');
+    return {
+      artwork,
+      components: [
+        artwork ? section([details], thumbnail('attachment://' + artwork.name, artwork.description)) : text(details),
+        row(
+          button({ id: game.play, label: labels[game.id], emoji: game.icon, tone: 'primary', disabled: !enabled }),
+          button({ id: game.rules, label: (game.id === 'slots' ? 'Slots' : game.label) + ' rules', emoji: ICONS.help }),
+        ),
+      ],
+    };
+  }));
+  const tablesOnly = settings.poker.enabled ? 2 : 1;
   return {
-    files: art.files,
+    files: cards.flatMap(({ artwork }) => artwork ? [artwork] : []),
     components: [
-      container(COLORS.emerald, [
-        navRow('games'),
-        art.component,
-        text('## The gaming floor'),
-        ...games.flatMap((game) => {
-          const enabled = gameEnabled(settings, game.id);
-          const range = game.id === 'poker'
-            ? `Buy-in ${chips(settings.poker.minBuyIn)}–${chips(settings.poker.maxBuyIn)}`
-            : `${chips(settings[game.id].minBet)}–${chips(settings[game.id].maxBet)} chips`;
-          return [
-            section([
-              `**${game.label}**\n${game.description}\n-# ${enabled ? `${availability[game.id]} · ${range}` : 'Closed'}`,
-            ], button({ id: game.play, label: game.id === 'blackjack' || game.id === 'poker' ? 'Browse tables' : game.id === 'roulette' ? 'Open the wheel' : game.id === 'slots' ? 'Play slots' : 'Choose opponent', tone: 'primary', disabled: !enabled })),
-          ];
-        }),
-        row(...games.map((game) => button({ id: game.rules, label: `${game.id === 'slots' ? 'Slots' : game.label} rules` }))),
-        row(button({ id: NAV.events, label: 'Casino events', emoji: ICONS.events })),
-      ]),
+      navRow('games'),
+      container(COLORS.emerald, cards.slice(0, tablesOnly).flatMap(({ components }) => components)),
+      container(COLORS.gold, cards.slice(tablesOnly).flatMap(({ components }) => components)),
+      row(button({ id: NAV.events, label: 'Casino events', emoji: ICONS.events })),
     ],
   };
 }

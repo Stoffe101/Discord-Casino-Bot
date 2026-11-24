@@ -8,7 +8,7 @@ import { pokerTableSvg } from '../../render/poker-image.js';
 import { cid } from '../custom-id.js';
 import { button, container, gallery, linkButton, modal, option, row, selectLabel, text, textInputLabel, type Screen } from '../kit.js';
 import { COLORS, ICONS } from '../theme.js';
-import { channelUrl, navRow, type Viewer } from './common.js';
+import { channelUrl, NAV, navRow, returnToCasino, type Viewer } from './common.js';
 
 const STREETS = { preflop: 'Pre-flop', flop: 'Flop', turn: 'Turn', river: 'River', complete: 'Results' } as const;
 
@@ -92,7 +92,6 @@ export async function pokerPanel(app: CasinoApp, table: PokerSnapshot, animation
       // All gameplay information and controls remain available when rendering fails.
     }
   }
-  const lobby = app.settings.lobby(record.guildId);
   return {
     files: file, holdMs,
     components: [
@@ -105,11 +104,10 @@ export async function pokerPanel(app: CasinoApp, table: PokerSnapshot, animation
           button({ id: cid('pk', 'join', record.id), label: 'Take a seat', tone: 'success', emoji: ICONS.tables, disabled: state.seats.length >= record.config.maxSeats }),
           button({ id: cid('pk', 'hand', record.id), label: 'My hand', emoji: ICONS.hand }),
           button({ id: cid('pk', 'start', record.id, record.version), label: 'Deal (host)', tone: 'primary', disabled: !!state.hand || state.seats.filter((seat) => seat.stack > 0 && !seat.sittingOut).length < 2 }),
-          button({ id: cid('nav', 'home'), label: 'Casino', emoji: ICONS.home }),
         ),
         row(
           button({ id: cid('nav', 'pkrules'), label: 'Rules', emoji: ICONS.help }),
-          lobby.channelId ? linkButton('Return to lobby', channelUrl(record.guildId, lobby.channelId, lobby.messageId), ICONS.back) : null,
+          returnToCasino(app, record.guildId, record.channelId),
         ),
       ]),
     ],
@@ -167,6 +165,10 @@ export function pokerJoinedScreen(table: PokerSnapshot, showCode = false): Scree
   const url = pokerUrl(table.record);
   return { components: [container(COLORS.emerald, [
     text(`## ${escapeMarkdown(table.record.name)}\nYou’re seated.${showCode && table.record.accessCode ? '\n**Access code** · ' + table.record.accessCode : ''}`),
-    row(url ? linkButton('Open table', url, ICONS.tables) : null, button({ id: cid('pk', 'hand', table.record.id), label: 'My hand', emoji: ICONS.hand })),
+    row(
+      url ? linkButton('Open table', url, ICONS.tables) : null,
+      button({ id: cid('pk', 'hand', table.record.id), label: 'My hand', emoji: ICONS.hand }),
+      button({ id: NAV.home, label: 'Home', emoji: ICONS.home }),
+    ),
   ])] };
 }

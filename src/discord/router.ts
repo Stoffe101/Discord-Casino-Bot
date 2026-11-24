@@ -30,7 +30,7 @@ import { boardComponent, readBoardLocation } from '../ui/navigation.js';
 import { cid, intArg, parseCid } from '../ui/custom-id.js';
 import { button, linkButton, row, withNote, type Screen } from '../ui/kit.js';
 import { COLORS, ICONS } from '../ui/theme.js';
-import { noticeScreen, errorScreen, NAV, type Viewer } from '../ui/screens/common.js';
+import { noticeScreen, errorScreen, NAV, returnToCasino, type Viewer } from '../ui/screens/common.js';
 import { homeScreen, walletScreen, historyScreen, walletStatsScreen } from '../ui/screens/home.js';
 import { profileScreen, preferencesScreen, achievementsScreen, styleScreen, applyCosmetic } from '../ui/screens/profile.js';
 import { leaderboardScreen } from '../ui/screens/leaderboard.js';
@@ -332,7 +332,7 @@ export class InteractionRouter {
         }));
       }
       case 'blackjack':
-        return this.show(i, tablesScreen(this.app, viewer));
+        return this.show(i, tablesScreen(this.app, viewer, 'blackjack'));
       case 'roulette':
         return this.openRoulette(i, viewer);
       case 'slots':
@@ -715,39 +715,20 @@ export class InteractionRouter {
     this.requireOpen(viewer);
     switch (action) {
       case 'create': {
-        const seated = this.app.blackjack.tableOfUser(viewer.guildId, viewer.userId);
-        if (seated) throw new UserError(`You're already seated at **${escapeMarkdown(seated.record.name)}**. Leave it before opening a new table.`, 'already_seated');
+        if (!this.app.settings.get(viewer.guildId).blackjack.enabled) throw new UserError('Blackjack is closed on this server.');
+        const seat = this.app.blackjack.tableOfUser(viewer.guildId, viewer.userId) ?? this.app.poker.tableOfUser(viewer.guildId, viewer.userId);
+        if (seat) {
+          arm(this.fromEphemeral(i) ? 'update' : 'reply');
+          return this.show(i, tablesScreen(this.app, viewer, 'mine'));
+        }
         return this.showModal(i, createTableModal(this.app, viewer.guildId));
       }
       case 'quick':
         arm(this.fromEphemeral(i) ? 'update' : 'reply');
-        return this.quickSeat(i, viewer);
+        return this.show(i, await gamesHubScreen(this.app, viewer));
       case 'join':
         return this.joinTable(i, viewer, args[0] ?? '', arm);
     }
-  }
-
-  private async quickSeat(i: RepliableInteraction, viewer: Viewer): Promise<void> {
-    const mine = this.app.blackjack.tableOfUser(viewer.guildId, viewer.userId);
-    if (mine) {
-      const url = await this.bot.addToTableThread(mine.record.id, viewer.userId);
-      return this.show(i, this.seatedScreen(mine.record.name, url, 'You already have a seat here.'));
-    }
-    const candidates = this.app.blackjack
-      .openTables(viewer.guildId)
-      .filter((t) => !t.record.isPrivate && t.state.seats.length < t.record.config.maxSeats && t.record.messageId)
-      .sort((a, b) => b.state.seats.length - a.state.seats.length);
-    for (const table of candidates) {
-      try {
-        const seat = await this.app.blackjack.join(table.record.id, viewer.userId, viewer.displayName);
-        const url = await this.bot.addToTableThread(table.record.id, viewer.userId);
-        return this.show(i, this.seatedScreen(table.record.name, url, `You're in seat **${seat.seatIndex + 1}**. Press a chip on the table to bet.`));
-      } catch (error) {
-        if (!isUserError(error)) throw error;
-      }
-    }
-    // Nothing open: start a table for them.
-    return this.openTable(i, viewer, {});
   }
 
   private async openTable(i: RepliableInteraction, viewer: Viewer, options: { name?: string; isPrivate?: boolean; maxSeats?: number; minBet?: number; maxBet?: number }): Promise<void> {
@@ -889,7 +870,7 @@ export class InteractionRouter {
             title: result === 'left' ? 'You left the table' : "You'll leave after this hand",
             body: result === 'left' ? 'Any open bet was returned to your wallet. Come back any time!' : 'Your remaining hands will stand automatically and your seat frees up when the hand ends.',
             tone: 'info',
-            buttons: [button({ id: NAV.tables, label: 'Other tables', emoji: ICONS.tables }), button({ id: NAV.home, label: 'Casino home', emoji: ICONS.home })],
+            buttons: [returnToCasino(this.app, viewer.guildId, snap.record.channelId)],
           }),
           this.fromEphemeral(i) ? 'auto' : 'private',
         );
@@ -899,9 +880,9 @@ export class InteractionRouter {
         await tables.setSittingOut(tableId, viewer.userId, args[1] === '1');
         return this.show(i, await myHandScreen(this.app, viewer, tableId, { revealing: this.bot.tableAnimating(tableId) }));
       case 'close':
-        arm('update');
+        arm(this.fromEphemeral(i) ? 'update' : 'reply');
         await tables.closeTable(tableId, `closed by the host`, { actorId: viewer.userId });
-        return this.show(i, noticeScreen({ title: 'Table closed', body: 'All open bets were refunded.', tone: 'success', buttons: [button({ id: NAV.home, label: 'Casino home', emoji: ICONS.home })] }));
+        return this.show(i, noticeScreen({ title: 'Table closed', body: 'Any open bets were refunded.', tone: 'success', buttons: [returnToCasino(this.app, viewer.guildId, snap.record.channelId)] }));
       case 'kick': {
         arm('update');
         if (!i.isUserSelectMenu()) return;

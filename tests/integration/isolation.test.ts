@@ -25,7 +25,7 @@ describe('multiple servers', () => {
     // Alice plays in both servers: two independent wallets.
     const homeA = h.seen(await h.slash(alice, 'casino'))!;
     await h.click(alice, homeA, 'Daily 100');
-    await h.click(alice, h.seen(await h.slash(alice, 'casino', {}, bCasino)), 'Play Blackjack');
+    await h.openBlackjack(alice, null, bCasino);
     expect(h.app.economy.getWallet(a, alice.id).balance).toBeGreaterThanOrEqual(600);
     expect(h.app.economy.getWallet(b, alice.id).balance).toBeLessThan(600);
 

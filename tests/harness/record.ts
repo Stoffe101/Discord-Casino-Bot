@@ -57,7 +57,7 @@ async function session(name: string, title: string, play: (h: CasinoHarness, use
 
 async function blackjack(h: CasinoHarness, users: (n: string) => FakeUser): Promise<string> {
   const [alex, hanna, oskar] = [users('Alex'), users('Hanna'), users('Oskar')];
-  await h.click(alex, h.seen(await h.slash(alex, 'casino')), 'Play Blackjack');
+  await h.openBlackjack(alex);
   const tableId = h.app.blackjack.tableOfUser(h.guildId, alex.id)!.record.id;
   const panel = () => h.tablePanel(tableId);
   // Alex 8,8 (split) · Hanna 10,6 · Oskar 9,2 (double) · dealer 6 up, 10 hole; then draws.

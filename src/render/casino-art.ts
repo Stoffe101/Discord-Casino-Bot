@@ -37,28 +37,36 @@ function wheelBadge(): string {
     + spokes + `<path d="M-22 0h44M0 -22v44" stroke="${GOLD}" stroke-width="3"/><circle r="6" fill="${GOLD}"/><circle cx="22" cy="-28" r="5" fill="${CREAM}"/></g>`;
 }
 
-function gameIllustration(holdem = false): string {
-  const slots = `<rect x="47" y="33" width="124" height="91" rx="19" fill="#28202e" stroke="${GOLD}" stroke-width="3"/>`
-    + [62, 96, 130].map((x) => `<rect x="${x}" y="52" width="26" height="48" rx="5" fill="${CREAM}"/><text x="${x + 13}" y="87" fill="#8d3248" text-anchor="middle" font-family="Cinzel" font-size="30" font-weight="900">7</text>`).join('');
-  const plaques = [
-    { label: 'Blackjack', field: '#153c2e', art: cardBack(61, 27, 57) + cardFace('AS', 106, 36, 62) },
-    ...(holdem ? [{ label: 'Hold’em', field: '#203b38', art: cardFace('KH', 68, 35, 65) + cardFace('KS', 112, 35, 65) }] : []),
-    { label: 'Roulette', field: '#45292c', art: wheelBadge() },
-    { label: 'Slots', field: '#32283e', art: slots },
-    { label: 'Coinflip', field: '#3b3523', art: token(97, 77, 47, '#6a5030') + token(134, 85, 38, '#2b4033') },
-  ];
-  const width = plaques.length * 222 + 12;
-  return svgDoc(width, 210, `<rect width="${width}" height="210" rx="13" fill="${INK}"/>`
-    + plaques.map(({label, field, art}, i) =>
-      `<g transform="translate(${12 + i * 222} 12)"><rect width="210" height="186" rx="11" fill="${field}" stroke="${LINE}"/><path d="M13 141h184" stroke="${GOLD}" opacity=".65"/>`
-      + art + `<text x="105" y="171" fill="${CREAM}" text-anchor="middle" font-family="Manrope" font-size="26" font-weight="800">${label}</text></g>`).join(''), cardDefs());
+const games = {
+  blackjack: { field: '#143d30', light: '#235841', draw: () => cardBack(58, 25, 61) + cardFace('AS', 106, 40, 63) },
+  poker: { field: '#163437', light: '#24585b', draw: () => cardFace('KH', 54, 38, 67) + cardFace('KS', 104, 26, 67) },
+  roulette: { field: '#41222b', light: '#693740', draw: wheelBadge },
+  slots: { field: '#2d2341', light: '#48345e', draw: () =>
+    '<rect x="39" y="30" width="138" height="96" rx="19" fill="#231b30" stroke="' + GOLD + '" stroke-width="3"/>'
+    + [52, 94, 136].map((x) => '<rect x="' + x + '" y="52" width="28" height="48" rx="5" fill="' + CREAM
+      + '"/><text x="' + (x + 14) + '" y="87" fill="#8d3248" text-anchor="middle" font-family="Cinzel" font-size="31" font-weight="900">7</text>').join('') },
+  coinflip: { field: '#382e1b', light: '#63502d', draw: () => token(87, 69, 45, '#755631') + token(130, 92, 38, '#254234') },
+};
+
+function gameMedallion(game: keyof typeof games): string {
+  const { field, light, draw } = games[game];
+  return svgDoc(192, 192,
+    '<rect width="192" height="192" rx="21" fill="' + field + '"/>'
+    + '<path d="M0 150 140 0h52v34L40 192H0Z" fill="' + light + '"/>'
+    + '<rect x="8" y="8" width="176" height="176" rx="15" fill="none" stroke="' + GOLD + '" stroke-opacity=".65" stroke-width="2"/>'
+    + '<path d="M27 33h16M35 25v16m114 120h16m-8-8v16" stroke="' + GOLD + '" stroke-width="2"/>'
+    + '<g transform="translate(-7 22) scale(.95)">' + draw() + '</g>',
+    cardDefs());
 }
 
 const artwork = {
   home: { svg: () => ribbon('THE CASINO', 'The Emerald Room', false), alt: 'The Emerald Room wordmark with a faceted emerald.' },
   wallet: { svg: () => ribbon('THE EMERALD ROOM', 'Chip Wallet', true), alt: 'Chip Wallet wordmark with three illustrated casino chips.' },
-  'games-holdem': { svg: () => gameIllustration(true), alt: 'Illustrated Blackjack cards, Hold’em hole cards, a roulette wheel, slots and coinflip tokens.' },
-  games: { svg: () => gameIllustration(), alt: 'Blackjack cards, a roulette wheel, slots reels and two coinflip tokens.' },
+  blackjack: { svg: () => gameMedallion('blackjack'), alt: 'An ace of spades beside an Emerald Room card back.' },
+  poker: { svg: () => gameMedallion('poker'), alt: 'Two kings on teal felt.' },
+  roulette: { svg: () => gameMedallion('roulette'), alt: 'A brass and burgundy roulette wheel.' },
+  slots: { svg: () => gameMedallion('slots'), alt: 'Three sevens in a framed slot machine.' },
+  coinflip: { svg: () => gameMedallion('coinflip'), alt: 'Two gold-edged casino tokens.' },
 };
 
 type Art = keyof typeof artwork;
@@ -69,7 +77,7 @@ export function casinoArtwork(kind: Art): Promise<RenderedArt | undefined> {
   const current = cache.get(kind);
   if (current) return current;
   const { svg, alt } = artwork[kind];
-  const rendered = svgToPng(svg(), 750)
+  const rendered = svgToPng(svg(), kind === 'home' || kind === 'wallet' ? 750 : 192)
     .then((data) => ({ name: `emerald-${kind}.png`, data, description: alt }))
     .catch(() => {
       cache.delete(kind);

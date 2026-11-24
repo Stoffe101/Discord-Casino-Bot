@@ -20,7 +20,7 @@ it('sends the same complete Home on a slash response and on a navigation update'
   const expected = structuredClone(first.components);
   expect(first.flags & MessageFlags.IsComponentsV2).toBeTruthy();
   expect(first.flags & MessageFlags.Ephemeral).toBeTruthy();
-  expect(h.enabled(first)).toContain('Coinflip');
+  expect(h.enabled(first)).toContain('Browse tables');
   const attachments = first.attachments.map((attachment) => attachment.filename);
   await h.click(user, first, 'Games');
   const back = await h.click(user, first, 'Home');
@@ -36,7 +36,7 @@ it('recovers a valid host click from a betting panel with an automatic deal alre
   h.fd.latencyMs = 160;
   h.fd.recording = true;
   const [host, guest] = [h.user('Host'), h.user('Guest')];
-  await h.click(host, h.seen(await h.slash(host, 'casino')), 'Play Blackjack');
+  await h.openBlackjack(host);
   const id = h.app.blackjack.tableOfUser(h.guildId, host.id)!.record.id;
   await h.click(guest, h.tablePanel(id), 'Take a seat');
   await h.app.blackjack.debugSetShoe(id, ['TS', '9C', '6H', 'TD', '3D'] as Card[]);
@@ -65,7 +65,7 @@ it('recovers a valid host click from a betting panel with an automatic deal alre
 it('publishes the current table when its decorative frame is still rendering', async () => {
   h = new CasinoHarness();
   const host = h.user('Host');
-  await h.click(host, h.seen(await h.slash(host, 'casino')), 'Play Blackjack');
+  await h.openBlackjack(host);
   const table = h.app.blackjack.tableOfUser(h.guildId, host.id)!;
   const { promise, resolve } = Promise.withResolvers<Screen>();
   const sync = new PanelSync({

@@ -53,7 +53,7 @@ describe('thread mode (full stack)', () => {
       await first.bot.client.destroy();
     });
     const [alice, bob] = [first.user('Alice'), first.user('Bob')];
-    await first.click(alice, first.seen(await first.slash(alice, 'casino')), 'Play Blackjack');
+    await first.openBlackjack(alice);
     const tableId = first.app.blackjack.tableOfUser(first.guildId, alice.id)!.record.id;
     await first.app.blackjack.debugSetShoe(tableId, ['TS', '9C', '7S', '6H', '8D', 'TD', '4C', '2H'] as Card[]);
     await first.click(alice, first.tablePanel(tableId), '100');
@@ -121,7 +121,7 @@ describe('thread mode (full stack)', () => {
     const admin = h.user('Admin', true);
     await h.slash(admin, 'casinoadmin', { subcommand: 'setup' });
     const [alice, bob] = [h.user('Alice'), h.user('Bob')];
-    await h.click(alice, h.seen(await h.slash(alice, 'casino')), 'Play Blackjack');
+    await h.openBlackjack(alice);
     const record = h.app.blackjack.tableOfUser(h.guildId, alice.id)!.record;
     await h.click(alice, h.tablePanel(record.id), '25');
     await h.click(bob, h.tablePanel(record.id), '25');
@@ -144,12 +144,49 @@ describe('thread mode (full stack)', () => {
     assertContained(h);
   });
 
+  it('links leave and close to the lobby, archives a closed table without its panel, and refunds idle Hold’em seats', async () => {
+    const h = harness();
+    const host = h.user('Host', true);
+    const guest = h.user('Guest');
+    await h.slash(host, 'casinoadmin', { subcommand: 'setup' });
+    const lobby = h.lobby()!;
+    await h.openBlackjack(host);
+    const table = h.app.blackjack.tableOfUser(h.guildId, host.id)!;
+    const panel = h.tablePanel(table.record.id);
+    await h.click(guest, panel, 'Take a seat');
+    const receipt = h.seen(await h.click(guest, panel, 'Leave'))!;
+    expect(h.buttons(receipt).find((button) => button.label === 'Return to casino')?.url).toBe('https://discord.com/channels/' + h.guildId + '/' + h.casino + '/' + lobby.id);
+    const controls = h.seen(await h.click(host, panel, 'My seat'))!;
+    panel.deleted = true;
+    const closed = h.seen(await h.click(host, controls, 'Close table'))!;
+    expect(h.buttons(closed).find((button) => button.label === 'Return to casino')?.url).toBe('https://discord.com/channels/' + h.guildId + '/' + h.casino + '/' + lobby.id);
+    const closedThread = h.fd.channels.get(table.record.threadId!)!;
+    expect(closedThread).toMatchObject({ archived: true, locked: true });
+
+    h.app.settings.set(h.guildId, 'poker.enabled', true);
+    const poker = await h.app.poker.create({ guildId: h.guildId, userId: host.id, name: 'Host', buyIn: 100 });
+    await h.bot.createTablePanel(poker.record.id, h.casino, host.id);
+    await h.app.poker.join(poker.record.id, guest.id, 'Guest', 100);
+    const threadId = h.app.poker.peek(poker.record.id)!.record.threadId!;
+    h.clock.advance(5 * 60_000 - 1);
+    await h.app.poker.sweepIdle();
+    expect(h.app.poker.peek(poker.record.id)).toBeDefined();
+    h.clock.advance(1);
+    await h.app.poker.sweepIdle();
+    await h.settle();
+    expect(h.app.poker.peek(poker.record.id)).toBeUndefined();
+    expect(h.fd.channels.get(threadId)).toMatchObject({ archived: true, locked: true });
+    expect(h.app.economy.getWallet(h.guildId, host.id).reserved + h.app.economy.getWallet(h.guildId, guest.id).reserved).toBe(0);
+    expect(h.fd.channelMessages(h.casino)).toHaveLength(1);
+    expect(h.app.economy.reconcile()).toEqual([]);
+  });
+
   it('never writes to a table thread under another channel; the table is re-homed under #casino', async () => {
     const dbPath = tempDb();
     // Session 1, no guard: someone plays from #general, so the table thread lives under #general.
     const before = new CasinoHarness({ guard: false, dbPath });
     const alice = before.user('Alice');
-    await before.click(alice, before.seen(await before.slash(alice, 'casino', {}, before.general)), 'Play Blackjack');
+    await before.openBlackjack(alice, null, before.general);
     const tableId = before.app.blackjack.tableOfUser(before.guildId, alice.id)!.record.id;
     const foreign = before.app.blackjack.peek(tableId)!.record.threadId!;
     expect(before.fd.channels.get(foreign)?.parentId).toBe(before.general);

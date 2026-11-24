@@ -109,6 +109,14 @@ export class CasinoHarness {
     return rec;
   }
 
+  async openBlackjack(user: FakeUser, source?: FakeMessage | null, channelId = this.casino): Promise<InteractionRecord> {
+    const home = source ?? this.seen(await this.slash(user, 'casino', {}, channelId));
+    const games = this.seen(await this.click(user, home, 'Games'));
+    const tables = this.seen(await this.click(user, games, 'Blackjack tables'));
+    const create = await this.click(user, tables, 'Open Blackjack');
+    return this.submit(user, create, {});
+  }
+
   async select(user: FakeUser, message: FakeMessage | null, prefix: string, values: string[]): Promise<InteractionRecord> {
     if (!message) throw new Error('no message');
     const rec = this.fd.select(user, message, prefix, values);

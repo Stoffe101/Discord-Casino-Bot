@@ -2,8 +2,8 @@
 
 The expansion is on `feat/grand-casino-expansion` and stacks on `feat/emerald-room-v1`.
 [PR #2](https://github.com/Stoffe101/Discord-Casino-Bot/pull/2) remains a draft. The
-previous test build was `0a3ad3c`. The current test runtime is `061452b`; its
-checkout, process record and database backup are local to the expansion worktree.
+original test build was `0a3ad3c`. The current test runtime is `5b688f0`. Its
+checkout, process record and database backups are local to the expansion worktree.
 
 ## Player experience
 
@@ -29,8 +29,8 @@ checkout, process record and database backup are local to the expansion worktree
 - Relief considers the lowest opening stake or buy-in across the enabled games. Held stakes,
   table stacks, active reward availability, cooldown and recent outgoing gifts still affect
   eligibility. Gifting is enabled by default while explicit guild overrides take precedence.
-  Actual Discord nickname changes remain unimplemented. The existing optional casino-only
-  Sosse title still expires after 30 minutes.
+  The optional casino-only Sosse title lasts 30 minutes. Actual server nicknames require a
+  separate, informed player opt-in after the relief chips are already available.
 - Highlights use recorded net winnings and the current privacy setting and cooldown. Hold’em
   all-in recognition requires the entire starting stack to remain committed after any refunds,
   a configurable stake floor and a qualifying profit. Pot-win highlights use the player's
@@ -46,10 +46,11 @@ child threads and send messages in them. Deployments can configure an organizer 
 ## Verification
 
 `npm run typecheck`, `npm run lint`, `npm test -- --maxWorkers=3` and
-`npm run build` passed locally on Windows. The suite ran 366 tests, including
+`npm run build` passed locally on Windows. The suite ran 370 tests, including
 the exhaustive 2,598,960-hand evaluator, service recovery on every poker street,
 multiway side pots, two six-seat tables alongside Blackjack, privacy projections, event
-scheduling and assignment, Blackjack delay and stale interactions, and relief at one or two chips.
+scheduling and assignment, Blackjack delay and stale interactions, relief at one or two chips,
+slow animation fallback, and the nickname lifecycle against a fake Discord member adapter.
 
 The delayed-deal regression injected 160 ms of Fake Discord latency. It reproduced state
 committing while the old panel still offered Deal now. The stale click now reconciles safely.
@@ -99,7 +100,7 @@ Discord rate limiting from transport and queue delays.
 The desktop client displayed the before/after Home, Wallet, Games and Blackjack fixture payloads
 on the verified secondary display. The Hold’em table and event details were also inspected.
 Cropped screenshots are under the gitignored `recordings/premium-review/`. The Blackjack
-comparison uses a five-seat fixture. The small-table renderer is covered in headless validation.
+comparison uses a five-seat fixture. The matching solo renders are in blackjack-solo-before.png and blackjack-solo-after.png in that directory.
 Live mobile layout, exact client-paint timings and a two-player private Hold’em hand still need
 human confirmation. The REST bench used synthetic data, including for personal views.
 
@@ -131,7 +132,7 @@ model.
 
 Migration 3 adds `casino_events`, event registrations and their lookup indexes. Poker uses the
 existing game tables, seats, escrows and round tables. Existing ledger rows, preferences and
-admin overrides are preserved. Before the test switch, SQLite's backup API created an online
+admin overrides are preserved. Before the first test switch, SQLite's backup API created an online
 snapshot and an independent migration rehearsal. Schema 2 upgraded to 3 with SQLite integrity
 and application reconciliation verified. The isolated test snapshot contained one player,
 565 available chips, six ledger entries, two rounds and no held escrows or active tables.
@@ -144,6 +145,19 @@ under `data/rollback-dist-0a3ad3c/`. After starting the new gateway, ledger reco
 reported zero problems, the guard confirmed the designated channel and its verified child
 threads, and Discord returned the edited lobby with its Events control. No explicit gifting
 override was present on the test guild, so its new default took effect.
+
+Migration 4 stores the exact earlier nickname or null, expiry and retry time for consented
+nickname changes. After separate approval, set CASINO_NICKNAME_GUILD_ID for the one authorized
+guild and enable economy.reliefNickname to offer new changes. Existing restorations continue
+if the administrator disables future offers. Bot permissions and role hierarchy apply. The
+bot restores after expiry only if the current nickname still reads Sosse. Discord offers no
+conditional nickname write. A manual change observed before restoration takes precedence.
+Temporary permission failures retry, and departed members need no restoration.
+
+The test runtime rehearsed schema 3 to 4 on a separate copy, then took a fresh
+backup at data/grand-test-pre-premium-2026-11-24T21-28-54-362Z.db. The rollback build for
+this switch is under data/rollback-dist-061452b/. Hold’em and gifting stayed enabled.
+The nickname offer and all guild-member edits are disabled in guarded test mode.
 
 For a future coordinated rollout:
 

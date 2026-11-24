@@ -29,8 +29,8 @@ describe('roulette ready voting', () => {
     const spectator = h.user('Spectator');
     await expect(roulette.vote(wheel.record.id, spectator.id, round, true)).rejects.toThrow(/Place a bet/);
     await h.settle();
-    expect(h.text(panel)).toContain('5/10');
-    expect(h.text(panel)).toContain('6 required');
+    expect(h.text(panel)).toContain('**5/6** ready');
+    expect(h.text(panel)).toContain('6 of the 10 bettors');
     await h.click(players[5]!, panel, 'Ready');
     await h.advance(7_000);
     expect(wheel.state.roundId).toBe(round);

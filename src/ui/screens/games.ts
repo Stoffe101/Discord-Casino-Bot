@@ -15,6 +15,7 @@ import {
   gallery,
   modal,
   option,
+  progressBar,
   row,
   select,
   selectLabel,
@@ -258,7 +259,8 @@ export async function roulettePanel(app: CasinoApp, wheel: Readonly<WheelSnapsho
   const ready = rouletteReady(state);
   const timing = due ? `spinning ${countdown(due, app.clock.now(), 'now — last bets!')}` : 'the wheel spins after the first bet';
   const voting = ready.bettors > 0
-    ? `**Ready to spin: ${ready.votes}/${ready.bettors}** · ${ready.required} required`
+    ? `🗳️ **Spin early?** ${progressBar(ready.required ? Math.min(1, ready.votes / ready.required) : 0, 6)} **${ready.votes}/${ready.required}** ready
+-# The wheel spins as soon as ${ready.required} of the ${ready.bettors} ${ready.bettors === 1 ? 'bettor is' : 'bettors are'} ready, or when the timer runs out.`
     : null;
   return {
     files: [{ name: file, data: png, description: result ? `Roulette result ${result.number}` : 'Roulette wheel' }],
@@ -277,9 +279,9 @@ export async function roulettePanel(app: CasinoApp, wheel: Readonly<WheelSnapsho
         }),
         row(
           button({ id: cid('rl', 'clear', record.id, state.roundId), label: 'Withdraw bets', disabled: !ready.bettors }),
-          button({ id: cid('rl', 'ready', record.id, state.roundId), label: 'Ready', tone: 'success', disabled: !ready.bettors }),
-          button({ id: cid('rl', 'unready', record.id, state.roundId), label: 'Withdraw vote', disabled: !ready.votes }),
-          button({ id: cid('rl', 'help', record.id), label: 'How to play', emoji: ICONS.help }),
+          button({ id: cid('rl', 'ready', record.id, state.roundId), label: 'Ready', emoji: '✅', tone: 'success', disabled: !ready.bettors }),
+          button({ id: cid('rl', 'unready', record.id, state.roundId), label: 'Withdraw vote', emoji: ICONS.back, disabled: !ready.votes }),
+          button({ id: cid('rl', 'help', record.id), label: 'How to play', emoji: ICONS.rules }),
           button({ id: cid('bj', 'home', 'wheel'), label: 'Casino', emoji: ICONS.home }),
         ),
       ]),

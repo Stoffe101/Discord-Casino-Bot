@@ -2,8 +2,46 @@
 
 The expansion is on `feat/grand-casino-expansion` and stacks on `feat/emerald-room-v1`.
 [PR #2](https://github.com/Stoffe101/Discord-Casino-Bot/pull/2) remains a draft. The
-original test build was `0a3ad3c`. The current test runtime is `5b688f0`. Its
+original test build was `0a3ad3c`. The current test runtime is `bdebf81`. Its
 checkout, process record and database backups are local to the expansion worktree.
+
+## Games floor and Blackjack follow-up
+
+Home and the public lobby surface Games, My table and Events. Blackjack and Hold’em
+open independent table lists, with matching creation flows. The generic browser keeps
+its casino-wide filters. The other game cards open the wheel, private slots machine or
+coinflip opponent picker directly. Every game has a native illustrated card and its
+own rules button.
+
+The multiplayer Blackjack panel shows the turn and action controls above a shorter
+table image and displays player cards and totals in a native text list. The default
+betting window is 12 seconds. When every active seat has bet, the automatic deal starts
+after 1.5 seconds. Hold’em and Blackjack retain their own action timers. Existing
+administrator overrides are preserved.
+
+Table exits link to the persistent casino landing message. Discord link controls need a
+click to move the client. The archive path drains in-flight panel edits first, writes the
+closed state when the old message is available, and locks and archives the thread even
+when that message is missing. Defaults are three minutes empty and five minutes idle
+between games. Active hands and pending wagers keep a table open. The lobby edits its
+existing message and the bot removes its own thread creation notices.
+
+The test runtime was switched with no open wagers and no schema change. A SQLite backup
+was taken at data/grand-test-pre-premium-2026-11-24T22-03-15-368Z.db. The previous compiled
+test build is at data/rollback-dist-5b688f0/. The test database had one player with 530
+available and no reserved chips at cutover. Local checks, 372 tests and Windows and
+Linux CI passed.
+
+The real Discord desktop flow opened and closed each table through its own game card,
+returned the Hold’em buy-in in full, and followed Return to casino back to the configured
+lobby. It played one 10-chip Blackjack hand, which lost to a dealer natural. The engine
+settled it 1,506 ms after reserving the wager. The deal was visible in a desktop snapshot
+at about five seconds, giving an upper bound for this observation. The equivalent
+five-seat synthetic opening deal attachment shrank from 272 KB to 162 KB. Desktop
+multiplayer readability was checked with a five-seat fixture. The real player used the
+solo live flow. Five historical threads were archived after verifying both their closed
+table records and their bot ownership and parent channel. The two new test threads
+were already archived and locked by the bot. Reconciliation reported zero problems.
 
 ## Player experience
 

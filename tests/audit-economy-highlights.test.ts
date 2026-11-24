@@ -76,7 +76,7 @@ describe('wager floor applies to every big-win tier', () => {
     const rows = bigWins(app);
     expect(rows).toHaveLength(1);
     expect(rows[0]!.text).toContain('Slots jackpot');
-    expect(rows[0]!.text).toContain('+9,950 net');
+    expect(rows[0]!.text).toContain('won **9,950**');
   });
 
   it('does not announce a 30-chip roulette straight-up hit (35:1, +1,050 net)', () => {
@@ -150,7 +150,7 @@ describe('Hold’em highlights through the real PokerTableService', () => {
       winners.add(winner.user_id);
       expect(rows).toHaveLength(1);
       expect(rows[0]!.user_id).toBe(winner.user_id);
-      expect(rows[0]!.text).toContain(`+${winner.net} net`);
+      expect(rows[0]!.text).toContain(`won **${winner.net}**`);
       // Only the short stack really committed its entire stack.
       if (winner.user_id === 'big') expect(rows[0]!.text).not.toContain('All-in');
       else expect(rows[0]!.text).toContain('All-in win');
@@ -227,7 +227,7 @@ describe('coinflip, blackjack-shaped rounds, privacy and pings', () => {
     const rows = bigWins(app);
     expect(rows).toHaveLength(1);
     expect(rows[0]!.user_id).toBe(challenge.winnerId);
-    expect(rows[0]!.text).toContain('+600 net');
+    expect(rows[0]!.text).toContain('won **600**');
     expect(app.economy.reconcile()).toEqual([]);
   });
 

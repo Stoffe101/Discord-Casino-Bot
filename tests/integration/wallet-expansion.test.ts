@@ -157,7 +157,7 @@ describe('expanded wallet', () => {
     round('big-win', 500, 1000);
     round('cooldown', 500, 1500);
     expect(count()).toBe(1);
-    expect(recentCasinoActivity(h.app, h.guildId, 3).some((text) => text.includes('+500 net'))).toBe(true);
+    expect(recentCasinoActivity(h.app, h.guildId, 3).some((text) => text.includes('won **500**'))).toBe(true);
     h.db.run('UPDATE players SET highlights_opt_out = 1 WHERE guild_id = ? AND user_id = ?', [h.guildId, user.id]);
     h.clock.advance(HOUR);
     round('private', 500, 1500);

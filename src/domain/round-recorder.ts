@@ -220,7 +220,7 @@ export class RoundRecorder {
         "SELECT id FROM highlights WHERE guild_id = ? AND user_id = ? AND kind = 'big_win' AND created_at > ? LIMIT 1",
         [guildId, p.userId, now - highlights.cooldownSeconds * 1000],
       )) {
-        this.addHighlight(guildId, p.userId, 'big_win', `**${event}** · +${chips(net)} net at ${gameLabel(game)} · round ${roundId.slice(0, 8)}`, now);
+        this.addHighlight(guildId, p.userId, 'big_win', `**${event}** · won **${chips(net)}** at ${GAME_NAMES[game] ?? game}`, now);
       }
       for (const achievement of achievements.filter((item) => item.secret)) {
         this.addHighlight(guildId, p.userId, 'achievement', `unlocked **${achievement.name}**`, now);
@@ -239,6 +239,9 @@ export class RoundRecorder {
     ]);
   }
 }
+
+/** Proper game names for highlight lines ("won 600 at Hold’em"). */
+const GAME_NAMES: Record<string, string> = { blackjack: 'Blackjack', poker: 'Hold’em', roulette: 'Roulette', slots: 'Slots', coinflip: 'Coinflip' };
 
 export function gameLabel(game: string): string {
   switch (game) {

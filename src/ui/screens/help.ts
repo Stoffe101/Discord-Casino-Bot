@@ -71,13 +71,13 @@ export function helpScreen(app: CasinoApp, viewer: Viewer, topic: HelpTopic): Sc
   return {
     components: [
       container(COLORS.emerald, [
+        navRow(),
         text(`## ❔ ${TITLES[topic]}\n${bodies[topic]}`),
         select({
           id: cid('help', 'topic'),
           placeholder: 'More help topics…',
           options: HELP_TOPICS.map((t) => option(TITLES[t], t, undefined, undefined, t === topic)),
         }),
-        navRow('help'),
       ]),
     ],
   };

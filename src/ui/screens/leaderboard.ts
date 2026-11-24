@@ -1,10 +1,11 @@
 import type { CasinoApp } from '../../app/casino-app.js';
 import { escapeMarkdown, truncate } from '../../core/format.js';
 import { LEADERBOARD_CATEGORIES, type LeaderboardCategory, type LeaderboardPeriod } from '../../domain/leaderboard-service.js';
+import { boardComponent } from '../navigation.js';
 import { cid } from '../custom-id.js';
 import { button, container, option, row, select, separator, text, type Screen } from '../kit.js';
 import { COLORS, ICONS } from '../theme.js';
-import { NAV, type Viewer } from './common.js';
+import { navRow, type Viewer } from './common.js';
 
 export const LEADERBOARD_PAGE = 10;
 
@@ -44,6 +45,7 @@ export function leaderboardScreen(
   return {
     components: [
       container(COLORS.gold, [
+        navRow('leaderboard'),
         text(`## 🏆 ${info.label}\n-# ${PERIOD_LABEL[board.period]} · ${info.description}`),
         select({
           id: cid('lbcat', board.period),
@@ -58,9 +60,8 @@ export function leaderboardScreen(
           button({ id: cid('nav', 'lb', info.id, board.period, 'page'), label: `Page ${board.page + 1} of ${board.pages}`, disabled: true }),
           button({ id: cid('nav', 'lb', info.id, board.period, board.page + 1), emoji: ICONS.next, disabled: board.page >= board.pages - 1 }),
           button({ id: cid('nav', 'lb', info.id, board.period, board.page, 'r'), label: 'Refresh', emoji: ICONS.refresh }),
-          button({ id: NAV.home, label: 'Home', emoji: ICONS.home }),
         ),
-        profileOptions.length ? select({ id: cid('lbpro', 'view'), placeholder: 'View a player’s profile…', options: profileOptions }) : null,
+        profileOptions.length ? select({ id: boardComponent('lbpro', viewer, { category: info.id, period: board.period, page: board.page }), placeholder: 'View a player’s profile…', options: profileOptions }) : null,
       ]),
     ],
   };

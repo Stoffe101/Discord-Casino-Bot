@@ -32,10 +32,23 @@ export interface RouletteState {
   roundId: string;
   bets: PlacedBet[];
   deadline: number | null;
+  readyAt: number | null;
+  ready: string[];
   history: number[];
   lastResult: { spinNumber: number; number: number; players: RoulettePlayerResult[]; at: number } | null;
   opSeq: number;
   names: Record<string, string>;
+}
+
+export function rouletteReady(state: Readonly<RouletteState>) {
+  const bettors = new Set(state.bets.map((bet) => bet.userId)).size;
+  return { bettors, votes: state.ready.length, required: bettors > 0 ? Math.floor(bettors / 2) + 1 : 0 };
+}
+
+export function rouletteSpinAt(state: Readonly<RouletteState>): number | null {
+  if (state.deadline === null || state.readyAt === null) return state.deadline;
+  const { votes, required } = rouletteReady(state);
+  return required > 0 && votes >= required ? Math.min(state.deadline, state.readyAt) : state.deadline;
 }
 
 export interface WheelRecord {
@@ -144,6 +157,8 @@ export class RouletteService {
         roundId: newId(),
         bets: [],
         deadline: null,
+        readyAt: null,
+        ready: [],
         history: [],
         lastResult: null,
         opSeq: 0,
@@ -175,9 +190,12 @@ export class RouletteService {
     });
   }
 
-  async placeBet(wheelId: string, input: { userId: string; displayName: string; type: RouletteBetType; number?: number; amount: number }, origin?: object): Promise<void> {
+  async placeBet(wheelId: string, input: { userId: string; displayName: string; type: RouletteBetType; number?: number; amount: number; roundId?: string }, origin?: object): Promise<void> {
     await this.mutate(wheelId, origin, ({ record, state, now }) => {
-      const limits = this.settings(record.guildId).roulette;
+      this.requireBetting(state, input.roundId, now);
+      const settings = this.settings(record.guildId);
+      if (!settings.enabled || !settings.roulette.enabled) throw new UserError('Roulette is closed on this server.');
+      const limits = settings.roulette;
       if (!Number.isSafeInteger(input.amount) || input.amount < limits.minBet || input.amount > limits.maxBet) {
         throw new UserError(`Roulette bets are **${chips(limits.minBet)}–${chips(limits.maxBet)}** chips per spot.`, 'bet_limits');
       }
@@ -205,13 +223,18 @@ export class RouletteService {
       if (same) same.amount += input.amount;
       else state.bets.push({ userId: input.userId, type: input.type, ...(input.type === 'straight' ? { number: input.number } : {}), amount: input.amount });
       state.names[input.userId] = input.displayName;
-      if (state.deadline === null) state.deadline = now + this.settings(record.guildId).roulette.bettingSeconds * 1000;
+      state.ready = state.ready.filter((userId) => userId !== input.userId);
+      if (state.deadline === null) {
+        state.deadline = now + limits.bettingSeconds * 1000;
+        state.readyAt = now + Math.min(limits.minimumReadySeconds, limits.bettingSeconds) * 1000;
+      }
     });
   }
 
-  async clearBets(wheelId: string, userId: string, origin?: object): Promise<number> {
+  async clearBets(wheelId: string, userId: string, origin?: object, roundId?: string): Promise<number> {
     let refunded = 0;
-    await this.mutate(wheelId, origin, ({ record, state }) => {
+    await this.mutate(wheelId, origin, ({ record, state, now }) => {
+      this.requireBetting(state, roundId, now);
       if (!state.bets.some((b) => b.userId === userId)) throw new UserError('You have no bets on this spin.', 'no_bets');
       state.opSeq++;
       refunded = this.economy.cancelHeld({
@@ -222,31 +245,55 @@ export class RouletteService {
         memo: 'Roulette bets withdrawn',
       });
       state.bets = state.bets.filter((b) => b.userId !== userId);
-      if (state.bets.length === 0) state.deadline = null;
+      state.ready = state.ready.filter((voter) => voter !== userId);
+      if (state.bets.length === 0) this.resetBetting(state);
     });
     return refunded;
   }
 
-  async handleDeadline(wheelId: string, deadline: number): Promise<void> {
+  async vote(wheelId: string, userId: string, roundId: string, ready: boolean, origin?: object): Promise<void> {
+    await this.mutate(wheelId, origin, ({ state, now }) => {
+      this.requireBetting(state, roundId, now);
+      if (!state.bets.some((bet) => bet.userId === userId)) {
+        throw new UserError('Place a bet in this spin before voting.', 'no_bets');
+      }
+      if (state.ready.includes(userId) === ready) return 'unchanged';
+      state.ready = ready ? [...state.ready, userId] : state.ready.filter((voter) => voter !== userId);
+      return undefined;
+    });
+  }
+
+  private requireBetting(state: RouletteState, roundId: string | undefined, now: number): void {
+    const due = rouletteSpinAt(state);
+    if ((roundId !== undefined && roundId !== state.roundId) || (due !== null && now >= due)) {
+      throw new StaleActionError('That roulette betting window has closed. Use the controls on the current spin.');
+    }
+  }
+
+  private resetBetting(state: RouletteState): void {
+    state.bets = [];
+    state.ready = [];
+    state.names = {};
+    state.deadline = null;
+    state.readyAt = null;
+    state.roundId = newId();
+  }
+
+  async handleDeadline(wheelId: string, roundId: string, due: number): Promise<void> {
+    const stillDue = (state: RouletteState) => state.roundId === roundId && rouletteSpinAt(state) === due;
     try {
       await this.mutate(wheelId, undefined, (ctx) => {
-        if (ctx.state.deadline !== deadline) return 'unchanged';
-        if (ctx.state.bets.length === 0) {
-          ctx.state.deadline = null;
-          return undefined;
-        }
+        if (!stillDue(ctx.state) || ctx.now < due) return 'unchanged';
         this.spin(ctx);
         return 'spun';
       });
     } catch (error) {
-      // Never leave a wheel stuck with bets on it: void this spin and refund everyone.
+      // Never leave a wheel stuck with bets on it: void only the spin that failed.
       this.logger.error('roulette spin failed; voiding and refunding', { wheelId, error });
       await this.mutate(wheelId, undefined, ({ record, state }) => {
-        if (state.bets.length === 0) return 'unchanged';
+        if (!stillDue(state)) return 'unchanged';
         this.recorder.voidRound(record.guildId, state.roundId, 'roulette', record.id, 'Spin failed — bets refunded');
-        state.bets = [];
-        state.deadline = null;
-        state.roundId = newId();
+        this.resetBetting(state);
         return undefined;
       }).catch((e: unknown) => this.logger.error('roulette void failed', { wheelId, error: e }));
     }
@@ -294,10 +341,21 @@ export class RouletteService {
         continue;
       }
       if (this.recorder.isRecorded(state.roundId)) {
-        state.roundId = newId();
-        state.bets = [];
+        this.resetBetting(state);
       }
-      state.deadline = state.bets.length > 0 ? now + this.settings(row.guild_id).roulette.bettingSeconds * 1000 : null;
+      const bettors = new Set(state.bets.map((bet) => bet.userId));
+      state.ready = Array.isArray(state.ready) ? [...new Set(state.ready.filter((id) => bettors.has(id)))] : [];
+      if (bettors.size > 0) {
+        const limits = this.settings(row.guild_id).roulette;
+        const legacy = !Number.isSafeInteger(state.readyAt) || !Number.isSafeInteger(state.deadline);
+        if (legacy) {
+          state.deadline = now + limits.bettingSeconds * 1000;
+          state.readyAt = now + Math.min(limits.bettingSeconds, limits.minimumReadySeconds) * 1000;
+        }
+      } else {
+        state.deadline = null;
+        state.readyAt = null;
+      }
       const record: WheelRecord = {
         id: row.id,
         guildId: row.guild_id,
@@ -371,9 +429,7 @@ export class RouletteService {
     state.spinNumber++;
     state.history = [number, ...state.history].slice(0, 15);
     state.lastResult = { spinNumber: state.spinNumber, number, players: results.sort((a, b) => b.net - a.net), at: now };
-    state.bets = [];
-    state.deadline = null;
-    state.roundId = newId();
+    this.resetBetting(state);
     this.logger.debug('spin', { guildId: record.guildId, number });
   }
 
@@ -414,18 +470,20 @@ export class RouletteService {
   }
 
   private arm(wheelId: string, state: RouletteState): void {
-    if (state.deadline === null) {
+    const due = rouletteSpinAt(state);
+    if (due === null) {
       this.scheduler.clear(this.timerKey(wheelId));
       this.scheduler.clear(this.countdownKey(wheelId));
       return;
     }
-    const deadline = state.deadline;
-    this.scheduler.set(this.timerKey(wheelId), deadline, () => void this.handleDeadline(wheelId, deadline));
+    const roundId = state.roundId;
+    this.scheduler.set(this.timerKey(wheelId), due, () => void this.handleDeadline(wheelId, roundId, due));
     // Redraw without the live countdown shortly before the spin (see COUNTDOWN_CUTOFF_MS).
-    const redrawAt = deadline - COUNTDOWN_CUTOFF_MS;
+    const redrawAt = due - COUNTDOWN_CUTOFF_MS;
     if (redrawAt > this.clock.now()) {
       this.scheduler.set(this.countdownKey(wheelId), redrawAt, () => {
-        if (this.wheels.get(wheelId)?.state.deadline === deadline) this.observer.wheelChanged(wheelId, false);
+        const current = this.wheels.get(wheelId)?.state;
+        if (current?.roundId === roundId && rouletteSpinAt(current) === due) this.observer.wheelChanged(wheelId, false);
       });
     } else {
       this.scheduler.clear(this.countdownKey(wheelId));

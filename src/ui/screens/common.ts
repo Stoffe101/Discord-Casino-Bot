@@ -14,7 +14,7 @@ export interface Viewer {
   isAdmin: boolean;
 }
 
-export type NavTarget = 'home' | 'wallet' | 'profile' | 'leaderboard' | 'rewards' | 'tables' | 'games' | 'help';
+export type NavTarget = 'home' | 'games' | 'wallet' | 'leaderboard' | 'profile';
 
 export const NAV = {
   home: cid('nav', 'home'),
@@ -27,20 +27,18 @@ export const NAV = {
   help: cid('nav', 'help', 'start'),
 } as const;
 
-/** Bottom navigation row shared by every personal screen (the current screen is omitted). */
-export function navRow(current: NavTarget, extra: ReturnType<typeof button>[] = []) {
-  const items: { target: NavTarget; label: string; emoji: string }[] = [
-    { target: 'home', label: 'Home', emoji: ICONS.home },
-    { target: 'wallet', label: 'Wallet', emoji: ICONS.wallet },
-    { target: 'profile', label: 'Profile', emoji: ICONS.profile },
-    { target: 'leaderboard', label: 'Leaderboards', emoji: ICONS.leaderboard },
-    { target: 'rewards', label: 'Rewards', emoji: ICONS.rewards },
-  ];
-  const buttons = items
-    .filter((i) => i.target !== current)
-    .slice(0, 5 - extra.length)
-    .map((i) => button({ id: NAV[i.target], label: i.label, emoji: i.emoji }));
-  return row(...extra, ...buttons);
+const DESTINATIONS = [
+  { target: 'home', label: 'Home', emoji: ICONS.home },
+  { target: 'games', label: 'Games', emoji: ICONS.games },
+  { target: 'wallet', label: 'Wallet', emoji: ICONS.wallet },
+  { target: 'leaderboard', label: 'Leaderboards', emoji: ICONS.leaderboard },
+  { target: 'profile', label: 'Profile', emoji: ICONS.profile },
+] as const;
+
+/** Keep the destination order and position consistent across private screens. */
+export function navRow(current?: NavTarget, disabled = false) {
+  return row(...DESTINATIONS.map(({ target, label, emoji }) =>
+    button({ id: NAV[target], label, emoji, tone: target === current ? 'primary' : 'secondary', disabled })));
 }
 
 export function name(text: string): string {

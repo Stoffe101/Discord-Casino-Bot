@@ -62,7 +62,7 @@ describe('animated GIFs', () => {
     h = new CasinoHarness({ animations: true });
     h.fd.recording = true;
     const [alex, hanna] = [h.user('Alex'), h.user('Hanna')];
-    const hub = async (u: typeof alex) => h.seen(await h.click(u, h.seen(await h.slash(u, 'casino'))!, 'More Games'))!;
+    const hub = async (u: typeof alex) => h.seen(await h.click(u, h.seen(await h.slash(u, 'casino'))!, 'Games'))!;
     // Slots: the click answers with rolling reels, then the result.
     const machine = h.seen(await h.click(alex, await hub(alex), 'Play slots'))!;
     h.fd.timeline.length = 0;

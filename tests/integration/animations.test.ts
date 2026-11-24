@@ -69,7 +69,7 @@ describe('blackjack animation frames', () => {
 
 describe('other game animations', () => {
   async function hub(user: ReturnType<CasinoHarness['user']>) {
-    return h.seen(await h.click(user, h.seen(await h.slash(user, 'casino'))!, 'More Games'))!;
+    return h.seen(await h.click(user, h.seen(await h.slash(user, 'casino'))!, 'Games'))!;
   }
 
   it('slots: reels stop in turn, controls locked and balance unchanged until the result', async () => {
@@ -129,7 +129,7 @@ describe('animation safety', () => {
   it('slots never stay stuck mid-spin when an animation edit fails', async () => {
     h = new CasinoHarness();
     const alex = h.user('Alex');
-    const hubMessage = h.seen(await h.click(alex, h.seen(await h.slash(alex, 'casino'))!, 'More Games'))!;
+    const hubMessage = h.seen(await h.click(alex, h.seen(await h.slash(alex, 'casino'))!, 'Games'))!;
     const machine = h.seen(await h.click(alex, hubMessage, 'Play slots'))!;
     // Every edit of the interaction's message fails (e.g. a network blip after the first frame).
     h.fd.fault = (method, route) => (method === 'PATCH' && route.startsWith('/webhooks/') ? { status: 500, body: { code: 0, message: 'boom' } } : null);

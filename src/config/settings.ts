@@ -41,7 +41,7 @@ export interface GuildSettings {
     idleMinutes: number;
   };
   coinflip: { enabled: boolean; minBet: number; maxBet: number; expirySeconds: number };
-  roulette: { enabled: boolean; minBet: number; maxBet: number; bettingSeconds: number };
+  roulette: { enabled: boolean; minBet: number; maxBet: number; bettingSeconds: number; minimumReadySeconds: number };
   slots: { enabled: boolean; minBet: number; maxBet: number };
 }
 
@@ -83,7 +83,7 @@ export const DEFAULT_SETTINGS: GuildSettings = {
     idleMinutes: 30,
   },
   coinflip: { enabled: true, minBet: 10, maxBet: 1000, expirySeconds: 120 },
-  roulette: { enabled: true, minBet: 10, maxBet: 500, bettingSeconds: 25 },
+  roulette: { enabled: true, minBet: 10, maxBet: 500, bettingSeconds: 25, minimumReadySeconds: 8 },
   slots: { enabled: true, minBet: 5, maxBet: 250 },
 };
 
@@ -147,6 +147,7 @@ export const SETTING_SPECS: readonly SettingSpec[] = [
   { key: 'roulette.minBet', group: 'games', label: 'Roulette min', help: 'Minimum bet', type: 'int', min: 1, max: 1_000_000 },
   { key: 'roulette.maxBet', group: 'games', label: 'Roulette max', help: 'Maximum bet per spot', type: 'int', min: 1, max: 10_000_000 },
   { key: 'roulette.bettingSeconds', group: 'games', label: 'Roulette betting (s)', help: 'Window after the first bet', type: 'int', min: 10, max: 120 },
+  { key: 'roulette.minimumReadySeconds', group: 'games', label: 'Roulette early start (s)', help: 'Minimum time before a ready majority can spin', type: 'int', min: 1, max: 120 },
   { key: 'slots.enabled', group: 'games', label: 'Slots', help: 'Personal slot machine', type: 'bool' },
   { key: 'slots.minBet', group: 'games', label: 'Slots min', help: 'Minimum spin', type: 'int', min: 1, max: 1_000_000 },
   { key: 'slots.maxBet', group: 'games', label: 'Slots max', help: 'Maximum spin', type: 'int', min: 1, max: 10_000_000 },

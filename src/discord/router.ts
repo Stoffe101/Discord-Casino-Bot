@@ -12,7 +12,7 @@ import {
   type UserContextMenuCommandInteraction,
 } from 'discord.js';
 import type { CasinoApp } from '../app/casino-app.js';
-import { InsufficientFundsError, UserError, isUserError } from '../core/errors.js';
+import { InsufficientFundsError, StaleActionError, UserError, isUserError } from '../core/errors.js';
 import { chips, escapeMarkdown, plural, signedChips, parseChipAmount } from '../core/format.js';
 import { shortCode } from '../core/random.js';
 import { getSpec, type SettingGroup } from '../config/settings.js';
@@ -23,6 +23,7 @@ import type { CosmeticKind } from '../domain/progression.js';
 import type { Challenge, CoinSide } from '../games/coinflip/coinflip-service.js';
 import { isBetType } from '../games/roulette/engine.js';
 import type { PlayerAction } from '../games/blackjack/engine.js';
+import { boardComponent, readBoardLocation } from '../ui/navigation.js';
 import { cid, intArg, parseCid } from '../ui/custom-id.js';
 import { button, linkButton, row, withNote, type Screen } from '../ui/kit.js';
 import { COLORS, ICONS } from '../ui/theme.js';
@@ -38,8 +39,10 @@ import {
   myHandScreen,
   rulesScreen,
   tablesScreen,
+  TABLE_FILTERS,
+  type TableFilter,
 } from '../ui/screens/blackjack.js';
-import { coinflipModal, gamesHubScreen, paytableScreen, rouletteBetModal, rouletteHelpScreen, slotsScreen } from '../ui/screens/games.js';
+import { coinflipLobbyScreen, coinflipModal, gamesHubScreen, paytableScreen, rouletteBetModal, rouletteHelpScreen, slotsScreen } from '../ui/screens/games.js';
 import { HELP_TOPICS, helpScreen, type HelpTopic } from '../ui/screens/help.js';
 import { adjustModal, adminScreen, adminTablesScreen, auditScreen, devResetModal, settingModal } from '../ui/screens/admin.js';
 import type { ModalSpec } from '../ui/kit.js';
@@ -429,10 +432,24 @@ export class InteractionRouter {
         const info = LEADERBOARD_CATEGORIES.find((c) => c.id === category);
         return this.show(i, leaderboardScreen(this.app, viewer, category, info?.periods.includes(period) ? period : 'all', 0));
       }
-      case 'lbpro': {
-        arm('update');
-        const userId = i.isStringSelectMenu() ? i.values[0]! : viewer.userId;
-        return this.show(i, profileScreen(this.app, viewer, await this.profileTarget(viewer.guildId, userId)));
+      case 'lbpro':
+      case 'lbback': {
+        arm(ephemeral ? 'update' : 'reply');
+        const location = readBoardLocation(i.customId, viewer);
+        if (!location && !(scope === 'lbpro' && action === 'view')) {
+          return this.show(i, leaderboardScreen(this.app, viewer, 'net', 'all', 0));
+        }
+        if (scope === 'lbback' && location) {
+          return this.show(i, leaderboardScreen(this.app, viewer, location.category, location.period, location.page));
+        }
+        if (!i.isStringSelectMenu()) throw new UserError('Choose a player from the leaderboard.');
+        const userId = i.values[0] ?? '';
+        const player = this.app.economy.getPlayer(viewer.guildId, userId);
+        if (!player || player.leaderboard_opt_out) {
+          throw new UserError('This player is no longer listed. Refresh the leaderboard to see the current rankings.');
+        }
+        return this.show(i, profileScreen(this.app, viewer, await this.profileTarget(viewer.guildId, userId),
+          location ? boardComponent('lbback', viewer, location) : NAV.leaderboard + ':back'));
       }
       case 'help': {
         arm('update');
@@ -500,14 +517,22 @@ export class InteractionRouter {
       }
       case 'rewards':
         return this.show(i, rewardsScreen(this.app, viewer));
-      case 'tables':
-        return this.show(i, tablesScreen(this.app, viewer));
+      case 'tables': {
+        const filter = TABLE_FILTERS.find((item) => item === args[0]) ?? 'all';
+        return this.show(i, tablesScreen(this.app, viewer, filter, intArg(args[1])));
+      }
+      case 'bjrules':
+        return this.show(i, rulesScreen(this.app, viewer.guildId));
+      case 'coinflip':
+      case 'cfrules':
+        return this.show(i, coinflipLobbyScreen(this.app, viewer));
       case 'games':
         return this.show(i, gamesHubScreen(this.app, viewer));
       case 'help':
         return this.show(i, helpScreen(this.app, viewer, (HELP_TOPICS as readonly string[]).includes(args[0] ?? '') ? (args[0] as HelpTopic) : 'start'));
       case 'slots':
         this.requireOpen(viewer);
+        if (!this.app.settings.get(viewer.guildId).slots.enabled) throw new UserError('Slots are closed on this server.');
         return this.show(i, await slotsScreen(this.app, viewer, intArg(args[0], this.app.settings.get(viewer.guildId).slots.minBet)));
       default:
         return this.show(i, homeScreen(this.app, viewer));
@@ -532,6 +557,12 @@ export class InteractionRouter {
   // ───────────────────────────── tables (finding / creating / joining) ─────────────────────────────
 
   private async tables(i: Component, viewer: Viewer, action: string, args: string[], arm: (m: AckMode) => void): Promise<void> {
+    if (action === 'filter') {
+      arm(this.fromEphemeral(i) ? 'update' : 'reply');
+      const value = i.isStringSelectMenu() ? i.values[0] : undefined;
+      const filter: TableFilter = TABLE_FILTERS.find((item) => item === value) ?? 'all';
+      return this.show(i, tablesScreen(this.app, viewer, filter));
+    }
     this.requireOpen(viewer);
     switch (action) {
       case 'create': {
@@ -751,7 +782,7 @@ export class InteractionRouter {
         arm(this.fromEphemeral(i) ? 'update' : 'reply');
         return this.openRoulette(i, viewer);
       case 'help':
-        return this.show(i, rouletteHelpScreen(), 'private');
+        return this.show(i, rouletteHelpScreen());
       case 'bet': {
         this.requireOpen(viewer);
         if (!i.isStringSelectMenu()) return;
@@ -759,11 +790,21 @@ export class InteractionRouter {
         if (!isBetType(type)) throw new UserError('Unknown bet type.');
         const wheel = this.wheel(viewer, args[0] ?? '');
         const limits = this.app.settings.get(viewer.guildId).roulette;
-        return this.showModal(i, rouletteBetModal(wheel.record.id, type, limits.minBet, limits.maxBet));
+        if (args[1] && args[1] !== wheel.state.roundId) throw new StaleActionError('Pick a bet from the current spin.');
+        return this.showModal(i, rouletteBetModal(wheel.record.id, type, limits.minBet, limits.maxBet, wheel.state.roundId));
       }
-      case 'clear':
+      case 'clear': {
         arm('update');
-        await this.app.roulette.clearBets(this.wheel(viewer, args[0] ?? '').record.id, viewer.userId, i);
+        const wheel = this.wheel(viewer, args[0] ?? '');
+        if (!args[1]) throw new StaleActionError('Use the controls on the current spin.');
+        await this.app.roulette.clearBets(wheel.record.id, viewer.userId, i, args[1]);
+        return this.settle(i);
+      }
+      case 'ready':
+      case 'unready':
+        arm('update');
+        this.requireOpen(viewer);
+        await this.app.roulette.vote(this.wheel(viewer, args[0] ?? '').record.id, viewer.userId, args[1] ?? '', action === 'ready', i);
         return this.settle(i);
     }
   }
@@ -772,7 +813,7 @@ export class InteractionRouter {
 
   private async slots(i: Component, viewer: Viewer, action: string, args: string[], arm: (m: AckMode) => void): Promise<void> {
     arm('update');
-    if (action === 'pay') return this.show(i, paytableScreen(intArg(args[0])));
+    if (action === 'pay') return this.show(i, paytableScreen(intArg(args[0], this.app.settings.get(viewer.guildId).slots.minBet)));
     if (action === 'spin') {
       this.requireOpen(viewer);
       const bet = intArg(args[0]);
@@ -970,11 +1011,13 @@ export class InteractionRouter {
       case 'rlbet': {
         arm('update');
         this.requireOpen(viewer);
-        const [rawWheelId = '', type = ''] = args;
-        const wheelId = this.wheel(viewer, rawWheelId).record.id;
+        const [rawWheelId = '', type = '', roundId = ''] = args;
+        const wheel = this.wheel(viewer, rawWheelId);
+        if (wheel.state.roundId !== roundId) throw new StaleActionError('Reopen the bet menu for the current spin.');
+        const wheelId = wheel.record.id;
         if (!isBetType(type)) throw new UserError('Unknown bet type.');
         const number = type === 'straight' ? amount(field('number')) : undefined;
-        await this.app.roulette.placeBet(wheelId, { userId: viewer.userId, displayName: viewer.displayName, type, number, amount: amount(field('amount'), { available: wallet(), max: this.app.settings.get(viewer.guildId).roulette.maxBet }) }, i);
+        await this.app.roulette.placeBet(wheelId, { roundId, userId: viewer.userId, displayName: viewer.displayName, type, number, amount: amount(field('amount'), { available: wallet(), max: this.app.settings.get(viewer.guildId).roulette.maxBet }) }, i);
         return this.settle(i);
       }
       case 'cf': {

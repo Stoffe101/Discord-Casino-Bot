@@ -7,7 +7,7 @@ import { stylePreviewSvg } from '../../render/game-images.js';
 import { cid } from '../custom-id.js';
 import { button, container, gallery, option, progressBar, row, section, select, separator, text, thumbnail, type Screen } from '../kit.js';
 import { COLORS, ICONS } from '../theme.js';
-import { NAV, name, navRow, type Viewer } from './common.js';
+import { name, navRow, type Viewer } from './common.js';
 
 export interface ProfileTarget {
   userId: string;
@@ -15,7 +15,7 @@ export interface ProfileTarget {
   avatarUrl: string;
 }
 
-export function profileScreen(app: CasinoApp, viewer: Viewer, target: ProfileTarget): Screen {
+export function profileScreen(app: CasinoApp, viewer: Viewer, target: ProfileTarget, backId?: string): Screen {
   const self = target.userId === viewer.userId;
   const player = self
     ? app.economy.ensurePlayer(viewer.guildId, viewer.userId, viewer.displayName)
@@ -24,8 +24,8 @@ export function profileScreen(app: CasinoApp, viewer: Viewer, target: ProfileTar
     return {
       components: [
         container(COLORS.charcoal, [
+        navRow('profile'),
           text(`## ${target.displayName}\nThis player hasn't visited the casino yet.`),
-          navRow('profile'),
         ]),
       ],
     };
@@ -69,6 +69,7 @@ export function profileScreen(app: CasinoApp, viewer: Viewer, target: ProfileTar
   return {
     components: [
       container(COLORS.emerald, [
+        navRow('profile'),
         section(
           [
             `## ${target.displayName}${title ? `\n-# *“${title}”*` : ''}`,
@@ -89,8 +90,7 @@ export function profileScreen(app: CasinoApp, viewer: Viewer, target: ProfileTar
         row(
           button({ id: cid('nav', 'achv', target.userId, 0), label: 'Achievements', emoji: ICONS.achievements }),
           self ? button({ id: cid('nav', 'style'), label: 'Customize', emoji: ICONS.style }) : null,
-          button({ id: NAV.leaderboard, label: 'Leaderboards', emoji: ICONS.leaderboard }),
-          button({ id: NAV.home, label: 'Home', emoji: ICONS.home }),
+          backId ? button({ id: backId, label: 'Back to leaderboard', emoji: ICONS.back }) : null,
           self ? button({ id: cid('nav', 'privacy'), label: player.leaderboard_opt_out ? 'Show me on boards' : 'Hide me from boards' }) : null,
         ),
       ]),
@@ -120,6 +120,7 @@ export function achievementsScreen(app: CasinoApp, viewer: Viewer, targetId: str
   return {
     components: [
       container(COLORS.gold, [
+        navRow('profile'),
         text(`## Achievements · ${targetName}\n-# ${unlocked.size} of ${ACHIEVEMENTS.length} unlocked`),
         separator(),
         text(lines.join('\n')),
@@ -127,8 +128,7 @@ export function achievementsScreen(app: CasinoApp, viewer: Viewer, targetId: str
           button({ id: cid('nav', 'achv', targetId, p - 1), emoji: ICONS.back, disabled: p === 0 }),
           button({ id: cid('nav', 'achv', targetId, 'page'), label: `Page ${p + 1} of ${pages}`, disabled: true }),
           button({ id: cid('nav', 'achv', targetId, p + 1), emoji: ICONS.next, disabled: p >= pages - 1 }),
-          button({ id: cid('nav', 'profile', targetId === viewer.userId ? '' : targetId), label: 'Profile', emoji: ICONS.profile }),
-          button({ id: NAV.home, label: 'Home', emoji: ICONS.home }),
+          button({ id: cid('nav', 'profile', targetId === viewer.userId ? '' : targetId, 'from-achv'), label: 'Profile', emoji: ICONS.profile }),
         ),
       ]),
     ],
@@ -151,14 +151,14 @@ export async function styleScreen(app: CasinoApp, viewer: Viewer): Promise<Scree
     files: [{ name: 'style.png', data: png, description: 'Preview of your felt and card back' }],
     components: [
       container(COLORS.violet, [
+        navRow('profile'),
         text(`## Customize\n-# Cosmetics unlock with levels and achievements. They never affect the odds.\nYour **felt** and **card back** are used at tables you open.`),
         gallery([{ url: 'attachment://style.png', description: 'Preview of your felt and card back' }]),
         select({ id: cid('style', 'card_back'), placeholder: 'Card back', options: choices('card_back', player.card_back_id) }),
         select({ id: cid('style', 'felt'), placeholder: 'Table felt', options: choices('felt', player.felt_id) }),
         select({ id: cid('style', 'title'), placeholder: 'Profile title', options: titleOptions }),
         row(
-          button({ id: cid('nav', 'profile', ''), label: 'Profile', emoji: ICONS.profile }),
-          button({ id: NAV.home, label: 'Home', emoji: ICONS.home }),
+          button({ id: cid('nav', 'profile', '', 'from-style'), label: 'Back to profile', emoji: ICONS.profile }),
         ),
       ]),
     ],

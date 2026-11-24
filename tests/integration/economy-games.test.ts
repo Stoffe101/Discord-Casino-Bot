@@ -71,7 +71,7 @@ describe('economy through Discord', () => {
 describe('other games through Discord', () => {
   async function gamesHub(user: ReturnType<CasinoHarness['user']>): Promise<FakeMessage> {
     const home = h.seen(await h.slash(user, 'casino'))!;
-    return h.seen(await h.click(user, home, 'More Games'))!;
+    return h.seen(await h.click(user, home, 'Games'))!;
   }
 
   it('spins the slots and ignores a duplicate spin click', async () => {

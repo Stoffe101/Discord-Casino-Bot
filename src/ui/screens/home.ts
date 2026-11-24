@@ -1,6 +1,7 @@
 import type { CasinoApp } from '../../app/casino-app.js';
 import { chips, discordTime, durationShort, signedChips } from '../../core/format.js';
 import type { LedgerRow } from '../../domain/economy/economy-service.js';
+import { GAMES, gameEnabled } from '../game-menu.js';
 import { cid } from '../custom-id.js';
 import { button, container, progressBar, row, section, separator, text, thumbnail, type Screen } from '../kit.js';
 import { COLORS, ICONS } from '../theme.js';
@@ -75,6 +76,7 @@ export function homeScreen(app: CasinoApp, viewer: Viewer): Screen {
   return {
     components: [
       container(COLORS.emerald, [
+        navRow('home'),
         section([`# ${settings.casinoName}`, greeting], thumbnail(viewer.avatarUrl, `${viewer.displayName}'s avatar`)),
         separator(),
         text(balanceLine),
@@ -84,10 +86,10 @@ export function homeScreen(app: CasinoApp, viewer: Viewer): Screen {
         row(
           playButton,
           button({ id: NAV.tables, label: 'Tables', emoji: ICONS.tables }),
-          button({ id: NAV.games, label: 'More Games', emoji: ICONS.games }),
           button({ id: NAV.help, label: 'Help', emoji: ICONS.help }),
         ),
-        navRow('home'),
+        row(...GAMES.filter((game) => game.id !== 'blackjack').map((game) =>
+          button({ id: game.play, label: game.label, emoji: game.icon, disabled: !gameEnabled(settings, game.id) }))),
         isNew ? text('-# New here? **Play Blackjack** seats you at a table. Chips are free and fictional — they can never be bought or cashed out.') : null,
       ]),
     ],
@@ -111,10 +113,8 @@ const LEDGER_LABELS: Record<string, string> = {
   admin_adjust: 'Admin adjustment',
 };
 
-const GAME_LABELS: Record<string, string> = { blackjack: 'Blackjack', roulette: 'Roulette', slots: 'Slots', coinflip: 'Coinflip' };
-
 export function ledgerLine(entry: LedgerRow): string {
-  const label = `${entry.game ? `${GAME_LABELS[entry.game] ?? entry.game} ` : ''}${LEDGER_LABELS[entry.type] ?? entry.type}`;
+  const label = `${entry.game ? `${GAMES.find((game) => game.id === entry.game)?.label ?? entry.game} ` : ''}${LEDGER_LABELS[entry.type] ?? entry.type}`;
   const memo = entry.memo && !['Passive earnings'].includes(entry.memo) ? ` — ${entry.memo}` : '';
   const amount = entry.amount === 0 ? '±0' : signedChips(entry.amount);
   return `\`${amount.padStart(8)}\` ${label}${memo.length > 90 ? `${memo.slice(0, 89)}…` : memo} · ${discordTime(entry.created_at)}`;
@@ -138,10 +138,11 @@ export function walletScreen(app: CasinoApp, viewer: Viewer): Screen {
   return {
     components: [
       container(COLORS.gold, [
+        navRow('wallet'),
         section(
           [
             '## Wallet',
-            `# ${chips(wallet.balance)} chips\n-# ${wallet.reserved > 0 ? `${chips(wallet.reserved)} committed to games · ${chips(wallet.total)} total` : 'Nothing committed to games right now'}`,
+            `# ${chips(wallet.balance)} available\n-# ${chips(wallet.reserved)} committed · ${chips(wallet.total)} total chips`,
           ],
           thumbnail(viewer.avatarUrl),
         ),
@@ -155,8 +156,6 @@ export function walletScreen(app: CasinoApp, viewer: Viewer): Screen {
         text(recent.length ? `**Recent activity**\n${recent.map(ledgerLine).join('\n')}` : '**Recent activity**\nNothing yet.'),
         row(
           button({ id: cid('nav', 'history', 0), label: 'Full history', emoji: ICONS.history }),
-          button({ id: NAV.wallet, label: 'Refresh', emoji: ICONS.refresh }),
-          button({ id: NAV.home, label: 'Home', emoji: ICONS.home }),
           button({ id: NAV.rewards, label: 'Rewards', emoji: ICONS.rewards }),
         ),
       ]),
@@ -174,6 +173,7 @@ export function historyScreen(app: CasinoApp, viewer: Viewer, page: number): Scr
   return {
     components: [
       container(COLORS.gold, [
+        navRow('wallet'),
         text(`## Transaction history\n-# Every chip movement is recorded in an append-only ledger. ${total} entries.`),
         separator(),
         text(entries.length ? entries.map(ledgerLine).join('\n') : 'No transactions yet.'),
@@ -181,8 +181,7 @@ export function historyScreen(app: CasinoApp, viewer: Viewer, page: number): Scr
           button({ id: cid('nav', 'history', p - 1), emoji: ICONS.back, disabled: p === 0 }),
           button({ id: cid('nav', 'history', 'page'), label: `Page ${p + 1} of ${pages}`, disabled: true }),
           button({ id: cid('nav', 'history', p + 1), emoji: ICONS.next, disabled: p >= pages - 1 }),
-          button({ id: NAV.wallet, label: 'Wallet', emoji: ICONS.wallet }),
-          button({ id: NAV.home, label: 'Home', emoji: ICONS.home }),
+          button({ id: cid('nav', 'wallet', 'back'), label: 'Back to wallet', emoji: ICONS.back }),
         ),
       ]),
     ],

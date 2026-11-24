@@ -98,7 +98,7 @@ describe('thread mode (full stack)', () => {
   it('opens roulette in its own #casino thread and settles a spin', async () => {
     const h = harness();
     const [alice, bob] = [h.user('Alice'), h.user('Bob')];
-    const hub = h.seen(await h.click(alice, h.seen(await h.slash(alice, 'casino')), 'More Games'))!;
+    const hub = h.seen(await h.click(alice, h.seen(await h.slash(alice, 'casino')), 'Games'))!;
     await h.click(alice, hub, 'Open the wheel');
     const record = h.app.roulette.wheelFor(h.guildId)!.record;
     expect(h.fd.channels.get(record.threadId!)?.parentId).toBe(h.casino);

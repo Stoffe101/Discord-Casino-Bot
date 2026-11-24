@@ -73,7 +73,7 @@ describe('countdowns never outlive their deadline', () => {
   it('roulette: "spinning now" replaces the countdown before the spin', async () => {
     h = new CasinoHarness();
     const alex = h.user('Alex');
-    const hub = h.seen(await h.click(alex, h.seen(await h.slash(alex, 'casino'))!, 'More Games'))!;
+    const hub = h.seen(await h.click(alex, h.seen(await h.slash(alex, 'casino'))!, 'Games'))!;
     await h.click(alex, hub, 'Open the wheel');
     const wheel = h.app.roulette.wheelFor(h.guildId)!.record;
     const panel = () => h.fd.messages.get(h.app.roulette.peek(wheel.id)!.record.messageId!)!;
@@ -132,7 +132,7 @@ describe('slots', () => {
   it('a reopened machine only mentions the last spin; a spin shows its result', async () => {
     h = new CasinoHarness();
     const alex = h.user('Alex');
-    const hub = h.seen(await h.click(alex, h.seen(await h.slash(alex, 'casino'))!, 'More Games'))!;
+    const hub = h.seen(await h.click(alex, h.seen(await h.slash(alex, 'casino'))!, 'Games'))!;
     const machine = h.seen(await h.click(alex, hub, 'Play slots'))!;
     expect(h.text(machine)).toContain('Pull the lever');
     await h.click(alex, machine, /^Spin/);

@@ -39,6 +39,7 @@ export function rewardsScreen(app: CasinoApp, viewer: Viewer): Screen {
   return {
     components: [
       container(COLORS.gold, [
+        navRow('wallet'),
         text(`## 🎁 Rewards\n-# Free chips for showing up. Rewards never depend on how much you bet.`),
         text(`${daily}\n${passive}`),
         row(...claimButtons(app, viewer, 'rewards')),
@@ -49,7 +50,6 @@ export function rewardsScreen(app: CasinoApp, viewer: Viewer): Screen {
           button({ id: cid('nav', 'achv', viewer.userId, 0), label: 'Achievements', emoji: ICONS.achievements }),
           button({ id: cid('nav', 'rewards'), label: 'Refresh', emoji: ICONS.refresh }),
         ),
-        navRow('rewards'),
       ]),
     ],
   };

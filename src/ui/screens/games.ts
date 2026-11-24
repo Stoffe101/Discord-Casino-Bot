@@ -3,16 +3,16 @@ import type { CasinoApp } from '../../app/casino-app.js';
 import { chips, countdown, discordTime, escapeMarkdown, signedChips } from '../../core/format.js';
 import type { Challenge } from '../../games/coinflip/coinflip-service.js';
 import { BET_TYPES, describeNumber, pocketColor, type RouletteBetType } from '../../games/roulette/engine.js';
-import type { WheelSnapshot } from '../../games/roulette/roulette-service.js';
+import { rouletteReady, rouletteSpinAt, type WheelSnapshot } from '../../games/roulette/roulette-service.js';
 import { SYMBOL_NAMES, THREE_OF_A_KIND, TWO_CHERRIES, exactReturnToPlayer } from '../../games/slots/engine.js';
 import { coinSvg, coinTossFrames, rouletteSpinFrames, rouletteSvg, slotsSpinFrames, slotsSvg } from '../../render/game-images.js';
 import { framesToGif, type GifFrame } from '../../render/gif.js';
+import { GAMES, gameEnabled } from '../game-menu.js';
 import { cid } from '../custom-id.js';
 import {
   button,
   container,
   gallery,
-  linkButton,
   modal,
   option,
   row,
@@ -27,7 +27,7 @@ import {
   type Screen,
 } from '../kit.js';
 import { COLORS, ICONS } from '../theme.js';
-import { NAV, channelUrl, navRow, type Viewer } from './common.js';
+import { navRow, type Viewer } from './common.js';
 
 /** Extra time after a GIF's own length, so clients that load it a moment late still see it end. */
 const LOAD_SLACK_MS = 450;
@@ -42,33 +42,42 @@ async function gifFile(frames: GifFrame[], width: number, prefix: string): Promi
 // ───────────────────────────── hub ─────────────────────────────
 
 export function gamesHubScreen(app: CasinoApp, viewer: Viewer): Screen {
-  const s = app.settings.get(viewer.guildId);
-  const wheel = app.roulette.wheelFor(viewer.guildId);
-  const wheelUrl = wheel?.record.threadId
-    ? channelUrl(viewer.guildId, wheel.record.threadId)
-    : wheel?.record.channelId && wheel.record.messageId
-      ? channelUrl(viewer.guildId, wheel.record.channelId, wheel.record.messageId)
-      : null;
+  const settings = app.settings.get(viewer.guildId);
+  const tableCount = app.blackjack.openTables(viewer.guildId).length;
+  const availability = {
+    blackjack: `${tableCount} open ${tableCount === 1 ? 'table' : 'tables'}`,
+    roulette: app.roulette.wheelFor(viewer.guildId) ? 'Wheel open' : 'Open a shared wheel',
+    slots: `${(exactReturnToPlayer().rtp * 100).toFixed(1)}% theoretical return`,
+    coinflip: 'Two players',
+  };
   return {
     components: [
       container(COLORS.emerald, [
-        text('## 🎲 More games\n-# Blackjack is the house special — but the night is young.'),
-        section(
-          [`**${ICONS.roulette} Roulette** — a shared European wheel. Everyone bets during a short window, then it spins.\n-# Bets ${chips(s.roulette.minBet)}–${chips(s.roulette.maxBet)} per spot`],
-          wheelUrl
-            ? linkButton('Go to the wheel', wheelUrl)
-            : button({ id: cid('rl', 'open'), label: 'Open the wheel', tone: 'primary', disabled: !s.roulette.enabled }),
-        ),
-        section(
-          [`**${ICONS.slots} Emerald Slots** — your own private machine. Three reels, one payline, ${(exactReturnToPlayer().rtp * 100).toFixed(1)}% return.\n-# Spins ${chips(s.slots.minBet)}–${chips(s.slots.maxBet)}`],
-          button({ id: cid('nav', 'slots', s.slots.minBet), label: 'Play slots', tone: 'primary', disabled: !s.slots.enabled }),
-        ),
-        text(`**${ICONS.coinflip} Coinflip duel** — challenge a friend: equal stakes, one flip, winner takes the pot.\n-# Stakes ${chips(s.coinflip.minBet)}–${chips(s.coinflip.maxBet)} · the challenge is posted in this channel`),
-        s.coinflip.enabled ? userSelect(cid('cf', 'pick'), 'Challenge someone to a coinflip…') : null,
-        navRow('home', [button({ id: NAV.home, label: 'Home', emoji: ICONS.home })]),
+        navRow('games'),
+        text('## Games'),
+        ...GAMES.flatMap((game) => {
+          const enabled = gameEnabled(settings, game.id);
+          const limits = settings[game.id];
+          return [
+            section([
+              `**${game.icon} ${game.label}** · ${game.description}\n-# ${enabled ? `${availability[game.id]} · ${chips(limits.minBet)}–${chips(limits.maxBet)} chips` : 'Closed'}`,
+            ], button({ id: game.play, label: game.id === 'blackjack' ? 'Browse tables' : game.id === 'roulette' ? 'Open the wheel' : game.id === 'slots' ? 'Play slots' : 'Play', tone: 'primary', disabled: !enabled })),
+          ];
+        }),
+        row(...GAMES.map((game) => button({ id: game.rules, label: `${game.id === 'slots' ? 'Slots' : game.label} rules` }))),
+        gameEnabled(settings, 'coinflip') ? userSelect(cid('cf', 'pick'), 'Challenge a friend to coinflip…') : null,
       ]),
     ],
   };
+}
+
+export function coinflipLobbyScreen(app: CasinoApp, viewer: Viewer): Screen {
+  const enabled = gameEnabled(app.settings.get(viewer.guildId), 'coinflip');
+  return { components: [container(COLORS.gold, [
+    navRow('games'),
+    text('## Coinflip\nPick a friend to challenge. You both put up the same number of chips. The winner takes the pot.'),
+    enabled ? userSelect(cid('cf', 'pick'), 'Choose an opponent…') : text('Coinflip is closed.'),
+  ])] };
 }
 
 // ───────────────────────────── slots ─────────────────────────────
@@ -120,6 +129,7 @@ export async function slotsScreen(app: CasinoApp, viewer: Viewer, bet: number, o
     ...(anim ? { holdMs: anim.holdMs } : {}),
     components: [
       container(showResult && !spinning && last && last.payout > 0 ? COLORS.gold : COLORS.emerald, [
+        navRow('games', spinning),
         text(`## ${ICONS.slots} Emerald Slots\n-# Balance **${chips(balance)}** chips · bet **${chips(amount)}**`),
         gallery([{ url: `attachment://${file}`, description: 'Slot machine reels' }]),
         text(resultText),
@@ -127,8 +137,6 @@ export async function slotsScreen(app: CasinoApp, viewer: Viewer, bet: number, o
         row(
           button({ id: cid('sl', 'spin', amount, count), label: `Spin ${chips(amount)}`, tone: 'success', disabled: spinning || balance < amount }),
           button({ id: cid('sl', 'pay', amount), label: 'Paytable', disabled: spinning }),
-          button({ id: NAV.games, label: 'Games', emoji: ICONS.games, disabled: spinning }),
-          button({ id: NAV.home, label: 'Home', emoji: ICONS.home, disabled: spinning }),
         ),
       ]),
     ],
@@ -142,6 +150,7 @@ export function paytableScreen(bet: number): Screen {
   return {
     components: [
       container(COLORS.gold, [
+        navRow('games'),
         text(`## Paytable\n${lines.join('\n')}\n-# Payouts include your stake. Return to player ${(rtp * 100).toFixed(2)}% · a win on ${(hitRate * 100).toFixed(1)}% of spins · each reel stops independently.`),
         row(button({ id: cid('nav', 'slots', bet), label: 'Back to the machine', emoji: ICONS.back })),
       ]),
@@ -217,7 +226,12 @@ export async function roulettePanel(app: CasinoApp, wheel: Readonly<WheelSnapsho
     byUser.set(bet.userId, [...(byUser.get(bet.userId) ?? []), `${label} ${chips(bet.amount)}`]);
   }
   const betsText = [...byUser.entries()].map(([userId, bets]) => `**${escapeMarkdown(state.names[userId] ?? 'Player')}** ${bets.join(' · ')}`).join('\n');
-  const timing = state.deadline ? `spinning ${countdown(state.deadline, app.clock.now(), 'now — last bets!')}` : 'the wheel spins after the first bet';
+  const due = rouletteSpinAt(state);
+  const ready = rouletteReady(state);
+  const timing = due ? `spinning ${countdown(due, app.clock.now(), 'now — last bets!')}` : 'the wheel spins after the first bet';
+  const voting = ready.bettors > 0
+    ? `**Ready to spin: ${ready.votes}/${ready.bettors}** · ${ready.required} required${state.readyAt && state.readyAt > app.clock.now() ? ` · early start opens ${discordTime(state.readyAt)}` : ''}`
+    : null;
   return {
     files: [{ name: file, data: png, description: result ? `Roulette result ${result.number}` : 'Roulette wheel' }],
     components: [
@@ -227,13 +241,16 @@ export async function roulettePanel(app: CasinoApp, wheel: Readonly<WheelSnapsho
         lines.length ? text(lines.join('\n')) : null,
         separator(),
         text(`**Spin ${state.spinNumber + 1}** · ${timing}${betsText ? `\n${betsText}` : '\n-# No bets yet.'}`),
+        voting ? text(voting) : null,
         select({
-          id: cid('rl', 'bet', record.id),
+          id: cid('rl', 'bet', record.id, state.roundId),
           placeholder: 'Place a bet…',
           options: BET_TYPES.map((b) => option(b.label, b.type, b.description)),
         }),
         row(
-          button({ id: cid('rl', 'clear', record.id), label: 'Withdraw my bets', disabled: state.bets.length === 0 }),
+          button({ id: cid('rl', 'clear', record.id, state.roundId), label: 'Withdraw bets', disabled: !ready.bettors }),
+          button({ id: cid('rl', 'ready', record.id, state.roundId), label: 'Ready', tone: 'success', disabled: !ready.bettors }),
+          button({ id: cid('rl', 'unready', record.id, state.roundId), label: 'Withdraw vote', disabled: !ready.votes }),
           button({ id: cid('rl', 'help', record.id), label: 'How to play', emoji: ICONS.help }),
           button({ id: cid('bj', 'home', 'wheel'), label: 'Casino', emoji: ICONS.home }),
         ),
@@ -242,7 +259,7 @@ export async function roulettePanel(app: CasinoApp, wheel: Readonly<WheelSnapsho
   };
 }
 
-export function rouletteBetModal(wheelId: string, type: RouletteBetType, min: number, max: number): ModalSpec {
+export function rouletteBetModal(wheelId: string, type: RouletteBetType, min: number, max: number, roundId?: string): ModalSpec {
   const info = BET_TYPES.find((b) => b.type === type)!;
   const components = [
     textInputLabel({ id: 'amount', label: 'Bet amount', description: `${chips(min)}–${chips(max)} chips · ${info.description}`, value: String(min), max: 12, placeholder: 'e.g. 50, 1k or all' }),
@@ -250,15 +267,16 @@ export function rouletteBetModal(wheelId: string, type: RouletteBetType, min: nu
   if (type === 'straight') {
     components.unshift(textInputLabel({ id: 'number', label: 'Number (0–36)', description: 'A straight-up bet pays 35:1', max: 2, placeholder: '17' }));
   }
-  return modal(cid('m', 'rlbet', wheelId, type), `Bet on ${info.label}`, components);
+  return modal(cid('m', 'rlbet', wheelId, type, roundId), `Bet on ${info.label}`, components);
 }
 
 export function rouletteHelpScreen(): Screen {
   return {
     components: [
       container(COLORS.emerald, [
+        navRow('games'),
         text(
-          `## How roulette works\nPick a bet from the menu and enter an amount — your chips are set aside straight away. The first bet starts the betting window; when it ends the wheel spins and everyone is paid at once.\n\n${BET_TYPES.map((b) => `▸ **${b.label}** — ${b.description}`).join('\n')}\n-# Zero is green: every outside bet loses on 0. House edge 2.70% on every bet.`,
+          `## How roulette works\nPick a bet from the menu and enter an amount — your chips are set aside straight away. The first bet starts the betting window; the wheel spins when time runs out or when a majority of bettors vote Ready and the minimum betting window has passed.\n\n${BET_TYPES.map((b) => `▸ **${b.label}** — ${b.description}`).join('\n')}\n-# Zero is green: every outside bet loses on 0. House edge 2.70% on every bet.`,
         ),
       ]),
     ],

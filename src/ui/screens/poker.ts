@@ -12,6 +12,15 @@ import { channelUrl, NAV, navRow, returnToCasino, type Viewer } from './common.j
 
 const STREETS = { preflop: 'Pre-flop', flop: 'Flop', turn: 'Turn', river: 'River', complete: 'Results' } as const;
 
+/** Poker wording for the last move: "raises to 20" (the total), not the chips just added. */
+function describeAction(action: { type: string; amount: number }, streetPaid: number): string {
+  if (action.type === 'fold') return 'folds';
+  if (action.type === 'check') return 'checks';
+  if (action.type === 'call') return `calls ${chips(action.amount)}`;
+  if (action.type === 'all-in') return `is all-in${streetPaid ? ` (${chips(streetPaid)})` : ''}`;
+  return streetPaid >= action.amount ? `raises to ${chips(streetPaid)}` : `raises ${chips(action.amount)}`;
+}
+
 export function pokerUrl(record: PokerSnapshot['record']): string | null {
   return record.threadId ? channelUrl(record.guildId, record.threadId)
     : record.channelId && record.messageId ? channelUrl(record.guildId, record.channelId, record.messageId) : null;
@@ -60,7 +69,7 @@ export async function pokerPanel(app: CasinoApp, table: PokerSnapshot, animation
   const status = !view ? '### Waiting for players\nTwo funded players can start a hand.'
     : state.hand
       ? `### ${STREETS[view.street]} · Pot ${chips(pot)}${view.board.length ? `\n**Board** · ${view.board.map(cardLabel).join('  ')}` : ''}\n${active ? `**${escapeMarkdown(names[active.userId]!)} to act** · ${discordTime(state.deadline!)}` : ''}`
-        + (action && actingName ? `\n-# ${escapeMarkdown(names[actingName]!)} · ${action.type}${action.amount ? ` ${chips(action.amount)}` : ''}` : '')
+        + (action && actingName ? `\n-# ${escapeMarkdown(names[actingName]!)} ${describeAction(action, view?.seats.find((seat) => seat.seat === action.seat)?.streetPaid ?? 0)}` : '')
       : `### Results · Pot ${chips(pot)}\n${payout?.join(' · ') || 'Hand complete'}${view.result && view.result.pots.length > 1 ? `\n-# Pots ${view.result.pots.map((entry) => chips(entry.amount)).join(' · ')}` : ''}`;
   const roster = [...state.seats].sort((a, b) => a.seat - b.seat).map((seat) => {
     const handSeat = view?.seats.find((entry) => entry.userId === seat.userId);

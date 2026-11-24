@@ -146,7 +146,8 @@ it('returns an in-hand departure only at settlement and voids a damaged snapshot
   await app.poker.join(id, 'b', 'B', 100);
   await app.poker.start(id, 'a', app.poker.peek(id)!.record.version);
   await app.poker.leave(id, 'a');
-  expect(app.economy.getWallet(guildId, 'a').reserved).toBe(100);
+  // It was 'a''s turn (heads-up, the button acts first pre-flop): leaving folds at once and the hand settles.
+  expect(app.economy.getWallet(guildId, 'a').reserved).toBe(0);
   await h.advance(40_000);
   expect(app.poker.tableOfUser(guildId, 'a')).toBeUndefined();
   expect(app.economy.getWallet(guildId, 'a').reserved).toBe(0);

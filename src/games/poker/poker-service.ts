@@ -169,10 +169,15 @@ export class PokerTableService {
   }
 
   leave(id: string, userId: string): Promise<void> {
-    return this.mutate(id, undefined, (record, state) => {
+    return this.mutate(id, undefined, (record, state, now) => {
       const seat = this.requireSeat(state, userId);
-      if (state.hand?.seats.some((player) => player.seat === seat.seat)) seat.leaving = true;
-      else this.cashOut(record, state, seat);
+      if (state.hand?.seats.some((player) => player.seat === seat.seat)) {
+        seat.leaving = true;
+        // Leaving on your own turn acts for you at once (check if possible, otherwise fold) instead
+        // of making everyone wait for the turn timer.
+        return state.hand.actor === seat.seat ? this.advance(record, state, now, 'update') : 'update';
+      }
+      this.cashOut(record, state, seat);
       return 'update';
     });
   }
@@ -217,7 +222,16 @@ export class PokerTableService {
   }
 
   private advance(record: PokerTableRecord, state: PokerTableState, now: number, hint: PokerRenderHint): PokerRenderHint {
-    const hand = state.hand!;
+    let hand = state.hand!;
+    // Players cashing out after this hand are blocked from acting: check if possible, otherwise fold, at once.
+    while (!hand.result) {
+      const actor = hand.seats.find((player) => player.seat === hand.actor)!;
+      if (!this.requireSeat(state, actor.userId).leaving) break;
+      const street = hand.street;
+      hand = playPoker(hand, actor.userId, hand.seq, { type: pokerActions(hand, actor.userId)!.check ? 'check' : 'fold' });
+      if (hand.street !== street && hint === 'update') hint = 'board';
+    }
+    state.hand = hand;
     if (!hand.result) {
       state.deadline = now + record.config.turnSeconds * 1000;
       return hint;

@@ -690,8 +690,9 @@ export function rulesScreen(app: CasinoApp, guildId: string, tableId?: string): 
   return {
     components: [
       container(COLORS.emerald, [
+        navRow('games'),
         text(
-          `## ♠ House rules\n${describeRules(rules)
+          `## ${ICONS.blackjack} Blackjack house rules\n${describeRules(rules)
             .map((l) => `▸ ${l}`)
             .join('\n')}`,
         ),

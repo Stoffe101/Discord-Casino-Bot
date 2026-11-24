@@ -16,6 +16,7 @@ export const COLORS = {
 /** Button icons (unicode emoji keep working without uploading custom emoji). */
 export const ICONS = {
   home: '🏠',
+  poker: '♦️',
   blackjack: '♠️',
   tables: '🪑',
   wallet: '💰',
@@ -23,6 +24,13 @@ export const ICONS = {
   leaderboard: '🏆',
   rewards: '🎁',
   games: '🎲',
+  events: '📅',
+  matches: '🗂️',
+  missions: '📋',
+  gift: '🎁',
+  spectate: '👁️',
+  leave: '🚪',
+  hand: '🃏',
   help: '❔',
   refresh: '🔄',
   back: '◀️',

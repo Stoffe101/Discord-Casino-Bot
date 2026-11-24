@@ -27,7 +27,8 @@ import {
   type Screen,
 } from '../kit.js';
 import { COLORS, ICONS } from '../theme.js';
-import { navRow, type Viewer } from './common.js';
+import { dashboardArt } from './dashboard.js';
+import { NAV, navRow, type Viewer } from './common.js';
 
 /** Extra time after a GIF's own length, so clients that load it a moment late still see it end. */
 const LOAD_SLACK_MS = 450;
@@ -41,30 +42,40 @@ async function gifFile(frames: GifFrame[], width: number, prefix: string): Promi
 
 // ───────────────────────────── hub ─────────────────────────────
 
-export function gamesHubScreen(app: CasinoApp, viewer: Viewer): Screen {
+export async function gamesHubScreen(app: CasinoApp, viewer: Viewer): Promise<Screen> {
   const settings = app.settings.get(viewer.guildId);
-  const tableCount = app.blackjack.openTables(viewer.guildId).length;
+  const tables = app.blackjack.openTables(viewer.guildId);
+  const tableCount = tables.length;
+  const seated = tables.reduce((count, table) => count + table.state.seats.length, 0);
+  const art = await dashboardArt(settings.poker.enabled ? 'games-holdem' : 'games');
+  const games = GAMES.filter((game) => game.id !== 'poker' || settings.poker.enabled);
   const availability = {
-    blackjack: `${tableCount} open ${tableCount === 1 ? 'table' : 'tables'}`,
+    poker: `${app.poker.openTables(viewer.guildId).length} open tables · blinds ${chips(settings.poker.smallBlind)}/${chips(settings.poker.bigBlind)}`,
+    blackjack: `${tableCount} open ${tableCount === 1 ? 'table' : 'tables'} · ${seated} seated`,
     roulette: app.roulette.wheelFor(viewer.guildId) ? 'Wheel open' : 'Open a shared wheel',
     slots: `${(exactReturnToPlayer().rtp * 100).toFixed(1)}% theoretical return`,
     coinflip: 'Two players',
   };
   return {
+    files: art.files,
     components: [
       container(COLORS.emerald, [
         navRow('games'),
-        text('## Games'),
-        ...GAMES.flatMap((game) => {
+        art.component,
+        text('## The gaming floor'),
+        ...games.flatMap((game) => {
           const enabled = gameEnabled(settings, game.id);
-          const limits = settings[game.id];
+          const range = game.id === 'poker'
+            ? `Buy-in ${chips(settings.poker.minBuyIn)}–${chips(settings.poker.maxBuyIn)}`
+            : `${chips(settings[game.id].minBet)}–${chips(settings[game.id].maxBet)} chips`;
           return [
             section([
-              `**${game.icon} ${game.label}** · ${game.description}\n-# ${enabled ? `${availability[game.id]} · ${chips(limits.minBet)}–${chips(limits.maxBet)} chips` : 'Closed'}`,
-            ], button({ id: game.play, label: game.id === 'blackjack' ? 'Browse tables' : game.id === 'roulette' ? 'Open the wheel' : game.id === 'slots' ? 'Play slots' : 'Choose opponent', tone: 'primary', disabled: !enabled })),
+              `**${game.label}**\n${game.description}\n-# ${enabled ? `${availability[game.id]} · ${range}` : 'Closed'}`,
+            ], button({ id: game.play, label: game.id === 'blackjack' || game.id === 'poker' ? 'Browse tables' : game.id === 'roulette' ? 'Open the wheel' : game.id === 'slots' ? 'Play slots' : 'Choose opponent', tone: 'primary', disabled: !enabled })),
           ];
         }),
-        row(...GAMES.map((game) => button({ id: game.rules, label: `${game.id === 'slots' ? 'Slots' : game.label} rules` }))),
+        row(...games.map((game) => button({ id: game.rules, label: `${game.id === 'slots' ? 'Slots' : game.label} rules` }))),
+        row(button({ id: NAV.events, label: 'Casino events', emoji: ICONS.events })),
       ]),
     ],
   };

@@ -11,8 +11,10 @@ import { StatsService } from '../domain/stats-service.js';
 import { ProgressService } from '../domain/progress-service.js';
 import { MatchHistory } from '../domain/match-history.js';
 import { RoundRecorder } from '../domain/round-recorder.js';
+import { CasinoEvents } from '../domain/casino-events.js';
 import { LeaderboardService } from '../domain/leaderboard-service.js';
 import { BlackjackTableService } from '../tables/blackjack-table-service.js';
+import { PokerTableService } from '../games/poker/poker-service.js';
 import { CoinflipService } from '../games/coinflip/coinflip-service.js';
 import { RouletteService } from '../games/roulette/roulette-service.js';
 import { SlotsService } from '../games/slots/slots-service.js';
@@ -38,9 +40,11 @@ export class CasinoApp {
   readonly stats: StatsService;
   readonly progress: ProgressService;
   readonly recorder: RoundRecorder;
+  readonly events: CasinoEvents;
   readonly history: MatchHistory;
   readonly leaderboards: LeaderboardService;
   readonly blackjack: BlackjackTableService;
+  readonly poker: PokerTableService;
   readonly coinflip: CoinflipService;
   readonly roulette: RouletteService;
   readonly slots: SlotsService;
@@ -58,6 +62,7 @@ export class CasinoApp {
     this.stats = new StatsService(this.db);
     this.progress = new ProgressService(this.db, this.economy, this.stats, provider, this.clock);
     this.recorder = new RoundRecorder(this.db, this.economy, this.stats, this.progress, this.clock, provider);
+    this.events = new CasinoEvents({ db: this.db, clock: this.clock, scheduler: this.scheduler, settings: provider });
     this.history = new MatchHistory(this.db);
     this.leaderboards = new LeaderboardService(this.db, this.clock);
     const gameDeps = {
@@ -71,6 +76,7 @@ export class CasinoApp {
       rng: this.rng,
     };
     this.blackjack = new BlackjackTableService(gameDeps);
+    this.poker = new PokerTableService(gameDeps);
     this.coinflip = new CoinflipService(gameDeps);
     this.roulette = new RouletteService(gameDeps);
     this.slots = new SlotsService(gameDeps);
@@ -81,13 +87,15 @@ export class CasinoApp {
     return {
       blackjack: this.blackjack.recoverAll(),
       roulette: this.roulette.recoverAll(),
+      poker: this.poker.recover(),
       coinflip: this.coinflip.recoverAll(),
+      events: this.events.recover(),
       reconcile: this.economy.reconcile(),
     };
   }
 
   async shutdown(): Promise<void> {
     this.scheduler.clearAll();
-    await Promise.allSettled([this.blackjack.idle(), this.roulette.idle(), this.coinflip.idle()]);
+    await Promise.allSettled([this.blackjack.idle(), this.poker.idle(), this.roulette.idle(), this.coinflip.idle()]);
   }
 }

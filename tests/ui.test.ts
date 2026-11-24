@@ -86,8 +86,8 @@ describe('UI payloads', () => {
   it('every personal screen fits Discord limits for new and active players', async () => {
     const v = viewer(1);
     const screens: Screen[] = [
-      homeScreen(app, v),
-      walletScreen(app, v),
+      await homeScreen(app, v),
+      await walletScreen(app, v),
       historyScreen(app, v, 0),
       historyScreen(app, v, 99),
       profileScreen(app, v, { userId: v.userId, displayName: v.displayName, avatarUrl: v.avatarUrl }),
@@ -98,7 +98,7 @@ describe('UI payloads', () => {
       await styleScreen(app, v),
       rewardsScreen(app, v),
       tablesScreen(app, v),
-      gamesHubScreen(app, v),
+      await gamesHubScreen(app, v),
       await slotsScreen(app, v, 25),
       paytableScreen(25),
       rouletteHelpScreen(),

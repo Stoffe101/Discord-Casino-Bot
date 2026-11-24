@@ -16,6 +16,8 @@ import { InsufficientFundsError, StaleActionError, UserError, isUserError } from
 import { chips, escapeMarkdown, plural, signedChips, parseChipAmount } from '../core/format.js';
 import { newId, shortCode } from '../core/random.js';
 import { getSpec, type SettingGroup } from '../config/settings.js';
+import { parseEventTime } from '../domain/casino-events.js';
+import { eventDetailsScreen, eventEditor, eventInviteModal, eventsScreen } from '../ui/screens/events.js';
 import { MIN_GIFT } from '../domain/economy/economy-service.js';
 import { resetGuildData } from '../domain/dev-reset.js';
 import type { LeaderboardCategory, LeaderboardPeriod } from '../domain/leaderboard-service.js';
@@ -50,6 +52,8 @@ import { HELP_TOPICS, helpScreen, type HelpTopic } from '../ui/screens/help.js';
 import { adjustModal, adminScreen, adminTablesScreen, auditScreen, devResetModal, settingModal } from '../ui/screens/admin.js';
 import type { ModalSpec } from '../ui/kit.js';
 import type { CasinoBot } from './bot.js';
+import { PokerInteractions } from './poker-interactions.js';
+import { pokerRulesScreen } from '../ui/screens/poker.js';
 import { MIN_FRAME_HOLD_MS, type Carrier } from './panel-sync.js';
 import { createOptions, discordErrorCode, editOptions, replyOptions } from './payload.js';
 
@@ -80,13 +84,14 @@ export class InteractionRouter {
   private readonly handledChallenges = new Set<string>();
   /** How we deferred each interaction, so later responses go to the right place. */
   private readonly deferredAs = new WeakMap<object, 'update' | 'reply'>();
+  private readonly pokerInteractions: PokerInteractions;
   readonly startedAt = Date.now();
   latency = { count: 0, totalMs: 0, maxMs: 0 };
 
   constructor(
     private readonly app: CasinoApp,
     private readonly bot: CasinoBot,
-  ) {}
+  ) { this.pokerInteractions = new PokerInteractions(app, bot); }
 
   /** Called by the panel observers: the interaction that caused a change answers it. */
   claim(origin?: object): Carrier | undefined {
@@ -147,7 +152,11 @@ export class InteractionRouter {
         ? member.displayAvatarURL({ extension: 'png', size: 128 })
         : i.user.displayAvatarURL({ extension: 'png', size: 128 });
     const isAdmin = i.memberPermissions?.has(PermissionFlagsBits.ManageGuild) ?? false;
-    const viewer = { guildId: i.guildId!, userId: i.user.id, displayName, avatarUrl, isAdmin };
+    const organizerRole = this.app.settings.get(i.guildId!).eventOrganizerRole;
+    const roles = i.member?.roles;
+    const canOrganizeEvents = /^\d{15,22}$/.test(organizerRole)
+      && (Array.isArray(roles) ? roles.includes(organizerRole) : roles?.cache.has(organizerRole) === true);
+    const viewer = { guildId: i.guildId!, userId: i.user.id, displayName, avatarUrl, isAdmin, canOrganizeEvents };
     this.app.economy.ensurePlayer(viewer.guildId, viewer.userId, displayName);
     return viewer;
   }
@@ -310,9 +319,9 @@ export class InteractionRouter {
     arm('reply');
     switch (i.commandName) {
       case 'casino':
-        return this.show(i, homeScreen(this.app, viewer));
+        return this.show(i, await homeScreen(this.app, viewer));
       case 'wallet':
-        return this.show(i, walletScreen(this.app, viewer));
+        return this.show(i, await walletScreen(this.app, viewer));
       case 'daily': {
         const claim = this.app.economy.claimDaily(viewer.guildId, viewer.userId);
         return this.show(i, noticeScreen({
@@ -429,6 +438,14 @@ export class InteractionRouter {
     });
   }
 
+  private pokerResponses(arm: (mode: AckMode) => void) {
+    return {
+      show: (interaction: RepliableInteraction, screen: Screen) => this.show(interaction, screen),
+      modal: (interaction: ButtonInteraction, modal: ModalSpec) => this.showModal(interaction, modal),
+      arm: (interaction: RepliableInteraction) => arm(this.fromEphemeral(interaction) ? 'update' : 'reply'),
+    };
+  }
+
   // ───────────────────────────── components ─────────────────────────────
 
   private async component(i: Component, arm: (m: AckMode) => void): Promise<void> {
@@ -503,6 +520,11 @@ export class InteractionRouter {
         return;
       case 'bj':
         return this.blackjack(i, viewer, action, args, arm);
+      case 'evt':
+        return this.events(i, viewer, action, args, arm);
+      case 'pk':
+        if (i.isButton()) return this.pokerInteractions.component(i, viewer, this.pokerResponses(arm));
+        return;
       case 'rl':
         return this.roulette(i, viewer, action, args, arm);
       case 'sl':
@@ -519,9 +541,9 @@ export class InteractionRouter {
   private async nav(i: Component, viewer: Viewer, action: string, args: string[]): Promise<void> {
     switch (action) {
       case 'home':
-        return this.show(i, homeScreen(this.app, viewer));
+        return this.show(i, await homeScreen(this.app, viewer));
       case 'wallet':
-        return this.show(i, walletScreen(this.app, viewer));
+        return this.show(i, await walletScreen(this.app, viewer));
       case 'history':
         return this.show(i, historyScreen(this.app, viewer, intArg(args[0])));
       case 'matches':
@@ -561,13 +583,17 @@ export class InteractionRouter {
         const filter = TABLE_FILTERS.find((item) => item === args[0]) ?? 'all';
         return this.show(i, tablesScreen(this.app, viewer, filter, intArg(args[1])));
       }
+      case 'events':
+        return this.show(i, eventsScreen(this.app, viewer, intArg(args[0])));
+      case 'pkrules':
+        return this.show(i, pokerRulesScreen());
       case 'bjrules':
         return this.show(i, rulesScreen(this.app, viewer.guildId));
       case 'coinflip':
       case 'cfrules':
         return this.show(i, coinflipLobbyScreen(this.app, viewer));
       case 'games':
-        return this.show(i, gamesHubScreen(this.app, viewer));
+        return this.show(i, await gamesHubScreen(this.app, viewer));
       case 'help':
         return this.show(i, helpScreen(this.app, viewer, (HELP_TOPICS as readonly string[]).includes(args[0] ?? '') ? (args[0] as HelpTopic) : 'start'));
       case 'slots':
@@ -575,15 +601,43 @@ export class InteractionRouter {
         if (!this.app.settings.get(viewer.guildId).slots.enabled) throw new UserError('Slots are closed on this server.');
         return this.show(i, await slotsScreen(this.app, viewer, intArg(args[0], this.app.settings.get(viewer.guildId).slots.minBet)));
       default:
-        return this.show(i, homeScreen(this.app, viewer));
+        return this.show(i, await homeScreen(this.app, viewer));
     }
+  }
+
+  private async events(i: Component, viewer: Viewer, action: string, args: string[], arm: (mode: AckMode) => void): Promise<void> {
+    const [id = '', rawRevision] = args;
+    const events = this.app.events;
+    const revision = intArg(rawRevision, -1);
+    if (action === 'invite') return this.showModal(i, eventInviteModal());
+    if (action === 'create') {
+      const settings = this.app.settings.get(viewer.guildId);
+      if (!events.canManage(viewer) || !settings.enabled || !settings.blackjack.enabled && !settings.poker.enabled) {
+        throw new UserError('Only organizers can schedule an enabled game.');
+      }
+      return this.showModal(i, eventEditor(this.app, viewer));
+    }
+    if (action === 'edit') {
+      const event = events.view(viewer, id);
+      if (!events.canManage(viewer, event)) throw new UserError('Only this event’s organizer can edit it.');
+      if (event.revision !== revision) throw new StaleActionError('Refresh the event before editing.');
+      return this.showModal(i, eventEditor(this.app, viewer, event));
+    }
+    arm(this.fromEphemeral(i) ? 'update' : 'reply');
+    const event = action === 'open' ? events.view(viewer, id)
+      : action === 'join' ? events.join(viewer, id, viewer.displayName)
+      : action === 'leave' ? events.leave(viewer, id)
+      : action === 'assign' && i.isStringSelectMenu()
+        ? events.assign(viewer, id, revision, i.values[0] === 'detach' ? null : i.values[0] ?? '')
+        : events.manageAction(viewer, id, revision, action);
+    return this.show(i, eventDetailsScreen(this.app, viewer, event));
   }
 
   private async claimReward(i: Component, viewer: Viewer, action: string, from: string): Promise<void> {
     let note: string | null = null;
     if (action === 'relief') {
       const claim = this.app.economy.claimRelief(viewer.guildId, viewer.userId, from === 'title');
-      return this.show(i, withNote(walletScreen(this.app, viewer), `### Relief received · +${chips(claim.amount)} chips`));
+      return this.show(i, withNote(await walletScreen(this.app, viewer), `### Relief received · +${chips(claim.amount)} chips`));
     }
     if (action === 'passive') {
       const { amount } = this.app.economy.claimPassive(viewer.guildId, viewer.userId);
@@ -594,7 +648,7 @@ export class InteractionRouter {
       note = `### ✓ Daily reward: +${chips(claim.amount)} chips${claim.streak > 1 ? ` · ${claim.streak}-day streak!` : ''}`;
     }
     // Re-render the personal screen the button was on, with what was just collected.
-    const screen = from === 'wallet' ? walletScreen(this.app, viewer) : from === 'rewards' ? rewardsScreen(this.app, viewer) : homeScreen(this.app, viewer);
+    const screen = from === 'wallet' ? await walletScreen(this.app, viewer) : from === 'rewards' ? rewardsScreen(this.app, viewer) : await homeScreen(this.app, viewer);
     return this.show(i, note ? withNote(screen, note) : screen);
   }
 
@@ -630,7 +684,7 @@ export class InteractionRouter {
     }
     const entry = this.app.economy.gift(viewer.guildId, viewer.userId, offer.recipientId, offer.amount, arg);
     this.giftOffers.delete(arg);
-    return this.show(i, withNote(walletScreen(this.app, viewer), `### Gift sent · ${chips(-entry.amount)} chips`));
+    return this.show(i, withNote(await walletScreen(this.app, viewer), `### Gift sent · ${chips(-entry.amount)} chips`));
   }
 
   // ───────────────────────────── tables (finding / creating / joining) ─────────────────────────────
@@ -744,7 +798,7 @@ export class InteractionRouter {
     const tables = this.app.blackjack;
     if (action === 'home') {
       arm('reply');
-      return this.show(i, homeScreen(this.app, viewer), this.fromEphemeral(i) ? 'auto' : 'private');
+      return this.show(i, await homeScreen(this.app, viewer), this.fromEphemeral(i) ? 'auto' : 'private');
     }
     const snap = this.table(viewer, tableId);
     switch (action) {
@@ -783,10 +837,15 @@ export class InteractionRouter {
         arm('update');
         await tables.clearBet(tableId, viewer.userId, i);
         return this.settle(i);
-      case 'deal':
+      case 'deal': {
         arm('update');
-        await tables.dealNow(tableId, viewer.userId, i);
-        return this.settle(i);
+        const outcome = await tables.dealNow(tableId, viewer.userId, i, args[1] ?? '');
+        if (outcome === 'dealt') return this.settle(i);
+        const updating = this.bot.refreshIdleTable(tableId);
+        if (this.fromEphemeral(i)) return this.show(i, await myHandScreen(this.app, viewer, tableId, { revealing: this.bot.tableAnimating(tableId) }));
+        await this.settle(i);
+        return this.notice(i, 'Table update', updating ? 'The deal is in progress. The table is updating.' : 'That betting window has closed. Use the current table controls.');
+      }
       case 'act': {
         arm('update');
         const move = args[1] as PlayerAction;
@@ -1054,6 +1113,23 @@ export class InteractionRouter {
       if (n === null) throw new UserError(`Please enter a number of chips — e.g. 250, 2k${context ? ' or all' : ''}.`, 'bad_amount', 'Not a number');
       return n;
     };
+    if (action === 'evtcode' || action === 'evtnew' || action === 'evtedt') {
+      arm(this.fromEphemeral(i) ? 'update' : 'reply');
+      const events = this.app.events;
+      if (action === 'evtcode') return this.show(i, eventDetailsScreen(this.app, viewer, events.joinWithCode(viewer, field('code'), viewer.displayName)));
+      const [game, visibility] = selectValue('format').split('-');
+      if ((game !== 'blackjack' && game !== 'poker') || (visibility !== 'public' && visibility !== 'private')) throw new UserError('Choose a game and visibility.');
+      const startsAt = parseEventTime(field('time'));
+      const capacity = /^(\d+)\s*-\s*(\d+)$/.exec(field('capacity'));
+      if (startsAt === null || !capacity) throw new UserError('Enter a time with a UTC offset and a player range such as 2-5.');
+      const input = { title: field('title'), description: field('description'), game, startsAt, minPlayers: Number(capacity[1]),
+        maxPlayers: Number(capacity[2]), private: visibility === 'private' } as const;
+      const event = action === 'evtedt' ? events.edit(viewer, args[0] ?? '', intArg(args[1], -1), input) : events.create(viewer, input);
+      return this.show(i, eventDetailsScreen(this.app, viewer, event));
+    }
+    if (action === 'pkcreate' || action === 'pkjoin' || action === 'pkraise') {
+      return this.pokerInteractions.submit(i, viewer, this.pokerResponses(arm), field, selectValue);
+    }
     const wallet = () => this.app.economy.getWallet(viewer.guildId, viewer.userId).balance;
     switch (action) {
       case 'tblcreate': {

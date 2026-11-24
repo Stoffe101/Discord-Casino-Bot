@@ -1,3 +1,4 @@
+import { warmCasinoArtwork } from '../render/casino-art.js';
 import {
   ChannelType,
   Client,
@@ -15,6 +16,8 @@ import {
 import type { CasinoApp } from '../app/casino-app.js';
 import type { Logger } from '../core/logger.js';
 import type { RenderHint, TableSnapshot } from '../tables/types.js';
+import type { PokerRenderHint, PokerSnapshot } from '../games/poker/poker-service.js';
+import { pokerPanel } from '../ui/screens/poker.js';
 import type { WheelSnapshot } from '../games/roulette/roulette-service.js';
 import { blackjackPanel, closedTablePanel } from '../ui/screens/blackjack.js';
 import { roulettePanel, coinflipMessage } from '../ui/screens/games.js';
@@ -99,6 +102,7 @@ export const REQUIRED_CHANNEL_PERMISSIONS = [
 export class CasinoBot {
   readonly client: Client;
   readonly tablePanels: PanelSync<RenderHint>;
+  readonly pokerPanels: PanelSync<PokerRenderHint>;
   readonly wheelPanels: PanelSync<boolean>;
   readonly router: InteractionRouter;
   private readonly lobbyTimers = new Map<string, NodeJS.Timeout>();
@@ -153,6 +157,7 @@ export class CasinoBot {
         return 0;
       },
       holdScale: timing.animationScale,
+      frameBudgetMs: (id, hint) => hint?.kind === 'dealt' && app.blackjack.peek(id)?.state.phase === 'playing' ? 1100 : undefined,
       frameDelayMs: (hint) => (hint?.kind === 'dealt' ? timing.dealFrameMs : timing.frameDelayMs),
       minIntervalMs: timing.tableMinIntervalMs,
       onMissing: (id) => this.recreateTablePanel(id),
@@ -181,6 +186,24 @@ export class CasinoBot {
       minIntervalMs: timing.wheelMinIntervalMs,
       onMissing: (id) => this.recreateWheelPanel(id),
     });
+    this.pokerPanels = new PanelSync<PokerRenderHint>({
+      name: 'poker',
+      client: this.client,
+      logger,
+      locate: (id) => app.poker.peek(id)?.record,
+      render: async (id, frame, hint) => {
+        const table = app.poker.peek(id);
+        return table ? this.checked(await pokerPanel(app, table, frame === undefined ? undefined : hint)) : null;
+      },
+      frames: (id, hint) => {
+        const table = app.poker.peek(id);
+        return table && this.animatesGames(table.record.guildId) && hint && hint !== 'update' ? 1 : 0;
+      },
+      holdScale: timing.animationScale,
+      minIntervalMs: timing.tableMinIntervalMs,
+      frameBudgetMs: () => 1000,
+      onMissing: (id) => this.recreatePokerPanel(id),
+    });
     this.router = new InteractionRouter(app, this);
 
     app.blackjack.setObserver({
@@ -191,6 +214,17 @@ export class CasinoBot {
         if (snap) this.requestLobby(snap.record.guildId);
       },
       tableClosed: (snap, reason) => this.track(this.onTableClosed(snap, reason)),
+    });
+    app.events.onChanged((guildId) => this.requestLobby(guildId));
+    app.poker.setObserver({
+      changed: (id, hint, origin) => {
+        if (this.stopping) return;
+        const snapshot = app.poker.peek(id);
+        if (!snapshot) return;
+        if (snapshot.record.messageId) this.pokerPanels.request(id, hint, this.router.claim(origin));
+        this.requestLobby(snapshot.record.guildId);
+      },
+      closed: (snapshot, reason) => this.track(this.onTableClosed(snapshot, reason, 'poker')),
     });
     app.roulette.setObserver({
       wheelChanged: (id, spun, origin) => {
@@ -221,6 +255,7 @@ export class CasinoBot {
   }
 
   async start(token: string): Promise<void> {
+    void warmCasinoArtwork();
     const recovery = this.app.recover();
     this.logger.info('recovery complete', recovery);
     await this.client.login(token);
@@ -242,6 +277,10 @@ export class CasinoBot {
       if (!snap.record.messageId) await this.recreateTablePanel(snap.record.id);
       else this.tablePanels.request(snap.record.id, { kind: 'restored' });
     }
+    for (const table of this.app.poker.openTables()) {
+      if (!table.record.messageId) await this.recreatePokerPanel(table.record.id);
+      else this.pokerPanels.request(table.record.id);
+    }
     this.app.roulette.touchAll();
     for (const { guildId } of this.app.settings.guildsWithLobby()) this.requestLobby(guildId, 0);
     this.intervals.push(
@@ -256,6 +295,7 @@ export class CasinoBot {
     try {
       await this.app.blackjack.sweepIdle();
       await this.app.roulette.sweepIdle();
+      await this.app.poker.sweepIdle();
     } catch (error) {
       this.logger.error('maintenance failed', { error });
     }
@@ -293,8 +333,8 @@ export class CasinoBot {
   async idle(): Promise<void> {
     for (let pass = 0; pass < 100; pass++) {
       await Promise.all([...this.inflight]);
-      await this.app.blackjack.idle();
-      await Promise.all([this.tablePanels.idle(), this.wheelPanels.idle()]);
+      await Promise.all([this.app.blackjack.idle(), this.app.poker.idle()]);
+      await Promise.all([this.tablePanels.idle(), this.wheelPanels.idle(), this.pokerPanels.idle()]);
       await Promise.all([...this.lobbyBusy.values()]);
       if (this.inflight.size === 0 && this.lobbyTimers.size === 0) return;
       await sleep(5);
@@ -309,7 +349,7 @@ export class CasinoBot {
     this.logMetrics();
     // Let interactions that are already being handled finish before disconnecting.
     await Promise.race([Promise.all([...this.inflight]), sleep(5_000)]);
-    await Promise.race([Promise.all([this.tablePanels.idle(), this.wheelPanels.idle()]), sleep(5_000)]);
+    await Promise.race([Promise.all([this.tablePanels.idle(), this.wheelPanels.idle(), this.pokerPanels.idle()]), sleep(5_000)]);
     await this.client.destroy();
   }
 
@@ -332,6 +372,13 @@ export class CasinoBot {
    * dealer's turn and the payout — so a private view must not tell the result yet. Other redraws
    * (a bet, a countdown, someone sitting out) don't count.
    */
+  /** Let an in-flight animation finish. Repair the panel if a previous edit failed. */
+  refreshIdleTable(tableId: string): boolean {
+    if (this.tablePanels.showing(tableId, () => true)) return true;
+    this.tablePanels.request(tableId);
+    return false;
+  }
+
   tableAnimating(tableId: string): boolean {
     return this.tablePanels.showing(tableId, (hint) => hint?.kind === 'round_settled');
   }
@@ -381,35 +428,44 @@ export class CasinoBot {
 
   /** Create the thread (or channel message) that hosts a new table's panel. */
   async createTablePanel(tableId: string, fallbackChannelId: string | null, creatorId: string): Promise<{ url: string | null }> {
-    const snap = this.app.blackjack.peek(tableId);
-    if (!snap) return { url: null };
-    const channel = await this.casinoChannel(snap.record.guildId, fallbackChannelId);
+    const blackjack = this.app.blackjack.peek(tableId);
+    const poker = this.app.poker.peek(tableId);
+    const record = (blackjack ?? poker)?.record;
+    if (!record) return { url: null };
+    const channel = await this.casinoChannel(record.guildId, fallbackChannelId);
     if (!channel) throw new Error('No usable text channel for the table');
-    const screen = this.checked(await blackjackPanel(this.app, snap));
-    const useThreads = this.app.settings.get(snap.record.guildId).tables.useThreads && this.threadsAllowed;
+    const screen = this.checked(poker ? await pokerPanel(this.app, poker) : await blackjackPanel(this.app, blackjack!));
+    const useThreads = this.app.settings.get(record.guildId).tables.useThreads && this.threadsAllowed;
+    if (poker && record.isPrivate && !useThreads) throw new Error('Private Hold’em needs verified private threads.');
     let thread: ThreadChannel | null = null;
     if (useThreads) {
       try {
         thread = await channel.threads.create({
-          name: `blackjack-table-${String(snap.record.number).padStart(2, '0')}`,
+          name: `${poker ? 'poker' : 'blackjack'}-table-${String(record.number).padStart(2, '0')}`,
           autoArchiveDuration: ThreadAutoArchiveDuration.OneDay,
-          type: snap.record.isPrivate ? ChannelType.PrivateThread : ChannelType.PublicThread,
-          ...(snap.record.isPrivate ? { invitable: false } : {}),
-          reason: `Blackjack table opened by ${creatorId}`,
+          type: record.isPrivate ? ChannelType.PrivateThread : ChannelType.PublicThread,
+          ...(record.isPrivate ? { invitable: false } : {}),
+          reason: 'Casino table opened',
         });
       } catch (error) {
+        if (poker && record.isPrivate) throw error;
         this.logger.warn('thread creation failed; using the channel instead', { tableId, code: discordErrorCode(error) });
       }
     }
-    const target = thread ?? channel;
-    const message = await target.send(createOptions(screen));
-    await this.app.blackjack.attachDiscord(tableId, { channelId: channel.id, threadId: thread?.id ?? null, messageId: message.id });
-    if (thread && snap.record.isPrivate) await thread.members.add(creatorId).catch(() => undefined);
-    // Public threads make Discord post "<bot> started a thread" in the channel; the lobby already
-    // lists every table, so remove that notice to keep the casino channel tidy.
-    if (thread && !snap.record.isPrivate) this.track(this.removeThreadNotice(channel, thread.id));
-    this.requestLobby(snap.record.guildId);
-    return { url: thread ? thread.url : message.url };
+    try {
+      if (thread && poker && record.isPrivate) await thread.members.add(creatorId);
+      const message = await (thread ?? channel).send(createOptions(screen));
+      const location = { channelId: channel.id, threadId: thread?.id ?? null, messageId: message.id };
+      if (poker) await this.app.poker.attach(tableId, location);
+      else await this.app.blackjack.attachDiscord(tableId, location);
+      if (thread && record.isPrivate && !poker) await thread.members.add(creatorId).catch(() => undefined);
+      if (thread && !record.isPrivate) this.track(this.removeThreadNotice(channel, thread.id));
+      this.requestLobby(record.guildId);
+      return { url: thread ? thread.url : message.url };
+    } catch (error) {
+      if (thread) await thread.setArchived(true, 'Casino table setup failed').catch(() => undefined);
+      throw error;
+    }
   }
 
   /** Delete the bot's own "started a thread" system message for a thread it just created. */
@@ -429,7 +485,8 @@ export class CasinoBot {
   }
 
   async addToTableThread(tableId: string, userId: string): Promise<string | null> {
-    const snap = this.app.blackjack.peek(tableId);
+    const poker = this.app.poker.peek(tableId);
+    const snap = this.app.blackjack.peek(tableId) ?? poker;
     if (!snap) return null;
     if (!snap.record.threadId) {
       return snap.record.channelId && snap.record.messageId
@@ -442,7 +499,8 @@ export class CasinoBot {
       // Private threads need explicit membership. Public threads are open to everyone, so we don't
       // add people there (that would post an "X added Y" system line for every join).
       if (snap.record.isPrivate) {
-        await thread.members.add(userId).catch((error: unknown) => this.logger.warn('could not add member to thread', { tableId, code: discordErrorCode(error) }));
+        if (poker) await thread.members.add(userId);
+        else await thread.members.add(userId).catch((error: unknown) => this.logger.warn('could not add member to thread', { tableId, code: discordErrorCode(error) }));
       }
       return thread.url;
     }
@@ -472,8 +530,31 @@ export class CasinoBot {
     }
   }
 
-  private async onTableClosed(snap: TableSnapshot, reason: string): Promise<void> {
-    this.tablePanels.forget(snap.record.id);
+  private async recreatePokerPanel(id: string): Promise<void> {
+    const table = this.app.poker.peek(id);
+    if (!table) return;
+    const { record } = table;
+    const thread = record.threadId ? await this.client.channels.fetch(record.threadId).catch(() => null) : null;
+    try {
+      if (thread?.isThread() && this.allowsThread(thread) && (!record.isPrivate || thread.type === ChannelType.PrivateThread)) {
+        if (thread.archived) await thread.setArchived(false);
+        const message = await thread.send(createOptions(this.checked(await pokerPanel(this.app, table))));
+        await this.app.poker.attach(id, { channelId: thread.parentId, threadId: thread.id, messageId: message.id });
+      } else {
+        await this.createTablePanel(id, record.channelId, record.ownerId);
+        if (record.isPrivate) for (const seat of table.state.seats) {
+          if (seat.userId !== record.ownerId) await this.addToTableThread(id, seat.userId);
+        }
+      }
+    } catch {
+      this.logger.warn('Poker panel could not be restored', { tableId: id });
+      await this.app.poker.close(id, 'the table could not be shown in Discord');
+    }
+  }
+
+  private async onTableClosed(snap: TableSnapshot | PokerSnapshot, reason: string, game: 'blackjack' | 'poker' = 'blackjack'): Promise<void> {
+    (game === 'poker' ? this.pokerPanels : this.tablePanels).forget(snap.record.id);
+    this.app.events.tableClosed(snap.record.guildId, snap.record.id);
     this.requestLobby(snap.record.guildId);
     const channelId = snap.record.threadId ?? snap.record.channelId;
     if (!channelId || !snap.record.messageId) return;

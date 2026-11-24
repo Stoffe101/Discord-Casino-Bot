@@ -12,7 +12,7 @@ const pattern = '<pattern id="poker-grain" width="5" height="5" patternUnits="us
 type PokerView = ReturnType<typeof publicPokerHand>;
 
 /** Only a public poker projection may reach the shared image renderer. */
-export function pokerTableSvg(view: PokerView, names: Readonly<Record<string, string>>): string {
+export function pokerTableSvg(view: PokerView, names: Readonly<Record<string, string>>, options: { dealtSeats?: number; shownBoard?: number; maskShowdown?: boolean } = {}): string {
   const visibleSeats = view.seats.length;
   const pot = view.seats.reduce((sum, seat) => sum + seat.committed, 0);
   const seatBoxes = view.seats.map((seat, i) => {
@@ -34,10 +34,10 @@ export function pokerTableSvg(view: PokerView, names: Readonly<Record<string, st
       : view.street !== 'complete' && seat.stack === 0 ? 'All-in'
       : seat.streetPaid ? `Bet ${chips(seat.streetPaid)}` : '';
     const cardY = y < 200 ? y + 71 : y - 49;
-    const hand = seat.folded ? '' : [0, 1].map((j) => {
-      const card = seat.cards?.[j];
+    const hand = seat.folded || (options.dealtSeats !== undefined && i >= options.dealtSeats) ? '' : [0, 1].map((j) => {
+      const card = options.maskShowdown ? null : seat.cards?.[j];
       const cardX = x + width / 2 - 31 + j * 30;
-      return card ? cardFace(card, cardX, cardY, 32) : view.street === 'complete' ? '' : cardBack(cardX, cardY, 32);
+      return card ? cardFace(card, cardX, cardY, 32) : view.street === 'complete' && !options.maskShowdown ? '' : cardBack(cardX, cardY, 32);
     }).join('');
     return hand +
       `<rect x="${x}" y="${y}" width="${width}" height="68" rx="13" fill="${active ? '#17392e' : '#13251f'}" stroke="${active ? '#f4d588' : '#847045'}" stroke-width="${active ? 2.5 : 1}"/>` +
@@ -47,7 +47,7 @@ export function pokerTableSvg(view: PokerView, names: Readonly<Record<string, st
   }).join('');
   const board = Array.from({ length: 5 }, (_, i) => {
     const x = 244 + i * 74;
-    const card = view.board[i];
+    const card = i < (options.shownBoard ?? view.board.length) ? view.board[i] : undefined;
     return card ? cardFace(card, x, 226, 62)
       : `<rect x="${x}" y="226" width="62" height="87" rx="8" fill="#0b3f2e" stroke="#7c9d7a" stroke-dasharray="4 5"/>`;
   }).join('');

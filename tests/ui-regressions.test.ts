@@ -54,7 +54,7 @@ describe('UI regressions from live testing', () => {
     const { app } = makeApp();
     app.economy.ensurePlayer(G, '1', 'Alex');
     await app.blackjack.createTable({ guildId: G, ownerId: '1', ownerName: 'Alex' });
-    const screen = homeScreen(app, { guildId: G, userId: '1', displayName: 'Alex', avatarUrl: 'https://cdn.discordapp.com/embed/avatars/0.png', isAdmin: false });
+    const screen = await homeScreen(app, { guildId: G, userId: '1', displayName: 'Alex', avatarUrl: 'https://cdn.discordapp.com/embed/avatars/0.png', isAdmin: false });
     expect(validateScreen(screen).errors).toEqual([]);
     await app.shutdown();
   });

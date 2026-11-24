@@ -22,7 +22,7 @@ export type LedgerType =
   | 'gift_sent'
   | 'gift_received';
 
-export type GameId = 'blackjack' | 'roulette' | 'slots' | 'coinflip';
+export type GameId = 'blackjack' | 'roulette' | 'slots' | 'coinflip' | 'poker';
 
 export interface PlayerRow {
   guild_id: string;
@@ -223,11 +223,13 @@ export class EconomyService {
   // ───────────────────────────── claims ─────────────────────────────
 
   reliefStatus(guildId: string, userId: string): ReliefStatus {
-    const settings = this.settings(guildId).economy;
-    if (settings.reliefAmount === 0) return { eligible: false, reason: 'disabled' };
+    const guild = this.settings(guildId);
+    const settings = guild.economy;
+    const minimum = Math.min(...[guild.blackjack, guild.roulette, guild.slots, guild.coinflip]
+      .filter((game) => game.enabled).map((game) => game.minBet), ...(guild.poker.enabled ? [guild.poker.minBuyIn] : []));
+    if (!guild.enabled || settings.reliefAmount === 0 || !Number.isFinite(minimum)) return { eligible: false, reason: 'disabled' };
     const wallet = this.getWallet(guildId, userId);
-    // Every current game holds unresolved wagers and potential payouts in escrow until settlement.
-    if (wallet.total > 0) return { eligible: false, reason: 'funds' };
+    if (wallet.reserved > 0 || wallet.balance >= minimum) return { eligible: false, reason: 'funds' };
     if (wallet.passive.available > 0 || wallet.daily.available) return { eligible: false, reason: 'rewards' };
     const now = this.clock.now();
     const last = this.db.get<{ created_at: number }>(
@@ -250,7 +252,7 @@ export class EconomyService {
       if (!status.eligible) {
         const guidance = {
           disabled: 'The relief fund is closed.',
-          funds: 'Relief is available once you have no available or committed chips.',
+          funds: 'Relief is available when you cannot afford any open game and have no committed chips.',
           rewards: 'Collect the passive income or daily reward in your wallet first.',
           cooldown: 'You recently received relief. Check your wallet for the next eligible time.',
           recent_gift: 'Relief is available 24 hours after your last outgoing gift.',

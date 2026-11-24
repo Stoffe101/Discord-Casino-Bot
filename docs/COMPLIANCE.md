@@ -25,7 +25,7 @@ legal advice.
   external trading, exchange for products or services, redeemable prizes, crypto, loans and interest
   are prohibited. The bot contains no payment features.
 - Administrators may enable small, one-way chip gifts confined to the same private server. Gifting
-  is off by default, requires confirmation, and uses established accounts, opt-out and a daily
+  is on by default and server administrators can turn it off, requires confirmation, and uses established accounts, opt-out and a daily
   sender limit. Both ledger entries share a transfer reference. These controls limit some forms
   of abuse, and operators must enforce the ban on outside trades. Discord's policy focuses on
   wagers and prizes with real-world value, including exchangeable virtual currency.

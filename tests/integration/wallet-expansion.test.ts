@@ -46,6 +46,22 @@ describe('expanded wallet', () => {
     await restarted.shutdown();
   });
 
+  it('grants relief before players have to lose their last one or two chips', () => {
+    h = new CasinoHarness();
+    disableOtherRewards();
+    const { economy } = h.app;
+    for (const balance of [1, 2]) {
+      const player = h.user('Short stack ' + balance);
+      economy.ensurePlayer(h.guildId, player.id);
+      economy.adminAdjust({ guildId: h.guildId, userId: player.id, actorId: 'admin',
+        reason: 'Set the test balance', amount: balance - h.balance(player) });
+      expect(economy.reliefStatus(h.guildId, player.id)).toMatchObject({ eligible: true });
+      economy.claimRelief(h.guildId, player.id, false);
+      expect(h.balance(player)).toBe(50 + balance);
+    }
+    expect(economy.reconcile()).toEqual([]);
+  });
+
   it('confirms gifts privately and conserves chips under duplicate clicks', async () => {
     h = new CasinoHarness();
     const [alice, bob] = [h.user('Alice'), h.user('Bob')];
@@ -54,6 +70,8 @@ describe('expanded wallet', () => {
     await h.advance(DAY);
     const before = h.balance(alice) + h.balance(bob);
     const { economy } = h.app;
+    expect(h.app.settings.get(h.guildId).economy.giftingEnabled).toBe(true);
+    h.app.settings.set(h.guildId, 'economy.giftingEnabled', false);
     expect(() => economy.gift(h.guildId, alice.id, bob.id, 50, 'disabled')).toThrow(/disabled/);
     h.app.settings.set(h.guildId, 'economy.giftingEnabled', true);
     const wallet = h.seen(await h.slash(alice, 'wallet'))!;

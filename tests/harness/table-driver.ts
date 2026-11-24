@@ -61,7 +61,7 @@ export async function driveTables(h: CasinoHarness, options: DriveOptions): Prom
     for (const p of players) h.app.economy.ensurePlayer(h.guildId, p.id, p.name);
     const host = players[0]!;
     const home = h.seen(track(await h.slash(host, 'casino')));
-    const tablesScreen = h.seen(track(await h.click(host, home, 'Tables')));
+    const tablesScreen = h.seen(track(await h.click(host, home, 'Browse tables')));
     const opener = track(await h.click(host, tablesScreen, 'Open a table'));
     track(await h.submit(host, opener, { name: `Table ${t + 1}`, visibility: 'public' }));
     const tableId = h.app.blackjack.tableOfUser(h.guildId, host.id)?.record.id;

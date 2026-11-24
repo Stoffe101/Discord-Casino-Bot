@@ -12,6 +12,7 @@ export interface Viewer {
   displayName: string;
   avatarUrl: string;
   isAdmin: boolean;
+  canOrganizeEvents?: boolean;
 }
 
 export type NavTarget = 'home' | 'games' | 'wallet' | 'leaderboard' | 'profile';
@@ -24,6 +25,7 @@ export const NAV = {
   rewards: cid('nav', 'rewards'),
   tables: cid('nav', 'tables'),
   games: cid('nav', 'games'),
+  events: cid('nav', 'events'),
   help: cid('nav', 'help', 'start'),
 } as const;
 

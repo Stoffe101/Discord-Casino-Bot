@@ -60,7 +60,7 @@ function freshGlow(x: number, y: number, w: number, h: number): string {
 
 function handsLayout(hands: HandView[], areaW: number): { cardW: number; offset: number; handW: number[]; gap: number } {
   const gap = hands.length > 1 ? 12 : 0;
-  let cardW = hands.length === 1 ? 84 : hands.length === 2 ? 70 : 54;
+  let cardW = hands.length === 1 ? (areaW >= 400 ? 100 : 84) : hands.length === 2 ? 70 : 54;
   for (;;) {
     const offset = cardW * 0.36;
     const handW = hands.map((h) => cardW + Math.max(0, h.cards.length - 1) * offset);
@@ -196,17 +196,22 @@ export function dealerLayout(count: number): { cardW: number; cardH: number; car
 export const SHOE = { x: TABLE_W - 110, y: 36, w: 58 };
 export const TRAY = { x: TABLE_W / 2 - 200, y: 112 };
 
-/** Each seat panel's rectangle, by seat index. */
-export function seatRects(view: TableView): Array<{ x: number; y: number; w: number; h: number }> {
-  const perRow = view.maxSeats <= 3 ? view.maxSeats : view.maxSeats === 4 ? 2 : view.maxSeats <= 6 ? 3 : 4;
-  const rows = Math.ceil(view.maxSeats / perRow);
-  const panelW = (TABLE_W - MARGIN * 2 - GAP * (perRow - 1)) / perRow;
-  const rects: Array<{ x: number; y: number; w: number; h: number }> = [];
-  for (let r = 0; r < rows; r++) {
-    const count = Math.min(perRow, view.maxSeats - r * perRow);
+/** Compact the occupied seats in seat order, preserving each numbered seat's animation anchor. */
+export function seatRects(view: TableView): Array<{ x: number; y: number; w: number; h: number } | undefined> {
+  const occupants = view.seats.filter((seat) => seat.userId !== null);
+  const visible = occupants.length ? occupants : view.seats.slice(0, 1);
+  const perRow = visible.length <= 3 ? visible.length : visible.length === 4 ? 2 : visible.length <= 6 ? 3 : 4;
+  const rowHeight = visible.length <= 2 ? ROW_H + 36 : ROW_H;
+  const panelW = Math.min(620, (TABLE_W - MARGIN * 2 - GAP * (perRow - 1)) / perRow);
+  const rects: ReturnType<typeof seatRects> = [];
+  for (const [i, seat] of visible.entries()) {
+    const row = Math.floor(i / perRow);
+    const count = Math.min(perRow, visible.length - row * perRow);
     const rowW = count * panelW + (count - 1) * GAP;
-    const startX = (TABLE_W - rowW) / 2;
-    for (let i = 0; i < count; i++) rects.push({ x: startX + i * (panelW + GAP), y: DEALER_H + r * (ROW_H + GAP), w: panelW, h: ROW_H });
+    rects[seat.seatIndex] = {
+      x: (TABLE_W - rowW) / 2 + (i % perRow) * (panelW + GAP),
+      y: DEALER_H + row * (rowHeight + GAP), w: panelW, h: rowHeight,
+    };
   }
   return rects;
 }
@@ -258,9 +263,8 @@ function shoeDecor(view: TableView): string {
 /** `overlay` is drawn on top of everything (cards and chips in motion, for animations). */
 export function renderTableSvg(view: TableView, overlay = ''): string {
   const felt = FELTS[view.feltId] ?? FELTS.emerald!;
-  const perRow = view.maxSeats <= 3 ? view.maxSeats : view.maxSeats === 4 ? 2 : view.maxSeats <= 6 ? 3 : 4;
-  const rows = Math.ceil(view.maxSeats / perRow);
-  const height = DEALER_H + rows * ROW_H + (rows - 1) * GAP + MARGIN;
+  const rects = seatRects(view);
+  const height = rects.reduce((last, rect) => Math.max(last, rect ? rect.y + rect.h : 0), DEALER_H) + MARGIN;
   const defs =
     cardDefs() +
     `<radialGradient id="felt" cx="50%" cy="22%" r="85%"><stop offset="0" stop-color="${felt.inner}"/><stop offset="1" stop-color="${felt.outer}"/></radialGradient>` +
@@ -284,9 +288,8 @@ export function renderTableSvg(view: TableView, overlay = ''): string {
   }
   parts.push(shoeDecor(view));
   parts.push(dealerArea(view));
-  const rects = seatRects(view);
-  view.seats.forEach((seat, i) => {
-    const r = rects[i];
+  view.seats.forEach((seat) => {
+    const r = rects[seat.seatIndex];
     if (r) parts.push(seatPanel(seat, r.x, r.y, r.w, r.h, view));
   });
   parts.push(overlay);

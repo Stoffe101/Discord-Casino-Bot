@@ -234,4 +234,37 @@ export const MIGRATIONS: readonly Migration[] = [
       CREATE INDEX highlights_by_player ON highlights (guild_id, user_id, kind, created_at DESC);
     `,
   },
+  {
+    id: 3,
+    name: 'casino_events',
+    sql: /* sql */ `
+      CREATE TABLE casino_events (
+        id TEXT PRIMARY KEY,
+        guild_id TEXT NOT NULL,
+        organizer_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL,
+        game TEXT NOT NULL CHECK(game IN ('blackjack','poker')),
+        starts_at INTEGER NOT NULL,
+        min_players INTEGER NOT NULL CHECK(min_players >= 2),
+        max_players INTEGER NOT NULL CHECK(max_players >= min_players),
+        access_code TEXT,
+        state TEXT NOT NULL CHECK(state IN ('scheduled','ready','awaiting','in_progress','completed','cancelled')),
+        registration_open INTEGER NOT NULL CHECK(registration_open IN (0,1)),
+        table_id TEXT,
+        revision INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        UNIQUE(guild_id, access_code)
+      );
+      CREATE INDEX casino_events_schedule ON casino_events(guild_id, starts_at);
+      CREATE INDEX casino_events_table ON casino_events(table_id) WHERE table_id IS NOT NULL;
+      CREATE TABLE casino_event_players (
+        event_id TEXT NOT NULL REFERENCES casino_events(id) ON DELETE CASCADE,
+        user_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        joined_at INTEGER NOT NULL,
+        PRIMARY KEY(event_id, user_id)
+      );
+    `,
+  },
 ];

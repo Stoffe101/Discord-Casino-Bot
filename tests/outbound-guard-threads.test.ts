@@ -185,7 +185,7 @@ describe('table threads in test mode (full stack)', () => {
   it('private tables use a private #casino thread and add the joining player', async () => {
     h = new CasinoHarness({ allowThreads: true });
     const [host, guest] = [h.user('Host'), h.user('Guest')];
-    const tables = h.seen(await h.click(host, h.seen(await h.slash(host, 'casino')), 'Tables'));
+    const tables = h.seen(await h.click(host, h.seen(await h.slash(host, 'casino')), 'Browse tables'));
     const opener = await h.click(host, tables, 'Open a table');
     await h.submit(host, opener, { visibility: 'private' });
     const record = h.app.blackjack.tableOfUser(h.guildId, host.id)!.record;
@@ -210,7 +210,7 @@ describe('table threads in test mode (full stack)', () => {
     h = new CasinoHarness({ allowThreads: true });
     for (let i = 0; i < 3; i++) {
       const host = h.user(`Host${i}`);
-      const tables = h.seen(await h.click(host, h.seen(await h.slash(host, 'casino')), 'Tables'));
+      const tables = h.seen(await h.click(host, h.seen(await h.slash(host, 'casino')), 'Browse tables'));
       const opener = await h.click(host, tables, 'Open a table');
       await h.submit(host, opener, { visibility: 'public' });
     }

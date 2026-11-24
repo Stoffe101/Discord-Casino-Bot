@@ -1,13 +1,15 @@
 import type { CasinoApp } from '../../app/casino-app.js';
-import { chips, discordTime, durationShort, signedChips } from '../../core/format.js';
+import { chips, discordTime, durationShort, escapeMarkdown, plural, signedChips } from '../../core/format.js';
 import { recentCasinoActivity } from '../../domain/casino-activity.js';
 import type { LedgerRow } from '../../domain/economy/economy-service.js';
 import { GAMES, gameEnabled } from '../game-menu.js';
 import { cid } from '../custom-id.js';
-import { button, container, progressBar, row, section, separator, text, thumbnail, type Screen } from '../kit.js';
+import { button, container, row, separator, text, type Screen } from '../kit.js';
 import { COLORS, ICONS } from '../theme.js';
 import { NAV, casinoName, channelUrl, levelLine, name, navRow, type Viewer } from './common.js';
 import { linkButton } from '../kit.js';
+import { pokerUrl } from './poker.js';
+import { balanceText, dashboardArt, rewardSummary } from './dashboard.js';
 
 /** Claim buttons shared by Home, Wallet and Rewards. */
 export function claimButtons(app: CasinoApp, viewer: Viewer, from: 'home' | 'wallet' | 'rewards' = 'home') {
@@ -35,65 +37,51 @@ export function claimButtons(app: CasinoApp, viewer: Viewer, from: 'home' | 'wal
   ].filter((b): b is ReturnType<typeof button> => b !== null);
 }
 
-export function homeScreen(app: CasinoApp, viewer: Viewer): Screen {
+export async function homeScreen(app: CasinoApp, viewer: Viewer): Promise<Screen> {
   const player = app.economy.ensurePlayer(viewer.guildId, viewer.userId, viewer.displayName);
   const wallet = app.economy.getWallet(viewer.guildId, viewer.userId);
   const tables = app.blackjack.openTables(viewer.guildId);
   const activity = recentCasinoActivity(app, viewer.guildId, 2);
-  const seated = tables.reduce((n, t) => n + t.state.seats.length, 0);
+  const seated = tables.reduce((total, table) => total + table.state.seats.length, 0);
   const mine = app.blackjack.tableOfUser(viewer.guildId, viewer.userId);
+  const myPoker = app.poker.tableOfUser(viewer.guildId, viewer.userId);
   const settings = app.settings.get(viewer.guildId);
-  const isNew = player.created_at > app.clock.now() - 60_000 && app.economy.ledgerCount(viewer.guildId, viewer.userId) <= 1;
+  const art = await dashboardArt('home');
+  const sameBrand = settings.casinoName === 'The Emerald Room' && art.component;
+  const nameLine = `${name(viewer.displayName)} · ${levelLine(player.xp)}`;
 
-  const greeting = isNew
-    ? `Welcome, ${name(viewer.displayName)} — here are **${chips(settings.economy.startingBalance)}** chips to get you started.`
-    : `Welcome back, ${name(viewer.displayName)}.`;
-  const balanceLine =
-    wallet.reserved > 0
-      ? `## ${chips(wallet.balance)} chips\n-# ${chips(wallet.reserved)} on the table · ${levelLine(player.xp)}`
-      : `## ${chips(wallet.balance)} chips\n-# ${levelLine(player.xp)}`;
-
-  const passive = wallet.passive;
-  const passiveLine =
-    passive.ratePerHour === 0
-      ? null
-      : passive.isFull
-        ? `**Passive income** · ${chips(passive.available)} ready — full, collect it!`
-        : `**Passive income** · ${chips(passive.available)} ready ${progressBar(passive.available / passive.cap, 8)} full ${discordTime(passive.fullAt ?? 0)}`;
-  const dailyLine = settings.economy.dailyReward === 0 ? '**Daily reward** · disabled on this server' : wallet.daily.available
-    ? `**Daily reward** · ready — **${chips(wallet.daily.amount)}** chips${wallet.daily.streak > 1 ? ` (day ${wallet.daily.streak} streak)` : ''}`
-    : `**Daily reward** · claimed — next ${discordTime(wallet.daily.nextAt)}`;
-  const tablesLine =
-    tables.length === 0
-      ? '**Blackjack** · no tables open — start one!'
-      : `**Blackjack** · ${tables.length} ${tables.length === 1 ? 'table' : 'tables'} open · ${seated} ${seated === 1 ? 'player' : 'players'} seated`;
-
-  const playButton = mine
+  const pokerLink = myPoker && pokerUrl(myPoker.record);
+  const playButton = myPoker
+    ? pokerLink ? linkButton('Your table', pokerLink, ICONS.poker) : button({ id: cid('pk', 'hand', myPoker.record.id), label: 'Your table', emoji: ICONS.poker })
+    : mine
     ? mine.record.threadId || mine.record.channelId
-      ? linkButton(`Back to ${mine.record.name}`, channelUrl(viewer.guildId, (mine.record.threadId ?? mine.record.channelId)!, mine.record.threadId ? null : mine.record.messageId), ICONS.blackjack)
-      : // No panel yet (still being posted): open the player's seat controls instead. A distinct id —
-        // reusing the Tables button's id would make Discord reject the whole message.
-        button({ id: cid('bj', 'seat', mine.record.id), label: `Back to ${mine.record.name}`, emoji: ICONS.blackjack, tone: 'primary' })
+      ? linkButton('Your table', channelUrl(viewer.guildId, (mine.record.threadId ?? mine.record.channelId)!, mine.record.threadId ? null : mine.record.messageId), ICONS.blackjack)
+      : button({ id: cid('bj', 'seat', mine.record.id), label: 'Your table', emoji: ICONS.blackjack, tone: 'primary' })
     : button({ id: cid('tbl', 'quick'), label: 'Play Blackjack', emoji: ICONS.blackjack, tone: 'primary', disabled: !gameEnabled(settings, 'blackjack') });
 
   return {
+    files: art.files,
     components: [
       container(COLORS.emerald, [
         navRow('home'),
-        section([`# ${settings.casinoName}`, greeting], thumbnail(viewer.avatarUrl, `${viewer.displayName}'s avatar`)),
-        text(balanceLine),
-        text([passiveLine, dailyLine, tablesLine].filter(Boolean).join('\n')),
-        row(...claimButtons(app, viewer)),
-        separator(),
+        art.component,
+        text(`${sameBrand ? '' : `# ${escapeMarkdown(settings.casinoName)}\n`}${balanceText(wallet)}\n-# ${nameLine}`),
         row(
           playButton,
-          button({ id: NAV.tables, label: 'Tables', emoji: ICONS.tables }),
+          ...GAMES.filter((game) => game.id !== 'blackjack' && (game.id !== 'poker' || (settings.poker.enabled && !myPoker))).map((game) =>
+            button({ id: game.play, label: game.id === 'slots' ? 'Slots' : game.label, emoji: game.icon, disabled: !gameEnabled(settings, game.id) })),
+        ),
+        text(tables.length ? `-# ${plural(tables.length, 'open table')} · ${plural(seated, 'seated player')}` : '-# No Blackjack tables open'),
+        row(
+          button({ id: NAV.tables, label: 'Browse tables', emoji: ICONS.tables }),
+          button({ id: NAV.events, label: 'Events', emoji: ICONS.events }),
           button({ id: NAV.help, label: 'Help', emoji: ICONS.help }),
         ),
-        row(...GAMES.filter((game) => game.id !== 'blackjack').map((game) =>
-          button({ id: game.play, label: game.label, emoji: game.icon, disabled: !gameEnabled(settings, game.id) }))),
+      ]),
+      container(COLORS.deepEmerald, [
+        text(rewardSummary(wallet, settings.economy.dailyReward > 0, true)),
+        row(...claimButtons(app, viewer)),
         activity.length ? text(`### Casino activity\n${activity.join('\n')}`) : null,
-        isNew ? text('-# New here? **Play Blackjack** seats you at a table. Chips are free and fictional — they can never be bought or cashed out.') : null,
       ]),
     ],
   };
@@ -127,53 +115,43 @@ export function ledgerLine(entry: LedgerRow, compact = false): string {
   return `\`${amount.padStart(8)}\` ${label}${memo.length > 90 ? `${memo.slice(0, 89)}…` : memo} · ${discordTime(entry.created_at)}`;
 }
 
-export function walletScreen(app: CasinoApp, viewer: Viewer): Screen {
+export async function walletScreen(app: CasinoApp, viewer: Viewer): Promise<Screen> {
   app.economy.ensurePlayer(viewer.guildId, viewer.userId, viewer.displayName);
   const wallet = app.economy.getWallet(viewer.guildId, viewer.userId);
   const relief = app.economy.reliefStatus(viewer.guildId, viewer.userId);
-  const recent = app.economy.ledgerPage(viewer.guildId, viewer.userId, 5);
-  const passive = wallet.passive;
-  const passiveText =
-    passive.ratePerHour === 0
-      ? '**Passive income** · disabled on this server'
-      : `**Passive income** · ${chips(passive.available)} / ${chips(passive.cap)} ready\n${progressBar(passive.cap ? passive.available / passive.cap : 0)} ${passive.isFull ? 'full — collect it!' : `full ${discordTime(passive.fullAt ?? 0)}`}\n-# Earns ${chips(passive.ratePerHour)} chips an hour, even while you're away.`;
-  const dailyText = app.settings.get(viewer.guildId).economy.dailyReward === 0 ? '**Daily reward** · disabled on this server' : wallet.daily.available
-    ? `**Daily reward** · ready — **${chips(wallet.daily.amount)}** chips${wallet.daily.streak > 1 ? ` · day ${wallet.daily.streak} streak` : ''}`
-    : `**Daily reward** · claimed${wallet.daily.streak > 1 ? ` · ${wallet.daily.streak}-day streak` : ''} — next ${discordTime(wallet.daily.nextAt)}`;
+  const recent = app.economy.ledgerPage(viewer.guildId, viewer.userId, 4);
+  const settings = app.settings.get(viewer.guildId);
+  const art = await dashboardArt('wallet');
   const reliefText = relief.eligible
     ? `**Emerald Relief Fund** · ${chips(relief.amount)} chips available`
     : relief.nextAt ? `**Emerald Relief Fund** · next eligible ${discordTime(relief.nextAt)}`
-    : relief.reason === 'rewards' ? '**Emerald Relief Fund** · collect your available rewards first'
-    : relief.reason === 'funds' ? '**Emerald Relief Fund** · available when you have zero available or committed chips'
-    : null;
+    : relief.reason === 'rewards' ? '**Emerald Relief Fund** · collect your available rewards first' : null;
   return {
+    files: art.files,
     components: [
       container(COLORS.gold, [
         navRow('wallet'),
-        section(
-          [
-            '## Wallet',
-            `# ${chips(wallet.balance)} available\n-# ${chips(wallet.reserved)} committed · ${chips(wallet.total)} total chips`,
-          ],
-          thumbnail(viewer.avatarUrl),
-        ),
-        text(`${passiveText}\n${dailyText}`),
+        art.component,
+        text(`${art.component ? '' : '**Wallet**\n'}${balanceText(wallet)}`),
+        text(rewardSummary(wallet, settings.economy.dailyReward > 0)),
         row(...claimButtons(app, viewer, 'wallet')),
         reliefText ? text(reliefText) : null,
         relief.eligible ? row(
           button({ id: cid('eco', 'relief'), label: `Claim ${chips(relief.amount)} chips`, tone: 'success' }),
           relief.titleOffered ? button({ id: cid('eco', 'relief', 'title'), label: 'Claim with Sosse title' }) : null,
         ) : null,
-        text(recent.length ? `### Recent transactions\n${recent.map((entry) => ledgerLine(entry, true)).join('\n')}` : '### Recent transactions\nNothing yet.'),
+      ]),
+      container(COLORS.deepEmerald, [
+        text(recent.length ? `### Recent transactions\n${recent.map((entry) => ledgerLine(entry, true)).join('\n')}` : '### Recent transactions\nNo transactions yet.'),
         row(
           button({ id: cid('nav', 'history', 0), label: 'Transactions', emoji: ICONS.history }),
-          button({ id: NAV.rewards, label: 'Rewards', emoji: ICONS.rewards }),
-          button({ id: cid('nav', 'missions'), label: 'Missions' }),
-          button({ id: cid('nav', 'matches'), label: 'Match history' }),
+          button({ id: cid('nav', 'matches'), label: 'Match history', emoji: ICONS.matches }),
+          button({ id: cid('nav', 'walletstats'), label: 'Statistics', emoji: ICONS.leaderboard }),
         ),
         row(
-          button({ id: cid('nav', 'walletstats'), label: 'Chip statistics' }),
-          button({ id: cid('nav', 'gifting'), label: 'Gifting', disabled: !app.settings.get(viewer.guildId).economy.giftingEnabled }),
+          button({ id: NAV.rewards, label: 'Rewards', emoji: ICONS.rewards }),
+          button({ id: cid('nav', 'missions'), label: 'Missions', emoji: ICONS.missions }),
+          button({ id: cid('nav', 'gifting'), label: 'Gifting', emoji: ICONS.gift, disabled: !settings.economy.giftingEnabled }),
         ),
       ]),
     ],

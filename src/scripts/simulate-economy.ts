@@ -7,7 +7,7 @@ import { ManualScheduler } from '../core/scheduler.js';
 import { Database } from '../db/database.js';
 import { availableActions, currentTurnUserId } from '../games/blackjack/engine.js';
 import { basicStrategy } from '../games/blackjack/strategy.js';
-import { dealPoker, playPoker, pokerActions, type PokerAction } from '../games/poker/engine.js';
+import { pokerActions, type PokerAction } from '../games/poker/engine.js';
 import { ALL_IN_DEAL_DELAY_MS } from '../tables/blackjack-table-service.js';
 
 const guild = 'economy-simulation';
@@ -15,7 +15,7 @@ const previous = { startingBalance: 1000, passivePerHour: 50, dailyReward: 250, 
 const { startingBalance, passivePerHour, dailyReward, dailyStreakBonus } = DEFAULT_SETTINGS.economy;
 const proposed = { startingBalance, passivePerHour, dailyReward, dailyStreakBonus };
 const people = Array.from({ length: 12 }, (_, index) => ({
-  id: String(index), attendance: index % 2 ? 28 : 72, game: index % 4, stake: index % 3 === 0 ? 25 : 10,
+  id: String(index), attendance: index % 2 ? 28 : 72, game: index % 4, stake: [10, 25, 50, 100][Math.floor(index / 3)]!,
 }));
 
 async function model(days: number, economy: typeof previous, gifting: boolean, seed: number) {
@@ -27,6 +27,8 @@ async function model(days: number, economy: typeof previous, gifting: boolean, s
   const app = new CasinoApp({ db, clock, scheduler, rng, logger: silentLogger });
   for (const [key, value] of Object.entries(economy)) app.settings.set(guild, 'economy.' + key, value);
   app.settings.set(guild, 'economy.giftingEnabled', gifting);
+  app.settings.set(guild, 'poker.enabled', true);
+  app.settings.set(guild, 'poker.minBuyIn', 40);
   for (const player of people) app.economy.ensurePlayer(guild, player.id);
   const balance = (userId: string) => app.economy.requirePlayer(guild, userId).balance;
   const blackjack = people.filter((player) => player.game === 0);
@@ -62,7 +64,7 @@ async function model(days: number, economy: typeof previous, gifting: boolean, s
       }
     }
 
-    for (let round = 0; round < 6; round++) {
+    for (let round = 0; round < 10; round++) {
       const playing = active.filter((player) => player.game === 0 && balance(player.id) >= player.stake);
       if (!playing.length) break;
       for (const player of playing) await app.blackjack.placeBet(tableId, player.id, player.stake);
@@ -92,7 +94,7 @@ async function model(days: number, economy: typeof previous, gifting: boolean, s
         await app.roulette.placeBet(wheel.record.id, { userId: player.id, displayName: player.id, type: 'red', amount: player.stake });
       }
       if (player.game === 2) {
-        for (let spin = 0; spin < 8 && balance(player.id) >= player.stake; spin++) {
+        for (let spin = 0; spin < 16 && balance(player.id) >= player.stake; spin++) {
           await app.slots.spin(guild, player.id, player.stake, null);
         }
       }
@@ -101,29 +103,31 @@ async function model(days: number, economy: typeof previous, gifting: boolean, s
     scheduler.runDue();
     await app.roulette.idle();
 
-    const pair = active.filter((person) => person.game === 3 && balance(person.id) >= 50).slice(0, 2);
+    const pair = active.filter((person) => person.game === 3 && balance(person.id) >= 40).slice(0, 2);
     if (pair.length === 2) {
       if (day % 2 === 0) {
-        const challenge = await app.coinflip.create({ guildId: guild, challengerId: pair[0]!.id, opponentId: pair[1]!.id, amount: 10, call: 'heads' });
+        const stake = Math.min(pair[0]!.stake, pair[1]!.stake, balance(pair[0]!.id), balance(pair[1]!.id));
+        const challenge = await app.coinflip.create({ guildId: guild, challengerId: pair[0]!.id, opponentId: pair[1]!.id, amount: stake, call: 'heads' });
         await app.coinflip.accept(challenge.id, pair[1]!.id);
       } else {
-        // Isolated model only. Apply the engine’s zero-sum deltas using audited fixture adjustments.
-        const positions = pair.map((person, seat) => ({ userId: person.id, seat, stack: 50 }));
-        let hand = dealPoker(positions, day % 2, 2, 4, rng);
-        while (hand.street !== 'complete') {
-          const user = positions[hand.actor!]!;
-          const legal = pokerActions(hand, user.userId)!;
+        const [host, guest] = pair;
+        const opening = [host!, guest!].map((person) => Math.min(balance(person.id), Math.max(40, person.stake * 2)));
+        const table = await app.poker.create({ guildId: guild, userId: host!.id, name: host!.id, buyIn: opening[0]! });
+        const id = table.record.id;
+        await app.poker.join(id, guest!.id, guest!.id, opening[1]!);
+        await app.poker.start(id, host!.id, app.poker.peek(id)!.record.version);
+        while (app.poker.peek(id)!.state.hand) {
+          const snapshot = app.poker.peek(id)!;
+          const hand = snapshot.state.hand!;
+          const player = hand.seats.find((seat) => seat.seat === hand.actor)!;
+          const legal = pokerActions(hand, player.userId)!;
           const action: PokerAction = legal.minTo !== null && rng.int(4) === 0
             ? { type: 'raise', to: legal.minTo }
             : legal.check ? { type: 'check' } : rng.int(6) === 0 ? { type: 'fold' } : { type: 'call' };
-          hand = playPoker(hand, user.userId, hand.seq, action);
+          await app.poker.act(id, player.userId, snapshot.state.handId!, hand.seq, action);
         }
-        for (const seat of hand.seats) {
-          const delta = seat.stack - 50;
-          if (!delta) continue;
-          app.economy.adminAdjust({ guildId: guild, userId: seat.userId, actorId: 'simulation', amount: delta, reason: 'Poker redistribution model' });
-          if (delta > 0) pokerMoved += delta;
-        }
+        pokerMoved += db.get<{ net: number }>("SELECT COALESCE(SUM(MAX(net, 0)), 0) AS net FROM round_results WHERE round_id = (SELECT id FROM game_rounds WHERE table_id = ?)", [id])!.net;
+        await app.poker.close(id, 'simulation end');
       }
     }
     clock.set(Date.UTC(2026, 0, 2 + day, 19));

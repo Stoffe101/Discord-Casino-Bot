@@ -1,5 +1,7 @@
 import type { CasinoApp } from '../../app/casino-app.js';
 import { COUNTDOWN_CUTOFF_MS, chips, countdown, escapeMarkdown, discordTime, plural } from '../../core/format.js';
+import { eventsScreen } from './events.js';
+import { pokerUrl } from './poker.js';
 import { cardLabel } from '../../games/cards.js';
 import { currentTurnUserId, describeRules, describeTotal, handValue, isNaturalCards, type BlackjackRules } from '../../games/blackjack/engine.js';
 import { renderTableSvg } from '../../render/table-image.js';
@@ -70,66 +72,83 @@ function tableLocation(snapshot: Readonly<TableSnapshot>): string | null {
 
 // ───────────────────────────── table browser ─────────────────────────────
 
-export const TABLE_FILTERS = ['all', 'blackjack', 'seats', 'public'] as const;
+export const TABLE_FILTERS = ['all', 'blackjack', 'poker', 'roulette', 'seats', 'public', 'active', 'events'] as const;
 export type TableFilter = typeof TABLE_FILTERS[number];
 const TABLE_FILTER_LABELS: Record<TableFilter, string> = {
-  all: 'All games', blackjack: 'Blackjack', seats: 'Available seats', public: 'Public tables',
+  all: 'All games', blackjack: 'Blackjack', poker: 'Hold’em', roulette: 'Roulette', seats: 'Available seats', public: 'Public tables', active: 'In play', events: 'Scheduled events',
 };
-const TABLES_PER_PAGE = 4;
+const TABLES_PER_PAGE = 3;
 
 export function tablesScreen(app: CasinoApp, viewer: Viewer, filter: TableFilter = 'all', page = 0): Screen {
   app.economy.ensurePlayer(viewer.guildId, viewer.userId, viewer.displayName);
-  const filtered = app.blackjack.openTables(viewer.guildId).filter((table) => {
-    if (filter === 'seats') return table.state.seats.length < table.record.config.maxSeats;
-    if (filter === 'public') return !table.record.isPrivate;
-    return true;
-  });
+  if (filter === 'events') return eventsScreen(app, viewer, page);
+  const settings = app.settings.get(viewer.guildId);
+  const blackjack = app.blackjack.openTables(viewer.guildId);
+  const poker = app.poker.openTables(viewer.guildId);
+  const wheel = app.roulette.wheelFor(viewer.guildId);
+  const myBlackjack = app.blackjack.tableOfUser(viewer.guildId, viewer.userId);
+  const myPoker = app.poker.tableOfUser(viewer.guildId, viewer.userId);
+  const mine = myBlackjack?.record.id ?? myPoker?.record.id;
+  const mineUrl = myBlackjack ? tableLocation(myBlackjack) : myPoker ? pokerUrl(myPoker.record) : null;
+  const entries = [
+    ...blackjack.map((table) => ({
+      kind: 'blackjack', game: 'Blackjack', record: table.record, url: tableLocation(table),
+      canJoin: settings.enabled && settings.blackjack.enabled && table.state.seats.length < table.record.config.maxSeats,
+      description: tableSummary(table), players: table.state.seats.map((seat) => seat.displayName),
+      active: table.state.phase !== 'betting', join: cid('tbl', 'join', table.record.id),
+    })),
+    ...poker.map((table) => ({
+      kind: 'poker', game: 'Hold’em', record: table.record, url: pokerUrl(table.record),
+      canJoin: settings.enabled && settings.poker.enabled && table.state.seats.length < table.record.config.maxSeats,
+      description: `${table.state.seats.length}/${table.record.config.maxSeats} seated · ${table.state.hand ? 'hand in play' : 'between hands'} · blinds ${chips(table.record.config.smallBlind)}/${chips(table.record.config.bigBlind)}`,
+      players: table.state.seats.map((seat) => seat.name), active: !!table.state.hand, join: cid('pk', 'join', table.record.id),
+    })),
+    ...(wheel ? [{
+      kind: 'roulette', game: 'Roulette', record: { id: wheel.record.id, name: 'Shared wheel', isPrivate: false },
+      url: wheel.record.threadId ? channelUrl(viewer.guildId, wheel.record.threadId)
+        : wheel.record.channelId && wheel.record.messageId ? channelUrl(viewer.guildId, wheel.record.channelId, wheel.record.messageId) : null,
+      canJoin: false, description: `${new Set(wheel.state.bets.map((bet) => bet.userId)).size} bettors · ${wheel.state.bets.length ? 'taking bets' : 'waiting for bets'} · ${chips(settings.roulette.minBet)}–${chips(settings.roulette.maxBet)} per spot`,
+      players: [], active: wheel.state.bets.length > 0, join: cid('rl', 'open'),
+    }] : []),
+  ];
+  const allowed = TABLE_FILTERS.filter((kind) => kind !== 'poker' || settings.poker.enabled || poker.length > 0);
+  const filtered = entries.filter((entry) => filter === 'all' || filter === entry.kind || (filter === 'seats' && entry.canJoin)
+    || (filter === 'active' && entry.active) || (filter === 'public' && !entry.record.isPrivate));
   const pages = Math.max(1, Math.ceil(filtered.length / TABLES_PER_PAGE));
   const current = Math.min(pages - 1, Math.max(0, page));
-  const tables = filtered.slice(current * TABLES_PER_PAGE, (current + 1) * TABLES_PER_PAGE);
-  const settings = app.settings.get(viewer.guildId);
-  const mine = app.blackjack.tableOfUser(viewer.guildId, viewer.userId);
-  const sections = tables.flatMap((t) => {
-    const seatedHere = t.state.seats.some((s) => s.userId === viewer.userId);
-    const full = t.state.seats.length >= t.record.config.maxSeats;
-    const url = tableLocation(t);
-    const players = t.state.seats.map((s) => escapeMarkdown(s.displayName)).join(', ');
-    const accessory = seatedHere
-      ? url
-        ? linkButton('Return to table', url, ICONS.blackjack)
-        : button({ id: cid('bj', 'seat', t.record.id), label: 'My hand' })
-      : button({ id: cid('tbl', 'join', t.record.id), label: full ? 'Full' : t.record.isPrivate ? 'Join with code' : 'Join', tone: 'success', disabled: full || !!mine || !settings.enabled || !settings.blackjack.enabled });
+  const sections = filtered.slice(current * TABLES_PER_PAGE, (current + 1) * TABLES_PER_PAGE).flatMap((entry) => {
+    const seated = mine === entry.record.id;
+    const wheelEntry = entry.kind === 'roulette';
+    const players = entry.players.length ? `\n-# ${entry.players.map(escapeMarkdown).join(', ')}` : '';
+    const action = seated && entry.url ? linkButton('Your table', entry.url, ICONS.tables)
+      : wheelEntry && entry.url ? linkButton('Go to wheel', entry.url, ICONS.roulette)
+      : button({ id: entry.join, label: wheelEntry ? 'Open wheel' : entry.record.isPrivate ? 'Join with code' : entry.canJoin ? 'Join' : 'Unavailable',
+        tone: 'success', emoji: ICONS.tables, disabled: !wheelEntry && (!entry.canJoin || !!mine && !seated) });
     return [
-      section(
-        [`**${escapeMarkdown(t.record.name)}** · Blackjack · ${t.record.isPrivate ? 'Private' : 'Public'}\n${tableSummary(t)}${players ? `\n-# ${players}` : ''}`],
-        accessory,
-      ),
-      url && !t.record.isPrivate && !seatedHere ? row(linkButton('Spectate', url)) : null,
+      section([`**${escapeMarkdown(entry.record.name)}** · ${entry.game} · ${entry.record.isPrivate ? 'Private' : 'Public'}\n${entry.description}${players}`], action),
+      !wheelEntry && entry.url && !entry.record.isPrivate && !seated ? row(linkButton('Spectate', entry.url, ICONS.spectate)) : null,
     ];
   });
-  const canCreate = settings.enabled && settings.blackjack.enabled && !mine;
   return {
     components: [
       container(COLORS.emerald, [
         navRow('games'),
-        text(`## Casino tables\n-# ${tables.length ? `${filtered.length} matching tables` : 'No tables match this filter.'}`),
-        select({ id: cid('tbl', 'filter'), placeholder: 'Filter tables', options: TABLE_FILTERS.map((value) => option(TABLE_FILTER_LABELS[value], value, undefined, undefined, value === filter)) }),
+        text(`## Casino tables\n-# ${filtered.length ? plural(filtered.length, 'matching table') : 'No tables match this filter.'}`),
+        select({ id: cid('tbl', 'filter'), placeholder: 'Filter tables', options: allowed.map((value) => option(TABLE_FILTER_LABELS[value], value, undefined, undefined, value === filter)) }),
       ]),
       container(COLORS.deepEmerald, [
         ...sections,
-        mine ? section(
-          [`You're seated at **${escapeMarkdown(mine.record.name)}**.`],
-          tableLocation(mine)
-            ? linkButton('Your table', tableLocation(mine)!)
-            : button({ id: cid('tbl', 'quick'), label: 'Your table' }),
-        ) : null,
+        mineUrl ? row(linkButton('Return to your table', mineUrl, ICONS.back)) : null,
         row(
-          mine ? null : button({ id: cid('tbl', 'quick'), label: 'Quick seat', emoji: ICONS.blackjack, tone: 'success', disabled: !settings.enabled || !settings.blackjack.enabled }),
-          button({ id: cid('tbl', 'create'), label: 'Open a table', tone: 'primary', disabled: !canCreate }),
-          pages > 1 ? button({ id: cid('nav', 'tables', filter, current - 1), label: 'Previous', disabled: current === 0 }) : null,
-          pages > 1 ? button({ id: cid('nav', 'tables', filter, current + 1), label: 'Next', disabled: current + 1 === pages }) : null,
-          button({ id: cid('nav', 'tables', filter, current), label: pages > 1 ? `Refresh ${current + 1}/${pages}` : 'Refresh', emoji: ICONS.refresh }),
+          !mine ? button({ id: cid('tbl', 'quick'), label: 'Quick seat', emoji: ICONS.blackjack, tone: 'success', disabled: !settings.enabled || !settings.blackjack.enabled }) : null,
+          button({ id: cid('tbl', 'create'), label: 'Open a table', tone: 'primary', disabled: !!mine || !settings.enabled || !settings.blackjack.enabled }),
+          settings.poker.enabled ? button({ id: cid('pk', 'create'), label: 'Open Hold’em', emoji: ICONS.poker, tone: 'primary', disabled: !!mine || !settings.enabled }) : null,
         ),
+        pages > 1 ? row(
+          button({ id: cid('nav', 'tables', filter, current - 1), label: 'Previous', emoji: ICONS.back, disabled: current === 0 }),
+          button({ id: cid('nav', 'tables', filter, current), label: `Refresh ${current + 1}/${pages}`, emoji: ICONS.refresh }),
+          button({ id: cid('nav', 'tables', filter, current + 1), label: 'Next', emoji: ICONS.next, disabled: current + 1 === pages }),
+        ) : row(button({ id: cid('nav', 'tables', filter, current), label: 'Refresh', emoji: ICONS.refresh })),
       ]),
     ],
   };
@@ -319,6 +338,7 @@ ${seatSummary(state, round, seat.userId).join('\n')}`));
       for (const line of extras.slice(0, 3)) lines.push(`-# ✦ ${line}`);
     }
     const betCount = Object.keys(state.bets).length;
+    const dealDue = state.deadline !== null && state.deadline - app.clock.now() <= COUNTDOWN_CUTOFF_MS;
     const placed = state.seats.filter((s) => state.bets[s.userId]).map((s) => `${escapeMarkdown(s.displayName)} **${chips(state.bets[s.userId]!)}**`);
     const deciding = state.seats.filter((s) => !state.bets[s.userId] && !s.sittingOut).map((s) => escapeMarkdown(s.displayName));
     const away = state.seats.filter((s) => !state.bets[s.userId] && s.sittingOut).map((s) => escapeMarkdown(s.displayName));
@@ -345,7 +365,7 @@ ${seatSummary(state, round, seat.userId).join('\n')}`));
         button({ id: cid('bj', 'rebet', tableId), label: 'Rebet', tone: 'primary', emoji: ICONS.refresh }),
         button({ id: cid('bj', 'betx', tableId), label: 'Custom bet' }),
         button({ id: cid('bj', 'clear', tableId), label: 'Clear bet', disabled: betCount === 0 }),
-        betCount > 0 ? button({ id: cid('bj', 'deal', tableId), label: 'Deal now (host)', tone: 'success' }) : null,
+        betCount > 0 ? button({ id: cid('bj', 'deal', tableId, state.roundId), label: dealDue ? 'Dealing…' : 'Deal now (host)', tone: 'success', disabled: dealDue }) : null,
       ),
     );
   }
@@ -370,14 +390,15 @@ ${seatSummary(state, round, seat.userId).join('\n')}`));
         log.length ? text(log.join('\n')) : null,
         ...(animating ? [] : rows),
       ]),
-      row(
+      container(COLORS.deepEmerald, [row(
         button({ id: cid('bj', 'join', tableId), label: full ? 'Table full' : 'Take a seat', emoji: ICONS.tables, tone: 'success', disabled: full }),
-        button({ id: cid('bj', 'seat', tableId), label: state.phase === 'betting' ? 'My seat' : 'My hand' }),
-        button({ id: cid('bj', 'leave', tableId), label: 'Leave' }),
+        button({ id: cid('bj', 'seat', tableId), label: state.phase === 'betting' ? 'My seat' : 'My hand', emoji: ICONS.hand }),
+        button({ id: cid('bj', 'leave', tableId), label: 'Leave', emoji: ICONS.leave }),
         button({ id: cid('bj', 'rules', tableId), label: 'Rules', emoji: ICONS.help }),
         button({ id: cid('bj', 'home', tableId), label: 'Casino', emoji: ICONS.home }),
       ),
-      ...(lobby.channelId ? [row(linkButton('Return to lobby', channelUrl(record.guildId, lobby.channelId, lobby.messageId)))] : []),
+      lobby.channelId ? row(linkButton('Return to lobby', channelUrl(record.guildId, lobby.channelId, lobby.messageId), ICONS.back)) : null,
+      ]),
     ],
   };
 }

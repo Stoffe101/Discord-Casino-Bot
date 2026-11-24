@@ -42,6 +42,12 @@ export interface RecordRoundInput {
   tablePlayers?: number;
 }
 
+export interface PokerStackSettlement {
+  userId: string;
+  before: number;
+  after: number;
+}
+
 export interface RecordedPlayer {
   userId: string;
   net: number;
@@ -75,6 +81,20 @@ export class RoundRecorder {
   }
 
   record(input: RecordRoundInput): RecordedRound {
+    if (input.game === 'poker') throw new Error('Poker requires persistent stack accounting.');
+    return this.recordSettled(input);
+  }
+
+  recordPoker(input: RecordRoundInput & { game: 'poker'; tableId: string }, stacks: readonly PokerStackSettlement[]): RecordedRound {
+    const byUser = new Map(stacks.map((stack) => [stack.userId, stack]));
+    if (byUser.size !== stacks.length || stacks.length !== input.players.length) throw new Error('Poker participant mismatch.');
+    const before = stacks.reduce((sum, stack) => sum + stack.before, 0);
+    const after = stacks.reduce((sum, stack) => sum + stack.after, 0);
+    if (!Number.isSafeInteger(before) || before !== after) throw new Error('Poker chips do not balance.');
+    return this.recordSettled(input, byUser);
+  }
+
+  private recordSettled(input: RecordRoundInput, stacks?: ReadonlyMap<string, PokerStackSettlement>): RecordedRound {
     return this.db.transaction(() => {
       const now = this.clock.now();
       const inserted = this.db.run(
@@ -86,7 +106,9 @@ export class RoundRecorder {
 
       const players: RecordedPlayer[] = [];
       for (const p of input.players) {
-        players.push(this.recordPlayer(input, p, now));
+        const stack = stacks?.get(p.userId);
+        if (stacks && !stack) throw new Error('Poker player is missing a stack.');
+        players.push(this.recordPlayer(input, p, now, stack));
       }
       return { duplicate: false, players };
     });
@@ -106,20 +128,27 @@ export class RoundRecorder {
     });
   }
 
-  private recordPlayer(input: RecordRoundInput, p: PlayerRoundOutcome, now: number): RecordedPlayer {
+  private recordPlayer(input: RecordRoundInput, p: PlayerRoundOutcome, now: number, stack?: PokerStackSettlement): RecordedPlayer {
     const { guildId, game, roundId } = input;
     const net = p.returned - p.wagered;
     const outcome = net > 0 ? 'win' : net < 0 ? 'loss' : 'push';
+    if (stack && (!Number.isSafeInteger(stack.after) || stack.after < 0 || stack.before - p.wagered + p.returned !== stack.after)) {
+      throw new Error('Poker payout does not match the hand result.');
+    }
     this.economy.settle({
       guildId,
       userId: p.userId,
-      contextId: roundId,
+      contextId: stack ? input.tableId! : roundId,
       game,
-      payout: p.returned,
+      payout: stack?.after ?? p.returned,
       outcome,
       key: `round:${roundId}`,
-      expectedStake: p.wagered,
+      expectedStake: stack?.before ?? p.wagered,
       memo: `${input.title} · staked ${chips(p.wagered)}, returned ${chips(p.returned)} (${signedChips(net)})`,
+    });
+    if (stack && stack.after > 0) this.economy.reserve({
+      guildId, userId: p.userId, game, contextId: input.tableId!, amount: stack.after,
+      key: `poker-stack:${roundId}`, memo: 'Poker table stack after the hand',
     });
     this.db.run(
       `INSERT INTO round_results (round_id, guild_id, user_id, game, wagered, returned, net, outcome, detail_json, created_at)
@@ -177,9 +206,14 @@ export class RoundRecorder {
     const highlights = this.settings(guildId).highlights;
     if (highlights.enabled && !this.economy.requirePlayer(guildId, p.userId).highlights_opt_out) {
       const enoughWager = p.wagered >= highlights.minimumWager;
+      const notable = enoughWager && net >= highlights.bigNet;
       const event = enoughWager && flags.has('slots_jackpot') ? 'Slots jackpot'
+        : notable && stack && p.wagered === stack.before && p.wagered >= highlights.allInStake ? 'All-in win'
+        : notable && stack && p.returned >= highlights.pokerReturn ? 'Hold’em pot win'
         : net >= highlights.majorNet ? 'Major win'
-        : enoughWager && net >= highlights.bigNet ? flags.has('roulette_straight_win') ? 'Straight-up win' : 'Big win'
+        : notable && flags.has('roulette_straight_win') ? 'Straight-up win'
+        : notable && flags.has('bj_split_both_won') ? 'Both split hands won'
+        : notable ? 'Big win'
         : null;
       if (event && net > 0 && !this.db.get(
         "SELECT id FROM highlights WHERE guild_id = ? AND user_id = ? AND kind = 'big_win' AND created_at > ? LIMIT 1",
@@ -209,6 +243,8 @@ export function gameLabel(game: string): string {
   switch (game) {
     case 'blackjack':
       return 'blackjack';
+    case 'poker':
+      return 'Hold’em';
     case 'roulette':
       return 'roulette';
     case 'slots':

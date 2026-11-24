@@ -317,7 +317,7 @@ describe('InteractionRouter (headless)', () => {
     const { blackjackPanel } = await import('../src/ui/screens/blackjack.js');
     const viewer = { guildId: GUILD, userId: userId(1), displayName: 'Player 1', avatarUrl: 'https://cdn.discordapp.com/embed/avatars/0.png', isAdmin: false };
     app.economy.ensurePlayer(GUILD, userId(1), 'Player 1');
-    const home = homeScreen(app, viewer);
+    const home = await homeScreen(app, viewer);
     const target = { client: bot.client } as never; // a plain channel-like target
     const body = MessagePayload.create(target, replyOptions(home)).resolveBody().body as { components: unknown; flags: number };
     expect(body.components).toEqual(JSON.parse(JSON.stringify(home.components)));

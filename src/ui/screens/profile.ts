@@ -54,6 +54,9 @@ export function profileScreen(app: CasinoApp, viewer: Viewer, target: ProfileTar
   if (stat(stats, 'coinflip', 'rounds') > 0) {
     otherLines.push(`Coinflip — ${stat(stats, 'coinflip', 'wins')} won / ${stat(stats, 'coinflip', 'losses')} lost · net ${signedChips(stat(stats, 'coinflip', 'net'))}`);
   }
+  if (stat(stats, 'poker', 'rounds') > 0) {
+    otherLines.push(`Hold’em — ${plural(stat(stats, 'poker', 'rounds'), 'hand')} · net ${signedChips(stat(stats, 'poker', 'net'))}`);
+  }
   const all = (s: string) => stat(stats, 'all', s);
   const rewards =
     app.db.get<{ n: number }>(

@@ -4,6 +4,7 @@
  */
 export interface GuildSettings {
   casinoName: string;
+  eventOrganizerRole: string;
   enabled: boolean;
   /** Animated spins, reels and coin tosses (blackjack has its own switch). */
   animations: boolean;
@@ -20,7 +21,7 @@ export interface GuildSettings {
     giftingEnabled: boolean;
     giftDailyLimit: number;
   };
-  highlights: { enabled: boolean; bigNet: number; majorNet: number; minimumWager: number; cooldownSeconds: number };
+  highlights: { enabled: boolean; bigNet: number; majorNet: number; minimumWager: number; allInStake: number; pokerReturn: number; cooldownSeconds: number };
   blackjack: {
     enabled: boolean;
     minBet: number;
@@ -49,10 +50,12 @@ export interface GuildSettings {
   coinflip: { enabled: boolean; minBet: number; maxBet: number; expirySeconds: number };
   roulette: { enabled: boolean; minBet: number; maxBet: number; bettingSeconds: number; minimumReadySeconds: number };
   slots: { enabled: boolean; minBet: number; maxBet: number };
+  poker: { enabled: boolean; minBuyIn: number; maxBuyIn: number; smallBlind: number; bigBlind: number; maxSeats: number; turnSeconds: number };
 }
 
 export const DEFAULT_SETTINGS: GuildSettings = {
   casinoName: 'The Emerald Room',
+  eventOrganizerRole: 'off',
   animations: true,
   enabled: true,
   economy: {
@@ -65,10 +68,10 @@ export const DEFAULT_SETTINGS: GuildSettings = {
     reliefAmount: 50,
     reliefCooldownHours: 24,
     reliefTitle: true,
-    giftingEnabled: false,
+    giftingEnabled: true,
     giftDailyLimit: 500,
   },
-  highlights: { enabled: true, bigNet: 500, majorNet: 1000, minimumWager: 50, cooldownSeconds: 300 },
+  highlights: { enabled: true, bigNet: 500, majorNet: 1000, minimumWager: 50, allInStake: 250, pokerReturn: 750, cooldownSeconds: 300 },
   blackjack: {
     enabled: true,
     minBet: 10,
@@ -97,6 +100,7 @@ export const DEFAULT_SETTINGS: GuildSettings = {
   coinflip: { enabled: true, minBet: 10, maxBet: 1000, expirySeconds: 120 },
   roulette: { enabled: true, minBet: 10, maxBet: 500, bettingSeconds: 25, minimumReadySeconds: 8 },
   slots: { enabled: true, minBet: 5, maxBet: 250 },
+  poker: { enabled: false, minBuyIn: 100, maxBuyIn: 500, smallBlind: 5, bigBlind: 10, maxSeats: 6, turnSeconds: 40 },
 };
 
 export type SettingSpec =
@@ -105,13 +109,14 @@ export type SettingSpec =
   | { key: string; group: SettingGroup; label: string; help: string; type: 'enum'; options: readonly string[] }
   | { key: string; group: SettingGroup; label: string; help: string; type: 'text'; maxLength: number };
 
-export type SettingGroup = 'general' | 'economy' | 'blackjack' | 'tables' | 'games' | 'highlights';
+export type SettingGroup = 'general' | 'economy' | 'blackjack' | 'tables' | 'games' | 'highlights' | 'poker';
 
 export const SETTING_GROUPS: Record<SettingGroup, { label: string; description: string }> = {
   general: { label: 'General', description: 'Casino name and master switch' },
   economy: { label: 'Economy', description: 'Starting chips, passive income, daily rewards' },
   blackjack: { label: 'Blackjack', description: 'Limits, timers and house rules' },
   tables: { label: 'Tables', description: 'Table limits, threads and idle cleanup' },
+  poker: { label: 'Poker', description: 'Hold’em availability, buy-ins, blinds and turn timer' },
   highlights: { label: 'Highlights', description: 'Lobby activity thresholds and cooldown' },
   games: { label: 'Other games', description: 'Coinflip, roulette and slots' },
 };
@@ -122,6 +127,7 @@ export const SETTING_SPECS: readonly SettingSpec[] = [
   { key: 'enabled', group: 'general', label: 'Casino open', help: 'Close the casino to everyone but admins', type: 'bool' },
   { key: 'animations', group: 'general', label: 'Game animations', help: 'Animated roulette spins, slot reels and coin tosses', type: 'bool' },
 
+  { key: 'eventOrganizerRole', group: 'general', label: 'Event organizer role', help: 'Discord role ID, or off for server managers only', type: 'text', maxLength: 22 },
   { key: 'economy.startingBalance', group: 'economy', label: 'Starting chips', help: 'Granted once to new players', type: 'int', min: 0, max: 1_000_000 },
   { key: 'economy.passivePerHour', group: 'economy', label: 'Passive chips / hour', help: 'Accrues while offline', type: 'int', min: 0, max: 100_000 },
   { key: 'economy.passiveCapHours', group: 'economy', label: 'Passive cap (hours)', help: 'Accrual stops after this many hours', type: 'int', min: 1, max: 168 },
@@ -138,6 +144,8 @@ export const SETTING_SPECS: readonly SettingSpec[] = [
   { key: 'highlights.bigNet', group: 'highlights', label: 'Big-win net profit', help: 'Minimum profit for a big win', type: 'int', min: 1, max: 10_000_000 },
   { key: 'highlights.majorNet', group: 'highlights', label: 'Major-win net profit', help: 'Minimum profit for a major win', type: 'int', min: 1, max: 10_000_000 },
   { key: 'highlights.minimumWager', group: 'highlights', label: 'Highlight wager floor', help: 'Minimum stake for a big win or slots jackpot', type: 'int', min: 1, max: 10_000_000 },
+  { key: 'highlights.allInStake', group: 'highlights', label: 'All-in highlight stake', help: 'Minimum full-stack Hold’em commitment for an all-in win highlight', type: 'int', min: 1, max: 10_000_000 },
+  { key: 'highlights.pokerReturn', group: 'highlights', label: 'Poker highlight payout', help: 'Minimum share of the pots returned for a Hold’em pot win highlight', type: 'int', min: 1, max: 10_000_000 },
   { key: 'highlights.cooldownSeconds', group: 'highlights', label: 'Player cooldown (s)', help: 'Minimum time between win highlights per player', type: 'int', min: 0, max: 86400 },
   { key: 'blackjack.enabled', group: 'blackjack', label: 'Blackjack enabled', help: 'Allow new blackjack tables', type: 'bool' },
   { key: 'blackjack.minBet', group: 'blackjack', label: 'Minimum bet', help: 'Server-wide floor', type: 'int', min: 1, max: 1_000_000 },
@@ -166,6 +174,13 @@ export const SETTING_SPECS: readonly SettingSpec[] = [
   { key: 'coinflip.minBet', group: 'games', label: 'Coinflip min', help: 'Minimum duel stake', type: 'int', min: 1, max: 1_000_000 },
   { key: 'coinflip.maxBet', group: 'games', label: 'Coinflip max', help: 'Maximum duel stake', type: 'int', min: 1, max: 10_000_000 },
   { key: 'coinflip.expirySeconds', group: 'games', label: 'Challenge expiry (s)', help: 'Unanswered challenges refund', type: 'int', min: 30, max: 3600 },
+  { key: 'poker.enabled', group: 'poker', label: 'Hold’em tables', help: 'Enable opening new poker tables', type: 'bool' },
+  { key: 'poker.minBuyIn', group: 'poker', label: 'Minimum buy-in', help: 'Lower limit for new stacks', type: 'int', min: 10, max: 100000 },
+  { key: 'poker.maxBuyIn', group: 'poker', label: 'Maximum buy-in', help: 'Upper limit for new stacks', type: 'int', min: 10, max: 100000 },
+  { key: 'poker.smallBlind', group: 'poker', label: 'Small blind', help: 'Applies to newly opened tables', type: 'int', min: 1, max: 10000 },
+  { key: 'poker.bigBlind', group: 'poker', label: 'Big blind', help: 'Applies to newly opened tables', type: 'int', min: 2, max: 20000 },
+  { key: 'poker.maxSeats', group: 'poker', label: 'Seats per table', help: 'Default maximum seats for Hold’em', type: 'int', min: 2, max: 7 },
+  { key: 'poker.turnSeconds', group: 'poker', label: 'Turn timer (s)', help: 'Checks if possible or folds on timeout', type: 'int', min: 15, max: 180 },
   { key: 'roulette.enabled', group: 'games', label: 'Roulette', help: 'Shared roulette wheel', type: 'bool' },
   { key: 'roulette.minBet', group: 'games', label: 'Roulette min', help: 'Minimum bet', type: 'int', min: 1, max: 1_000_000 },
   { key: 'roulette.maxBet', group: 'games', label: 'Roulette max', help: 'Maximum bet per spot', type: 'int', min: 1, max: 10_000_000 },
@@ -251,6 +266,10 @@ export function resolveSettings(overrides: unknown): GuildSettings {
   for (const game of [settings.blackjack, settings.coinflip, settings.roulette, settings.slots]) {
     if (game.minBet > game.maxBet) game.maxBet = game.minBet;
   }
+  const poker = settings.poker;
+  poker.bigBlind = Math.max(poker.bigBlind, poker.smallBlind + 1);
+  poker.minBuyIn = Math.max(poker.minBuyIn, poker.bigBlind);
+  poker.maxBuyIn = Math.max(poker.maxBuyIn, poker.minBuyIn);
   return settings;
 }
 
@@ -259,6 +278,9 @@ export function applySettingOverride(overrides: unknown, key: string, raw: unkno
   const spec = getSpec(key);
   if (!spec) throw new Error(`Unknown setting: ${key}`);
   const value = coerceSetting(spec, raw);
+  if (key === 'eventOrganizerRole' && value !== 'off' && !/^\d{15,22}$/.test(String(value))) {
+    throw new Error('Use a Discord role ID or enter off.');
+  }
   const next = isObject(overrides) ? (structuredClone(overrides) as Json) : {};
   setPath(next, key, value);
   // Validate the min/max relationship for the affected game.

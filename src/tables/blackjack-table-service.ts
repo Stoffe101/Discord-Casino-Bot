@@ -519,13 +519,16 @@ export class BlackjackTableService {
     });
   }
 
-  /** Deal immediately (host only, when at least one bet is in). */
-  async dealNow(tableId: string, userId: string, origin?: object): Promise<void> {
-    await this.mutate(tableId, origin, (ctx) => {
-      if (ctx.state.phase !== 'betting') throw new StaleActionError('The cards are already out.');
+  /** Deal the displayed betting round once, even when the automatic timer wins the race. */
+  async dealNow(tableId: string, userId: string, origin?: object, expectedRoundId?: string): Promise<'dealt' | 'refresh'> {
+    return this.mutate<'dealt' | 'refresh'>(tableId, origin, (ctx) => {
       if (ctx.record.ownerId !== userId) throw new UserError('Only the table host can deal early.', 'not_host');
-      if (Object.keys(ctx.state.bets).length === 0) throw new UserError('Nobody has bet yet.', 'no_bets');
-      return { value: undefined, hint: this.deal(ctx) };
+      const { state } = ctx;
+      if (state.phase !== 'betting' || (expectedRoundId !== undefined && expectedRoundId !== state.roundId)) {
+        return { value: 'refresh', unchanged: true };
+      }
+      if (Object.keys(state.bets).length === 0) throw new UserError('Nobody has bet yet.', 'no_bets');
+      return { value: 'dealt', hint: this.deal(ctx) };
     });
   }
 
@@ -785,6 +788,9 @@ export class BlackjackTableService {
         return r;
       });
       if (result.unchanged) return result.value;
+      if (draft.roundNumber > rt.state.roundNumber) {
+        this.logger.debug('blackjack deal committed', { tableId, hand: draft.roundNumber, phase: draft.phase, at: Date.now() });
+      }
       record.version++;
       record.lastActivityAt = now;
       rt.record = record;
@@ -950,6 +956,7 @@ export class BlackjackTableService {
       state.shoe = [];
       state.shoeSize = 0;
     }
+    this.logger.debug('blackjack deal started', { tableId: record.id, hand: state.roundNumber + 1, deadline: state.deadline, at: Date.now() });
     const round = startRound({ id: state.roundId, rules, shoe: state.shoe, shoeSize: state.shoeSize, seats: playable }, this.rng);
     state.roundNumber++;
     state.bets = {};

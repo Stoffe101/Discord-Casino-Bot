@@ -196,7 +196,7 @@ describe('blackjack via the Discord panel', () => {
   it('protects private tables and host-only controls', async () => {
     h = new CasinoHarness();
     const [host, guest, stranger] = [h.user('Host'), h.user('Guest'), h.user('Stranger')];
-    const tables = h.seen(await h.click(host, h.seen(await h.slash(host, 'casino')), 'Tables'));
+    const tables = h.seen(await h.click(host, h.seen(await h.slash(host, 'casino')), 'Browse tables'));
     const opener = await h.click(host, tables, 'Open a table');
     expect(opener.modal).not.toBeNull();
     const visibility = findComponents(opener.modal.components, 3).find((s) => s.custom_id === 'visibility')!;

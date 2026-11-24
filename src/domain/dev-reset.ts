@@ -1,6 +1,7 @@
 import type { Database } from '../db/database.js';
 
 const GUILD_TABLES = [
+  'casino_events',
   'table_seats',
   'game_tables',
   'escrows',

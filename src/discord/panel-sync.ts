@@ -22,6 +22,8 @@ export interface PanelSyncOptions<Hint> {
   render(key: string, frame: number | undefined, hint: Hint | undefined): Promise<Screen | null>;
   /** Number of animation frames to show before the final render for this hint. */
   frames?(key: string, hint: Hint | undefined): number;
+  /** Optional deadline for rendering a nonessential animation before sending the static state. */
+  frameBudgetMs?(key: string, hint: Hint | undefined): number | undefined;
   /** Pause after each animation frame (may depend on what is being animated). */
   frameDelayMs?: number | ((hint: Hint | undefined) => number);
   /** Multiplier for a frame's own `holdMs` (animated GIFs); 0 in fast tests. */
@@ -125,6 +127,7 @@ export class PanelSync<Hint = unknown> {
         for (let frame = 0; frame < frames && !interrupted; frame++) {
           const started = Date.now();
           const hold = await this.renderAndSend(key, slot, frame, carriers, job.hint);
+          if (hold === 'skip') break; // preserve carriers for the authoritative still
           carriers = [];
           if (hold !== undefined) {
             // An animated frame (GIF) only starts playing once Discord has it, so its hold counts
@@ -154,14 +157,35 @@ export class PanelSync<Hint = unknown> {
     }
   }
 
+  private async renderFrame(key: string, frame: number | undefined, hint: Hint | undefined): Promise<Screen | null | 'skip'> {
+    const render = this.options.render(key, frame, hint);
+    const budget = frame === undefined ? undefined : this.options.frameBudgetMs?.(key, hint);
+    if (budget === undefined) return render;
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      return await Promise.race([
+        render,
+        new Promise<'skip'>((resolve) => { timer = setTimeout(() => resolve('skip'), budget); }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   /** Returns the rendered frame's own hold time (animated frames), if any. */
-  private async renderAndSend(key: string, slot: Slot<Hint>, frame: number | undefined, carriers: Carrier[], hint?: Hint): Promise<number | undefined> {
+  private async renderAndSend(key: string, slot: Slot<Hint>, frame: number | undefined, carriers: Carrier[], hint?: Hint): Promise<number | undefined | 'skip'> {
     const spacing = (this.options.minIntervalMs ?? 300) - (Date.now() - slot.lastSentAt);
     if (spacing > 0 && carriers.length === 0 && frame === undefined) await sleep(spacing);
     let screen: Screen | null = null;
     const renderStarted = Date.now();
     try {
-      screen = await this.options.render(key, frame, hint);
+      this.options.logger.debug('panel render started', { panel: this.options.name, key, frame: frame ?? 'final', at: renderStarted });
+      const rendered = await this.renderFrame(key, frame, hint);
+      if (rendered === 'skip') {
+        this.options.logger.debug('panel animation exceeded its render budget', { panel: this.options.name, key, ms: Date.now() - renderStarted });
+        return 'skip';
+      }
+      screen = rendered;
     } catch (error) {
       this.options.logger.error(`${this.options.name} render failed`, { key, error });
     }
@@ -182,6 +206,8 @@ export class PanelSync<Hint = unknown> {
         key,
         frame: frame ?? 'final',
         via,
+        renderedAt: sendStarted,
+        acknowledgedAt: Date.now(),
         renderMs: sendStarted - renderStarted,
         sendMs: Date.now() - sendStarted,
         kb: reuse ? 0 : Math.round((screen.files ?? []).reduce((n, f) => n + f.data.length, 0) / 1024),

@@ -19,6 +19,7 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "simulate": "tsx src/scripts/simulate.ts",
+    "simulate:economy": "tsx src/scripts/simulate-economy.ts",
     "simulate:discord": "tsx tests/harness/run-scale.ts",
     "record": "tsx tests/harness/record.ts",
     "render-preview": "tsx src/scripts/render-preview.ts",

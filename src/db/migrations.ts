@@ -267,4 +267,18 @@ export const MIGRATIONS: readonly Migration[] = [
       );
     `,
   },
+  {
+    id: 4,
+    name: 'relief_nicknames',
+    sql: /* sql */ `
+      CREATE TABLE relief_nicknames (
+        guild_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        original_nick TEXT,
+        expires_at INTEGER NOT NULL,
+        retry_at INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY(guild_id, user_id)
+      );
+    `,
+  },
 ];

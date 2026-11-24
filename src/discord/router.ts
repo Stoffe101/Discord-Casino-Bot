@@ -13,7 +13,7 @@ import {
 } from 'discord.js';
 import type { CasinoApp } from '../app/casino-app.js';
 import { InsufficientFundsError, StaleActionError, UserError, isUserError } from '../core/errors.js';
-import { chips, escapeMarkdown, plural, signedChips, parseChipAmount } from '../core/format.js';
+import { chips, discordTime, escapeMarkdown, plural, signedChips, parseChipAmount } from '../core/format.js';
 import { newId, shortCode } from '../core/random.js';
 import { getSpec, type SettingGroup } from '../config/settings.js';
 import { parseEventTime } from '../domain/casino-events.js';
@@ -635,8 +635,24 @@ export class InteractionRouter {
 
   private async claimReward(i: Component, viewer: Viewer, action: string, from: string): Promise<void> {
     let note: string | null = null;
+    if (action === 'nickname') {
+      if (!this.fromEphemeral(i) || from !== viewer.userId || !this.bot.nicknames) throw new UserError('Open your own casino relief controls.');
+      const until = await this.bot.nicknames.accept(viewer.guildId, viewer.userId);
+      return this.notice(i, 'Sosse nickname set', 'Your nickname is set to **Sosse** until ' + discordTime(until) + '.', 'success');
+    }
     if (action === 'relief') {
       const claim = this.app.economy.claimRelief(viewer.guildId, viewer.userId, from === 'title');
+      if (from === 'title' && this.bot.nicknames?.offered(viewer.guildId)) {
+        return this.show(i, noticeScreen({
+          title: 'Relief received · +' + chips(claim.amount) + ' chips',
+          body: 'Your chips are in Wallet. You can also opt in to the **Sosse** nickname for the rest of your 30-minute title. This changes how your name appears across this Discord server.',
+          tone: 'gold',
+          buttons: [
+            button({ id: cid('eco', 'nickname', viewer.userId), label: 'Set my server nickname to Sosse' }),
+            button({ id: NAV.wallet, label: 'Back to Wallet', emoji: ICONS.wallet }),
+          ],
+        }));
+      }
       return this.show(i, withNote(await walletScreen(this.app, viewer), `### Relief received · +${chips(claim.amount)} chips`));
     }
     if (action === 'passive') {

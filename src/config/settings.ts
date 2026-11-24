@@ -18,6 +18,7 @@ export interface GuildSettings {
     reliefAmount: number;
     reliefCooldownHours: number;
     reliefTitle: boolean;
+    reliefNickname: boolean;
     giftingEnabled: boolean;
     giftDailyLimit: number;
   };
@@ -68,6 +69,7 @@ export const DEFAULT_SETTINGS: GuildSettings = {
     reliefAmount: 50,
     reliefCooldownHours: 24,
     reliefTitle: true,
+    reliefNickname: false,
     giftingEnabled: true,
     giftDailyLimit: 500,
   },
@@ -138,6 +140,7 @@ export const SETTING_SPECS: readonly SettingSpec[] = [
   { key: 'economy.reliefAmount', group: 'economy', label: 'Relief grant', help: 'Set to zero to close the relief fund', type: 'int', min: 0, max: 1000 },
   { key: 'economy.reliefCooldownHours', group: 'economy', label: 'Relief cooldown (h)', help: 'Time between eligible relief claims', type: 'int', min: 1, max: 168 },
   { key: 'economy.reliefTitle', group: 'economy', label: 'Sosse title', help: 'Offer an optional temporary casino profile title', type: 'bool' },
+  { key: 'economy.reliefNickname', group: 'economy', label: 'Sosse server nickname', help: 'Offer a temporary nickname when the deployment has authorized it', type: 'bool' },
   { key: 'economy.giftingEnabled', group: 'economy', label: 'Chip gifting', help: 'Allow small gifts between established accounts', type: 'bool' },
   { key: 'economy.giftDailyLimit', group: 'economy', label: 'Daily gift limit', help: 'Maximum sent by one player per UTC day', type: 'int', min: 10, max: 5000 },
   { key: 'highlights.enabled', group: 'highlights', label: 'Activity highlights', help: 'Show notable moments in the casino lobby', type: 'bool' },

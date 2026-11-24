@@ -1,5 +1,8 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { MessageFlags } from 'discord.js';
+import { PanelSync } from '../../src/discord/panel-sync.js';
+import { noticeScreen } from '../../src/ui/screens/common.js';
+import type { Screen } from '../../src/ui/kit.js';
 import type { Card } from '../../src/games/cards.js';
 import { CasinoHarness } from '../harness/casino-harness.js';
 
@@ -57,4 +60,32 @@ it('recovers a valid host click from a betting panel with an automatic deal alre
   await h.click(host, panel, 'Stand');
   expect(h.db.get<{ count: number }>('SELECT COUNT(*) AS count FROM game_rounds WHERE id = ?', [before.state.roundId])!.count).toBe(1);
   expect(h.app.economy.reconcile()).toEqual([]);
+});
+
+it('publishes the current table when its decorative frame is still rendering', async () => {
+  h = new CasinoHarness();
+  const host = h.user('Host');
+  await h.click(host, h.seen(await h.slash(host, 'casino')), 'Play Blackjack');
+  const table = h.app.blackjack.tableOfUser(h.guildId, host.id)!;
+  const { promise, resolve } = Promise.withResolvers<Screen>();
+  const sync = new PanelSync({
+    name: 'table',
+    client: h.bot.client,
+    logger: h.app.logger,
+    locate: () => table.record,
+    frames: () => 1,
+    frameBudgetMs: () => 5,
+    minIntervalMs: 0,
+    render: async (_id, frame) => frame === undefined
+      ? noticeScreen({ title: 'Current table', body: 'The turn is ready.' })
+      : promise,
+    onMissing: async () => { throw new Error('Panel unexpectedly missing'); },
+  });
+  sync.request(table.record.id);
+  await sync.idle();
+  expect(h.text(h.tablePanel(table.record.id))).toContain('The turn is ready.');
+  resolve(noticeScreen({ title: 'Late animation', body: 'This frame has expired.' }));
+  await sync.idle();
+  expect(h.text(h.tablePanel(table.record.id))).toContain('The turn is ready.');
+  expect(sync.stats.viaRest).toBe(1);
 });

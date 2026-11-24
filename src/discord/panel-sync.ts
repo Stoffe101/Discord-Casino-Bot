@@ -227,15 +227,17 @@ export class PanelSync<Hint = unknown> {
         }
       }
     }
-    await this.editViaRest(key, slot, screen, reuse, file);
-    timing('rest');
-    return screen.holdMs;
+    if (await this.editViaRest(key, slot, screen, reuse, file)) {
+      timing('rest');
+      return screen.holdMs;
+    }
+    return undefined;
   }
 
-  private async editViaRest(key: string, slot: Slot<Hint>, screen: Screen, reuse: boolean, file: string | null): Promise<void> {
+  private async editViaRest(key: string, slot: Slot<Hint>, screen: Screen, reuse: boolean, file: string | null): Promise<boolean> {
     const location = this.options.locate(key);
     const channelId = location?.threadId ?? location?.channelId;
-    if (!location || !channelId || !location.messageId) return;
+    if (!location || !channelId || !location.messageId) return false;
     try {
       const channel = await this.options.client.channels.fetch(channelId);
       if (!channel || !channel.isTextBased()) throw Object.assign(new Error('channel missing'), { code: DISCORD_ERRORS.unknownChannel });
@@ -244,6 +246,7 @@ export class PanelSync<Hint = unknown> {
       this.stats.viaRest++;
       slot.lastFile = file;
       slot.lastSentAt = Date.now();
+      return true;
     } catch (error) {
       this.stats.failures++;
       const code = discordErrorCode(error);
@@ -256,10 +259,11 @@ export class PanelSync<Hint = unknown> {
       } else if (reuse) {
         // The cached image may be gone (e.g. edited elsewhere): retry once with a fresh upload.
         slot.lastFile = null;
-        await this.editViaRest(key, slot, screen, false, file).catch(() => undefined);
+        return this.editViaRest(key, slot, screen, false, file);
       } else {
         this.options.logger.warn(`${this.options.name} edit failed`, { key, code, error });
       }
+      return false;
     }
   }
 }

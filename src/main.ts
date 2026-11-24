@@ -62,7 +62,10 @@ async function main(): Promise<void> {
   }
   db = openDatabase(env.databasePath);
   app = new CasinoApp({ db, logger });
-  bot = new CasinoBot(app, logger, { guard: allowlist ? new OutboundGuard(allowlist, logger) : null });
+  bot = new CasinoBot(app, logger, {
+    guard: allowlist ? new OutboundGuard(allowlist, logger) : null,
+    nicknameGuildId: env.nicknameGuildId,
+  });
 
   process.on('SIGINT', () => void shutdown('SIGINT', 0));
   process.on('SIGTERM', () => void shutdown('SIGTERM', 0));

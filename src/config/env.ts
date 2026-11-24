@@ -10,6 +10,7 @@ export interface AppEnv {
   logLevel: LogLevel;
   logDir: string | undefined;
   allowDevReset: boolean;
+  nicknameGuildId: string | undefined;
 }
 
 /** Load `.env` (if present) using Node's built-in loader — no dotenv dependency needed. */
@@ -28,6 +29,8 @@ export function readEnv(options: { requireToken: boolean } = { requireToken: tru
   if (options.requireToken && !/^\d{15,22}$/.test(clientId)) problems.push('DISCORD_CLIENT_ID must be your application ID');
   const devGuildId = (env.DISCORD_DEV_GUILD_ID ?? '').trim() || undefined;
   if (devGuildId && !/^\d{15,22}$/.test(devGuildId)) problems.push('DISCORD_DEV_GUILD_ID must be a server ID');
+  const nicknameGuildId = (env.CASINO_NICKNAME_GUILD_ID ?? '').trim() || undefined;
+  if (nicknameGuildId && !/^\d{15,22}$/.test(nicknameGuildId)) problems.push('CASINO_NICKNAME_GUILD_ID must be a server ID');
   const level = (env.LOG_LEVEL ?? 'info').trim() as LogLevel;
   if (!['trace', 'debug', 'info', 'warn', 'error'].includes(level)) problems.push('LOG_LEVEL is invalid');
   if (problems.length) {
@@ -42,5 +45,6 @@ export function readEnv(options: { requireToken: boolean } = { requireToken: tru
     logLevel: level,
     logDir: (env.LOG_DIR ?? './logs').trim() || undefined,
     allowDevReset: env.ALLOW_DEV_RESET === 'true',
+    nicknameGuildId,
   };
 }

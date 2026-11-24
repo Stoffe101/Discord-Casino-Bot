@@ -31,6 +31,8 @@ import { DISCORD_ERRORS, createOptions, discordErrorCode, editOptions, primaryFi
 import { InteractionRouter } from './router.js';
 import type { AdmissionCandidate, OutboundGuard } from './outbound-guard.js';
 import { RestMetrics } from './rest-metrics.js';
+import { SosseNicknames, type NicknameMembers } from '../domain/sosse-nicknames.js';
+import { discordNicknameMembers } from './sosse-members.js';
 
 export interface BotTiming {
   /** Delay between dealer-reveal frames. */
@@ -62,6 +64,8 @@ export function tableFrame(frame: number | undefined, hint: RenderHint | undefin
 }
 
 export interface CasinoBotOptions {
+  nicknameGuildId?: string | undefined;
+  nicknameMembers?: NicknameMembers;
   guard?: OutboundGuard | null;
   /** Animated GIFs for dealing, draws, reveals and spins (default true; fast tests turn it off). */
   animations?: boolean;
@@ -115,6 +119,7 @@ export class CasinoBot {
   readonly timing: BotTiming;
   readonly restMetrics = new RestMetrics();
   readonly animations: boolean;
+  readonly nicknames: SosseNicknames | null;
 
   constructor(
     readonly app: CasinoApp,
@@ -133,6 +138,8 @@ export class CasinoBot {
     // Test mode: every outgoing request passes the allowlist check first (outermost, so refused
     // requests never reach the network or the metrics).
     this.guard?.install(this.client.rest);
+    this.nicknames = this.guard || !options.nicknameGuildId ? null
+      : new SosseNicknames(app, options.nicknameGuildId, options.nicknameMembers ?? discordNicknameMembers(this.client));
     const guard = this.guard;
     this.tablePanels = new PanelSync<RenderHint>({
       name: 'table',
@@ -284,11 +291,12 @@ export class CasinoBot {
     this.app.roulette.touchAll();
     for (const { guildId } of this.app.settings.guildsWithLobby()) this.requestLobby(guildId, 0);
     this.intervals.push(
-      setInterval(() => void this.maintenance(), 60_000),
+      setInterval(() => this.track(this.maintenance()), 60_000),
       setInterval(() => this.auditBooks(), 60 * 60_000),
       setInterval(() => this.logMetrics(), 10 * 60_000),
     );
     this.auditBooks();
+    if (this.nicknames) this.track(this.nicknames.restoreDue());
   }
 
   private async maintenance(): Promise<void> {
@@ -296,6 +304,7 @@ export class CasinoBot {
       await this.app.blackjack.sweepIdle();
       await this.app.roulette.sweepIdle();
       await this.app.poker.sweepIdle();
+      await this.nicknames?.restoreDue();
     } catch (error) {
       this.logger.error('maintenance failed', { error });
     }

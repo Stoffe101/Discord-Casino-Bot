@@ -29,7 +29,7 @@ by `tests/integration/entry-routes.test.ts`.
 
 **Responsiveness.** A newer animated change (including a private My hand action, which has no
 click on the panel) now cuts an older animation short, and an overtaken animation is never
-encoded (`tests/integration/panel-priority.test.ts`). A solo player is dealt 0.7 s after betting;
+encoded (`tests/integration/panel-priority.test.ts`). A solo player is dealt 0.4 s after betting (0.7 s before 01b6986);
 Deal now (host) only shows while someone is still deciding, removing the race seen live.
 
 **Lifecycle fixes.**

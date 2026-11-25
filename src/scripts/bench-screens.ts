@@ -138,6 +138,10 @@ export async function buildScreens(guildId: string, channelId: string): Promise<
   await add('leaderboard-richest', leaderboardScreen(app, viewer, 'richest', 'all', 0));
   await add('tables', tablesScreen(app, viewer));
   await add('public-tables', tablesScreen(app, viewer, 'public'));
+  // Game-specific lists; the viewer is seated at Blackjack, so the Hold'em list shows the seat conflict.
+  await add('tables-blackjack', tablesScreen(app, viewer, 'blackjack'));
+  await add('tables-holdem-seat-conflict', tablesScreen(app, viewer, 'poker'));
+  await add('my-table', tablesScreen(app, viewer, 'mine'));
   await add('rules', rulesScreen(app, guildId, t));
   await add('games', gamesHubScreen(app, viewer));
   await add('coinflip-lobby', coinflipLobbyScreen(app, viewer));

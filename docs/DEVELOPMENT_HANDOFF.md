@@ -49,7 +49,7 @@ Deal now (host) only shows while someone is still deciding, removing the race se
 dealer strip and per-seat arrangements for splits and long hands. Measured from geometry in
 `tests/render-readability.test.ts`: smallest card rank or text ≥ 9 px at 400 px display width and
 ≥ 11.5 px at 500 px for every fixture (before: down to 3.0 px). Hold'em uses the same standards.
-Animations share the layout. Previews: `npm run` the script `src/scripts/render-tables-preview.ts`.
+Animations share the layout. Previews: `npx tsx src/scripts/render-tables-preview.ts` (writes PNGs under the gitignored `recordings/`).
 
 **Operations.** `<database>.stop` next to the database asks a hidden Windows runtime to shut down
 gracefully (drain, close, release the lock, exit 0). `data/deploy-check.mjs` (local) inspects the

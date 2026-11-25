@@ -26,7 +26,12 @@ it('sends the same complete Home on a slash response and on a navigation update'
   const back = await h.click(user, first, 'Home');
   expect(back.source?.id).toBe(first.id);
   expect(first.components).toEqual(expected);
-  expect(first.attachments.map((attachment) => attachment.filename)).toEqual(attachments);
+  // Home shows exactly the same components. Images uploaded for an earlier screen (the Games banner)
+  // may stay on the message unreferenced, so a return to that screen re-uses them instead of
+  // uploading again; Home itself references none of them.
+  const kept = first.attachments.map((attachment) => attachment.filename);
+  for (const name of attachments) expect(kept).toContain(name);
+  expect(JSON.stringify(first.components)).not.toMatch(/attachment:\/\/emerald-gaming-floor/);
   expect(first.flags & MessageFlags.IsComponentsV2).toBeTruthy();
   expect(first.flags & MessageFlags.Ephemeral).toBeTruthy();
 });

@@ -44,6 +44,28 @@ interface Slot<Hint> {
   lastSentAt: number;
 }
 
+/**
+ * Who is answering an interaction directly, recorded before the request goes out. A click on a
+ * shared panel can be both a panel carrier and a router reply (Deal (host) also opens the host's
+ * private hand): discord.js only marks an interaction replied once its request returns, so
+ * without this both sides answered and one request failed with "already acknowledged".
+ */
+interface Answer { by: 'router' | 'panel'; done: Promise<unknown> }
+const answers = new WeakMap<object, Answer>();
+
+export function markAnswering(interaction: object, by: Answer['by'], done: Promise<unknown>): void {
+  answers.set(interaction, { by, done: done.catch(() => undefined) });
+}
+
+export function answeringBy(interaction: object): Answer | undefined {
+  return answers.get(interaction);
+}
+
+/** Free for a panel to answer: nobody has acknowledged it or is acknowledging it right now. */
+function openForPanel(c: Carrier): boolean {
+  return !c.deferred && !c.replied && !answers.has(c);
+}
+
 const ACK_SAFETY_MS = 2_200;
 /** Every animation frame stays on screen at least this long, however slow the send was. */
 export const MIN_FRAME_HOLD_MS = 180;
@@ -102,7 +124,10 @@ export class PanelSync<Hint = unknown> {
   private armSafetyAck(carrier: Carrier): void {
     const wait = Math.max(0, ACK_SAFETY_MS - (Date.now() - carrier.createdTimestamp));
     setTimeout(() => {
-      if (!carrier.deferred && !carrier.replied) carrier.deferUpdate().catch(() => undefined);
+      if (!openForPanel(carrier)) return;
+      const ack = carrier.deferUpdate();
+      markAnswering(carrier, 'panel', ack);
+      ack.catch(() => answers.delete(carrier));
     }, wait).unref?.();
   }
 
@@ -216,10 +241,14 @@ export class PanelSync<Hint = unknown> {
       this.options.logger.error(`${this.options.name} render failed`, { key, error });
     }
     if (slot.retired) return 'skip';
-    const fresh = carriers.filter((c) => !c.deferred && !c.replied && Date.now() - c.createdTimestamp < CARRIER_MAX_AGE_MS);
+    const fresh = carriers.filter((c) => openForPanel(c) && Date.now() - c.createdTimestamp < CARRIER_MAX_AGE_MS);
     const chosen = screen ? fresh.at(-1) : undefined;
     for (const c of carriers) {
-      if (c !== chosen && !c.deferred && !c.replied) await c.deferUpdate().catch(() => undefined);
+      if (c !== chosen && openForPanel(c)) {
+        const ack = c.deferUpdate();
+        markAnswering(c, 'panel', ack);
+        await ack.catch(() => answers.delete(c));
+      }
     }
     if (slot.retired) return 'skip';
     if (!screen) return undefined;
@@ -240,15 +269,19 @@ export class PanelSync<Hint = unknown> {
         sendMs: Date.now() - sendStarted,
         kb: reuse ? 0 : Math.round((screen.files ?? []).reduce((n, f) => n + f.data.length, 0) / 1024),
       });
-    if (chosen && 'update' in chosen) {
+    // The router may have started answering this click while the frame was rendering.
+    if (chosen && 'update' in chosen && openForPanel(chosen)) {
       try {
-        await chosen.update(editOptions(screen, reuse));
+        const update = chosen.update(editOptions(screen, reuse));
+        markAnswering(chosen, 'panel', update);
+        await update;
         this.stats.viaInteraction++;
         slot.lastFile = file;
         slot.lastSentAt = Date.now();
         timing('click');
         return screen.holdMs;
       } catch (error) {
+        answers.delete(chosen); // not acknowledged by us: the safety acknowledgement still applies
         const code = discordErrorCode(error);
         if (code !== DISCORD_ERRORS.unknownInteraction && code !== DISCORD_ERRORS.alreadyAcknowledged) {
           this.options.logger.warn(`${this.options.name} interaction update failed; falling back`, { key, code, error });

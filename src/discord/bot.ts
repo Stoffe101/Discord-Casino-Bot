@@ -28,7 +28,7 @@ import { lobbyScreen } from '../ui/screens/lobby.js';
 import { assertValidScreen } from '../ui/validate.js';
 import type { Screen } from '../ui/kit.js';
 import { PanelSync, sleep, type PanelLocation } from './panel-sync.js';
-import { DISCORD_ERRORS, createOptions, discordErrorCode, editOptions, primaryFileName } from './payload.js';
+import { DISCORD_ERRORS, createOptions, discordErrorCode, editOptions, primaryFileName, screenDigest } from './payload.js';
 import { InteractionRouter } from './router.js';
 import type { AdmissionCandidate, OutboundGuard } from './outbound-guard.js';
 import { tidyCasinoChannels } from './channel-tidy.js';
@@ -63,6 +63,9 @@ export interface BotTiming {
 }
 
 export const DEFAULT_TIMING: BotTiming = { frameDelayMs: 700, dealFrameMs: 450, spinFrameMs: 650, animationScale: 1, tableMinIntervalMs: 350, wheelMinIntervalMs: 500, lobbyDebounceMs: 2_500, firstSweepMs: 5_000 };
+
+/** An unchanged lobby is still re-sent this often (which also notices a deleted lobby message). */
+const LOBBY_RECHECK_MS = 10 * 60_000;
 
 /** Idle sweeps and close reconciliation run this often (see BotTiming.firstSweepMs). */
 export const MAINTENANCE_INTERVAL_MS = 60_000;
@@ -143,6 +146,8 @@ export class CasinoBot {
   readonly router: InteractionRouter;
   private readonly lobbyTimers = new Map<string, NodeJS.Timeout>();
   private readonly lobbyFiles = new Map<string, string | null>();
+  /** What each lobby message last showed, so refreshes that change nothing send nothing. */
+  private readonly lobbyShown = new Map<string, { messageId: string; digest: string; at: number }>();
   private readonly lobbyBusy = new Map<string, Promise<void>>();
   private readonly intervals: NodeJS.Timeout[] = [];
   private firstSweep: NodeJS.Timeout | null = null;
@@ -907,11 +912,16 @@ export class CasinoBot {
     }
     const screen = this.checked(await lobbyScreen(this.app, guildId));
     const file = primaryFileName(screen);
+    const digest = screenDigest(screen);
+    const shown = this.lobbyShown.get(guildId);
+    // Most table activity (a bet, a hit) doesn't change the lobby. A periodic re-send still notices a deleted lobby.
+    if (messageId && shown?.messageId === messageId && shown.digest === digest && Date.now() - shown.at < LOBBY_RECHECK_MS) return messageId;
     if (messageId) {
       try {
         const reuse = this.lobbyFiles.get(guildId) === file;
         await channel.messages.edit(messageId, editOptions(screen, reuse));
         this.lobbyFiles.set(guildId, file);
+        this.lobbyShown.set(guildId, { messageId, digest, at: Date.now() });
         return messageId;
       } catch (error) {
         const code = discordErrorCode(error);
@@ -924,6 +934,7 @@ export class CasinoBot {
     const message = await channel.send(createOptions(screen));
     this.app.settings.setLobby(guildId, channel.id, message.id);
     this.lobbyFiles.set(guildId, file);
+    this.lobbyShown.set(guildId, { messageId: message.id, digest, at: Date.now() });
     return message.id;
   }
 
@@ -941,6 +952,7 @@ export class CasinoBot {
       this.app.settings.setLobby(guildId, channel.id, null);
     }
     this.lobbyFiles.delete(guildId);
+    this.lobbyShown.delete(guildId);
     const messageId = await this.syncLobby(guildId);
     return { url: `https://discord.com/channels/${guildId}/${channel.id}/${messageId ?? ''}`, missing };
   }

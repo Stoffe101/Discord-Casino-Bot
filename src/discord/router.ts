@@ -6,6 +6,7 @@ import {
   type ChatInputCommandInteraction,
   type GuildMember,
   type Interaction,
+  type MessageEditOptions,
   type ModalSubmitInteraction,
   type RepliableInteraction,
   type TextChannel,
@@ -56,8 +57,8 @@ import type { ModalSpec } from '../ui/kit.js';
 import type { CasinoBot } from './bot.js';
 import { PokerInteractions } from './poker-interactions.js';
 import { pokerRulesScreen } from '../ui/screens/poker.js';
-import { MIN_FRAME_HOLD_MS, type Carrier } from './panel-sync.js';
-import { createOptions, discordErrorCode, editOptions, replyOptions } from './payload.js';
+import { MIN_FRAME_HOLD_MS, answeringBy, markAnswering, type Carrier } from './panel-sync.js';
+import { DISCORD_ERRORS, canKeepAttachments, createOptions, discordErrorCode, editOptions, replyOptions, type ExistingAttachment } from './payload.js';
 
 type Component = ButtonInteraction | AnySelectMenuInteraction;
 type AckMode = 'update' | 'reply' | 'none';
@@ -175,13 +176,27 @@ export class InteractionRouter {
    */
   private async defer(i: RepliableInteraction, mode: 'update' | 'reply'): Promise<void> {
     if (i.deferred || i.replied) return;
+    await this.panelAnswer(i);
+    if (i.deferred || i.replied) return;
     if (mode === 'update' && (i.isMessageComponent() || (i.isModalSubmit() && i.isFromMessage()))) {
       this.deferredAs.set(i, 'update');
-      await (i as ButtonInteraction).deferUpdate();
+      await this.answer(i, (i as ButtonInteraction).deferUpdate());
     } else {
       this.deferredAs.set(i, 'reply');
-      await i.deferReply({ flags: MessageFlags.Ephemeral });
+      await this.answer(i, i.deferReply({ flags: MessageFlags.Ephemeral }));
     }
+  }
+
+  /** Send the interaction's first answer, recording that the router (not a panel) is giving it. */
+  private async answer(i: RepliableInteraction, request: Promise<unknown>): Promise<void> {
+    markAnswering(i, 'router', request);
+    await request;
+  }
+
+  /** If a table panel is already answering this click (updating its message), let that finish first. */
+  private async panelAnswer(i: RepliableInteraction): Promise<void> {
+    const other = answeringBy(i);
+    if (other?.by === 'panel') await other.done;
   }
 
   /**
@@ -192,17 +207,35 @@ export class InteractionRouter {
   private async show(i: RepliableInteraction, screen: Screen, how: 'auto' | 'private' | 'public' = 'auto'): Promise<void> {
     screen = this.bot.checked(screen);
     const inPlace = how === 'auto' && this.fromEphemeral(i) && (i.isMessageComponent() || i.isModalSubmit());
+    await this.panelAnswer(i);
     if (!i.deferred && !i.replied) {
-      if (inPlace) await (i as ButtonInteraction).update(editOptions(screen));
-      else await i.reply(replyOptions(screen, how !== 'public'));
+      if (inPlace) await this.editInPlace(i, screen, (options) => this.answer(i, (i as ButtonInteraction).update(options)));
+      else await this.answer(i, i.reply(replyOptions(screen, how !== 'public')));
       return;
     }
     const deferred = this.deferredAs.get(i);
     if (i.deferred && !i.replied && (deferred === 'reply' || (deferred === 'update' && inPlace))) {
-      await i.editReply(editOptions(screen));
+      if (deferred === 'update') await this.editInPlace(i, screen, (options) => i.editReply(options));
+      else await i.editReply(editOptions(screen));
       return;
     }
     await i.followUp(replyOptions(screen, how !== 'public'));
+  }
+
+  /**
+   * Replace the user's own private panel. Images it already carries (Games art after Rules, the
+   * wallet badge after Gifting) are not uploaded again; if the message changed under us (a second
+   * click replaced its image) Discord refuses the reference and the screen is sent with its images.
+   */
+  private async editInPlace(i: RepliableInteraction, screen: Screen, send: (options: MessageEditOptions) => Promise<unknown>): Promise<void> {
+    const message = (i as { message?: { attachments?: { values(): Iterable<ExistingAttachment> } } | null }).message;
+    const keep = canKeepAttachments(screen, message?.attachments?.values() ?? []);
+    try {
+      await send(editOptions(screen, keep));
+    } catch (error) {
+      if (!keep || discordErrorCode(error) !== DISCORD_ERRORS.invalidFormBody) throw error;
+      await send(editOptions(screen));
+    }
   }
 
   private async notice(i: RepliableInteraction, title: string, body: string, tone: 'success' | 'info' | 'error' | 'gold' = 'info', buttons: ReturnType<typeof button>[] = []): Promise<void> {
@@ -223,7 +256,8 @@ export class InteractionRouter {
     }
     try {
       const opts = replyOptions(screen, true);
-      if (!i.deferred && !i.replied) await i.reply(opts);
+      await this.panelAnswer(i);
+      if (!i.deferred && !i.replied) await this.answer(i, i.reply(opts));
       else if (this.deferredAs.get(i) === 'reply' && !i.replied) await i.editReply(editOptions(screen));
       else await i.followUp(opts);
     } catch (e) {

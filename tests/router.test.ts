@@ -220,6 +220,15 @@ describe('InteractionRouter (headless)', () => {
     expect(textOf(ok.calls[0])).toContain('Casino admin');
   });
 
+  it('the Unusual transfers review opens for admins only, in place', async () => {
+    const refused = await run({ kind: 'button', user: 3, customId: 'adm:transfers', ephemeralSource: true, admin: false });
+    expect(textOf(refused.calls[0])).toContain('Admins only');
+    const ok = await run({ kind: 'button', user: 4, customId: 'adm:transfers', ephemeralSource: true, admin: true });
+    expect(kinds(ok.calls)).toEqual(['update']);
+    expect(textOf(ok.calls[0])).toContain('Unusual transfers');
+    expect(textOf(ok.calls[0])).toContain('Read-only');
+  });
+
   it('admin wallet adjustments require a reason and are logged', async () => {
     app.economy.ensurePlayer(GUILD, userId(5), 'Player 5');
     const target = { id: userId(5), bot: false, username: 'p5', globalName: 'Player 5' };

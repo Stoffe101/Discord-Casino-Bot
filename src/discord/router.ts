@@ -53,7 +53,7 @@ import { myTable } from '../ui/screens/my-table.js';
 import { challengeLingerMs } from './channel-tidy.js';
 import { coinflipLobbyScreen, coinflipModal, gamesHubScreen, paytableScreen, rouletteBetModal, rouletteHelpScreen, slotsScreen } from '../ui/screens/games.js';
 import { HELP_TOPICS, helpScreen, type HelpTopic } from '../ui/screens/help.js';
-import { adjustModal, adminScreen, adminTablesScreen, auditScreen, devResetModal, settingModal } from '../ui/screens/admin.js';
+import { adjustModal, adminScreen, adminTablesScreen, auditScreen, devResetModal, settingModal, unusualTransfersScreen } from '../ui/screens/admin.js';
 import type { ModalSpec } from '../ui/kit.js';
 import type { CasinoBot } from './bot.js';
 import { PokerInteractions } from './poker-interactions.js';
@@ -1204,6 +1204,10 @@ export class InteractionRouter {
       case 'tables':
         arm('update');
         return this.show(i, adminTablesScreen(this.app, viewer.guildId));
+      case 'transfers':
+        // Read-only review of this server's transfers (admins only, checked above).
+        arm('update');
+        return this.show(i, unusualTransfersScreen(this.app, viewer.guildId));
       case 'close':
         arm('update');
         await this.app.blackjack.closeTable(this.table(viewer, args[0] ?? '').record.id, 'closed by an admin', { force: true });

@@ -70,3 +70,42 @@ it('a solo player is dealt shortly after their bet, a table with others waits a 
   await h.app.blackjack.placeBet(tableId, hanna.id, 25, 'Hanna');
   expect(h.app.blackjack.peek(tableId)!.state.deadline).toBe(h.clock.now() + ALL_IN_DEAL_DELAY_MS);
 });
+
+it('a second chip clicked just after a solo deal refreshes the table quietly instead of erroring', async () => {
+  h = new CasinoHarness({ allowThreads: true });
+  const alex = h.user('Alex');
+  const screen = h.seen(await h.slash(alex, 'blackjack'))!;
+  const opener = await h.click(alex, screen, 'Open a Blackjack table');
+  await h.submit(alex, opener, { name: 'Stack', visibility: 'public' });
+  const tableId = h.app.blackjack.tableOfUser(h.guildId, alex.id)!.record.id;
+  const chip = h.buttons(h.tablePanel(tableId)).find((b) => b.label === '25')!.custom_id!;
+  await h.click(alex, h.tablePanel(tableId), '25');
+  await h.advance(SOLO_DEAL_DELAY_MS); // dealt
+  expect(h.app.blackjack.peek(tableId)!.state.phase).not.toBe('betting');
+  // The player's client still showed the chip and they pressed it again (stacking 25 + 25).
+  const late = h.fd.clickRaw(alex, h.tablePanel(tableId), chip);
+  await h.settle();
+  expect(late.errors).toEqual([]);
+  // Answered without a scary error: either the table refreshed in place or a short private note.
+  const text = late.followUps.map((m) => h.text(m)).join(' ') + (late.original ? h.text(late.original) : '');
+  expect(text).not.toMatch(/Something went wrong/);
+  expect(h.app.economy.reconcile()).toEqual([]);
+});
+
+it('a player leaving a private table is removed from its thread, with the test-mode guard on', async () => {
+  h = new CasinoHarness({ allowThreads: true });
+  const [host, guest] = [h.user('Host'), h.user('Guest')];
+  const screen = h.seen(await h.slash(host, 'blackjack'))!;
+  const opener = await h.click(host, screen, 'Open a Blackjack table');
+  await h.submit(host, opener, { name: 'Velvet', visibility: 'private' });
+  const record = h.app.blackjack.tableOfUser(h.guildId, host.id)!.record;
+  expect(record.threadId).toBeTruthy();
+  await h.app.blackjack.join(record.id, guest.id, 'Guest', record.accessCode!);
+  await h.bot.addToTableThread(record.id, guest.id);
+  const leave = h.seen(await h.click(guest, h.tablePanel(record.id), 'Leave'));
+  void leave;
+  await h.settle();
+  const removal = h.fd.log.find((r) => r.method === 'DELETE' && r.route === `/channels/${record.threadId}/thread-members/${guest.id}`);
+  expect(removal?.status).toBe(204);
+  expect(h.guard?.blocked ?? []).toEqual([]);
+});

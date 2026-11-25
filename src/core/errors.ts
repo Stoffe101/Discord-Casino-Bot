@@ -29,8 +29,8 @@ export class InsufficientFundsError extends UserError {
 
 /** A control was used after the state it belonged to moved on (double-click, old message, etc.). */
 export class StaleActionError extends UserError {
-  constructor(message = 'That button is out of date — the table has already moved on.') {
-    super(message, 'stale_action', 'Already handled');
+  constructor(message = 'That button is out of date — the table has already moved on.', title = 'The table moved on') {
+    super(message, 'stale_action', title);
     this.name = 'StaleActionError';
   }
 }

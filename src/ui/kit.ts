@@ -72,6 +72,15 @@ export function withNote(screen: Screen, note: string): Screen {
     if (done || c.type !== ComponentType.Container) return c;
     done = true;
     const afterHeading = c.components[0]?.type === ComponentType.ActionRow ? 2 : 1;
+    // A full card (Discord allows 10 children) gets the note folded into its first text instead.
+    if (c.components.length >= 10) {
+      const at = c.components.findIndex((child) => child.type === ComponentType.TextDisplay);
+      if (at >= 0) {
+        const first = c.components[at] as { content: string };
+        return { ...c, components: c.components.map((child, i) => (i === at ? text(`${note}
+${first.content}`) : child)) };
+      }
+    }
     return { ...c, components: [...c.components.slice(0, afterHeading), text(note), ...c.components.slice(afterHeading)] };
   });
   return { ...screen, components };

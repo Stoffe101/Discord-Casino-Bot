@@ -205,7 +205,7 @@ describe('InteractionRouter (headless)', () => {
     expect(app.blackjack.peek(t.record.id)!.state.round!.seats[0]!.hands[0]!.cards).toHaveLength(2);
     // A stale sequence number (old message / double click) is refused too.
     const stale = await run({ kind: 'button', user: 1, customId: `bj:act:${t.record.id}:hit:${round.seq - 1}` });
-    expect(textOf(stale.calls[0])).toContain('Already handled');
+    expect(textOf(stale.calls[0])).toContain('The table moved on');
     const ok = await run({ kind: 'button', user: 1, customId: `bj:act:${t.record.id}:hit:${round.seq}` });
     expect(kinds(ok.calls)).toEqual(['update']);
     expect(app.blackjack.peek(t.record.id)!.state.round!.seats[0]!.hands[0]!.cards).toHaveLength(3);
@@ -256,7 +256,7 @@ describe('InteractionRouter (headless)', () => {
     // The click answers with spinning reels, then two edits stop the reels in turn.
     expect(kinds(first.calls)).toEqual(['update', 'editReply', 'editReply']);
     const dupe = await run({ kind: 'button', user: 1, customId: 'sl:spin:10:0', ephemeralSource: true });
-    expect(textOf(dupe.calls[0])).toContain('Already handled');
+    expect(textOf(dupe.calls[0])).toContain('The table moved on');
     expect(app.slots.spinCount(GUILD, userId(1))).toBe(1);
   });
 

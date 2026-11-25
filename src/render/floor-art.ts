@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { cardBack, cardDefs, cardFace } from './cards.js';
 import { svgToPng } from './png.js';
 import { esc, n, svgDoc } from './svg.js';
@@ -210,7 +211,7 @@ export function lobbySignSvg(name: string): string {
 }
 
 export function lobbySign(name: string): Promise<ArtFile | undefined> {
-  return cached(`lobby-${name}`, async () => ({ name: 'emerald-lobby.png', data: await svgToPng(lobbySignSvg(name), 960), description: `${name}: a private casino with Blackjack, Hold’em, Roulette, Slots and Coinflip.` }));
+  return cached(`lobby-${name}`, async () => ({ name: `emerald-lobby-${createHash('sha1').update(name).digest('hex').slice(0, 10)}.png`, data: await svgToPng(lobbySignSvg(name), 960), description: `${name}: a private casino with Blackjack, Hold’em, Roulette, Slots and Coinflip.` }));
 }
 
 /** One game's illustration on its own, square, for thumbnails (table lobbies, events). */

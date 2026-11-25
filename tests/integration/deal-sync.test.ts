@@ -54,7 +54,7 @@ it('recovers a valid host click from a betting panel with an automatic deal alre
   const click = h.fd.clickRaw(host, panel, request);
   await h.settle();
   expect(click.errors).toEqual([]);
-  expect(h.text(h.seen(click))).not.toMatch(/Already handled|cards are already out/i);
+  expect(h.text(h.seen(click))).not.toMatch(/Already handled|table moved on|Bets are closed|cards are already out/i);
   expect(h.text(panel)).toContain('Host to act');
   expect(h.app.blackjack.peek(id)!.state.roundNumber).toBe(1);
   await h.click(host, panel, 'Stand');

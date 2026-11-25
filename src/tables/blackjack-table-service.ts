@@ -509,7 +509,7 @@ export class BlackjackTableService {
     return this.mutate(tableId, origin, (ctx) => {
       const { record, state } = ctx;
       if (state.phase !== 'betting') {
-        throw new StaleActionError('Bets are closed for this hand — you can bet again when it finishes.');
+        throw new StaleActionError('The cards are already out — you can bet again when this hand finishes.', 'Bets are closed');
       }
       const seat = state.seats.find((s) => s.userId === userId);
       if (!seat) throw new UserError('Take a seat first, then place your bet.', 'not_seated');

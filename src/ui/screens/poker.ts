@@ -3,7 +3,7 @@ import { chips, discordTime, escapeMarkdown } from '../../core/format.js';
 import { cardLabel, rankOf, suitOf } from '../../games/cards.js';
 import { bestHand } from '../../games/poker/hand-rank.js';
 import { privatePokerHand, publicPokerHand } from '../../games/poker/engine.js';
-import type { PokerSnapshot, PokerRenderHint } from '../../games/poker/poker-service.js';
+import { pendingBlinds, type PokerSnapshot, type PokerRenderHint } from '../../games/poker/poker-service.js';
 import { framesToGif } from '../../render/gif.js';
 import { pokerTableSvg } from '../../render/poker-image.js';
 import { cid } from '../custom-id.js';
@@ -153,6 +153,20 @@ export function playerPokerScreen(table: PokerSnapshot, viewer: Viewer): Screen 
     ? board.length >= 3 ? `You have **${bestHand([...hole, ...board]).category.toLowerCase()}**`
       : rankOf(hole[0]!) === rankOf(hole[1]!) ? 'You have **a pocket pair**' : suitOf(hole[0]!) === suitOf(hole[1]!) ? 'Two suited cards' : null
     : null;
+  // Missed blinds (see PokerTableSeat): post them and play the next hand, or wait for the big
+  // blind. Only choices the next deal can honour are offered: a stack that can't cover what is
+  // owed simply waits.
+  const owed = player && !player.leaving && !player.sittingOut ? pendingBlinds(table, viewer.userId) : null;
+  const owedTotal = owed ? owed.live + owed.dead : 0;
+  const canPost = !!owed && player!.stack > owedTotal;
+  const owedText = owed ? `${chips(owed.live)}${owed.dead ? ` + ${chips(owed.dead)} dead` : ''}` : '';
+  const blindsLine = !owed ? null
+    : !canPost ? `-# Your stack can’t cover the ${owedText} in missed blinds, so you’re dealt in when the big blind reaches you.`
+      : owed.waiting ? `-# Waiting for the big blind: you’re dealt in when it reaches you, with nothing extra to post.`
+        : `-# You owe ${owedText} in blinds. You post them and play the next hand, or wait for the big blind instead.`;
+  const blindsButton = owed && canPost
+    ? button({ id: cid('pk', 'bbwait', record.id, owed.waiting ? '0' : '1'), label: owed.waiting ? 'Post and play next hand' : 'Wait for big blind' })
+    : null;
   const turn = player?.leaving ? 'Your remaining stack returns to your wallet after this hand.'
     : legal ? `### ▸ Your turn${legal.check ? ' · you can check' : legal.call !== null ? ` · **${chips(legal.call)}** to call` : ''}${legal.minTo !== null ? ` · min raise to ${chips(legal.minTo)}` : ''}`
       : player && state.hand ? '-# Waiting for the other players. Refresh after they act.' : null;
@@ -163,6 +177,7 @@ export function playerPokerScreen(table: PokerSnapshot, viewer: Viewer): Screen 
     board.length ? `**Board** · ${board.map(cardLabel).join('  ')}` : null,
     state.hand ? `-# ${STREETS[state.hand.street]} · pot ${chips(pot)} · your stack ${chips(active?.stack ?? player?.stack ?? 0)}` : player ? `**Your stack** · ${chips(player.stack)} chips` : 'Take a seat to receive a hand.',
     turn,
+    blindsLine,
   ].filter(Boolean);
   return { components: [container(COLORS.gold, [
     text(parts.join('\n')),
@@ -173,6 +188,7 @@ export function playerPokerScreen(table: PokerSnapshot, viewer: Viewer): Screen 
       player && !player.leaving ? button({ id: cid('pk', 'leave', record.id), label: 'Leave', emoji: ICONS.leave }) : null,
       url ? linkButton('Table', url, ICONS.tables) : null,
     ),
+    blindsButton ? row(blindsButton) : null,
     viewer.userId === record.ownerId ? row(
       button({ id: cid('pk', 'close', record.id), label: 'Close table', disabled: !!state.hand }),
     ) : null,

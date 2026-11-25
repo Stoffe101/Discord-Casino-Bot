@@ -77,6 +77,10 @@ export class PokerInteractions {
     if (action === 'sit') {
       if (handId !== 'in' && handId !== 'out') throw new StaleActionError('Refresh your poker controls.');
       await service.sitOut(id, viewer.userId, handId === 'out');
+    } else if (action === 'bbwait') {
+      // "Wait for big blind" ('1') or "Post and play next hand" ('0'), stored with the seat.
+      if (handId !== '0' && handId !== '1') throw new StaleActionError('Refresh your poker controls.');
+      await service.waitForBigBlind(id, viewer.userId, handId === '1');
     } else if (action !== 'hand') {
       const type = Object.hasOwn(playerActions, action) ? playerActions[action] : undefined;
       if (!type) throw new StaleActionError('Refresh your poker controls.');

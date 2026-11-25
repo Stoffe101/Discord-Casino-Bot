@@ -1,5 +1,41 @@
 # Grand Casino Expansion handoff
 
+## Claude takeover, 2026-11-25 (read this first)
+
+Claude took the expansion back over at `085e0c5` (Codex). The test runtime then ran `bdebf81`;
+`085e0c5` only added documentation on top. Baseline before any change: typecheck clean,
+372/372 tests. Everything below this section is Codex's earlier handoff, kept for history.
+
+**Independent audits.** Four areas were re-checked from scratch with reproduction tests in
+`tests/audit-*.test.ts` (kept as regression tests; deliberate open items are `it.fails`):
+
+- Hold'em engine, escrow and private information: correct blinds, heads-up order, min-raise and
+  short all-ins, side and split pots, uncalled bets, conservation across restarts on every
+  street; no hole-card/board/deck leak in 600+ projected states. Fixed: a departing player
+  stalled the table for the turn timer. Open by design: dead-button and missed-blind rules.
+- Gifting, relief, Sosse nicknames, highlights: fixed "Major win" ignoring the stake floor
+  (a 10-chip jackpot was announced), a single passive chip blocking relief, a locked-out
+  nickname retry, and nickname restoration after the approval changed.
+- Table and thread lifecycle and events: see "Lifecycle fixes" below.
+- Table artwork readability: see "Multiplayer tables" below.
+
+**Player experience.** The Games floor is one illustrated image (a tile per game plus Events)
+with two rows of game buttons in the same order; Home is a personal dashboard (avatar, balance,
+your table with a direct link into its thread, claimable rewards, next event, activity; no quick
+seat, no image attachment); Wallet, Gifting, Events, the lobby sign and the roulette vote were
+redesigned; Blackjack and Hold'em table lists are game-specific; asking for one card game while
+seated at the other explains why and offers return/leave/Games. Every entry route is covered
+by `tests/integration/entry-routes.test.ts`.
+
+**Responsiveness.** A newer animated change (including a private My hand action, which has no
+click on the panel) now cuts an older animation short, and an overtaken animation is never
+encoded (`tests/integration/panel-priority.test.ts`). A solo player is dealt 0.7 s after betting;
+Deal now (host) only shows while someone is still deciding, removing the race seen live.
+
+**Operations.** `<database>.stop` next to the database asks a hidden Windows runtime to shut down
+gracefully (drain, close, release the lock, exit 0). `data/deploy-check.mjs` (local) inspects the
+test database read-only and takes an online SQLite backup.
+
 The expansion is on `feat/grand-casino-expansion` and stacks on `feat/emerald-room-v1`.
 [PR #2](https://github.com/Stoffe101/Discord-Casino-Bot/pull/2) remains a draft. The
 original test build was `0a3ad3c`. The current test runtime is `bdebf81`. Its

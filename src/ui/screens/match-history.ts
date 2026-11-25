@@ -18,7 +18,9 @@ export function parseHistoryGame(raw: string | undefined): GameId | undefined {
 }
 
 function resultLine(result: MatchResult): string {
-  return `**${gameLabel(result.game)}** · ${discordTime(result.created_at, 'f')}\n-# Bet ${chips(result.wagered)} · Returned ${chips(result.returned)} · Net **${signedChips(result.net)}**`;
+  const icon = GAMES.find((game) => game.id === result.game)?.icon ?? ICONS.games;
+  const verdict = result.net > 0 ? `▲ won **${chips(result.net)}**` : result.net < 0 ? `▼ lost ${chips(-result.net)}` : '■ even';
+  return `${icon} **${gameLabel(result.game)}** · ${verdict} · ${discordTime(result.created_at, 'R')}\n-# Bet ${chips(result.wagered)} · back ${chips(result.returned)} · net ${signedChips(result.net)} · ${discordTime(result.created_at, 'f')}`;
 }
 
 export function matchesScreen(app: CasinoApp, viewer: Viewer, game?: GameId, page = 0): Screen {

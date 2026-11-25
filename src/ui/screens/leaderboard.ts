@@ -39,6 +39,8 @@ export function leaderboardScreen(
         ...info.periods.map((p) =>
           button({ id: cid('nav', 'lb', info.id, p, 0, 'p'), label: PERIOD_LABEL[p], tone: p === board.period ? 'primary' : 'secondary', disabled: p === board.period }),
         ),
+        // One page: Refresh lives here and the pager row is not shown at all.
+        board.pages <= 1 ? button({ id: cid('nav', 'lb', info.id, board.period, board.page, 'r'), label: 'Refresh', emoji: ICONS.refresh }) : null,
       )
     : null;
   const profileOptions = board.entries.map((e) => option(`#${e.rank} ${truncate(e.displayName || 'Player', 60)}`, e.userId, e.display));
@@ -55,7 +57,7 @@ export function leaderboardScreen(
         separator(),
         text(lines.length ? `${lines.join('\n')}\n\n${viewerLine}` : `Nobody is on this board yet — be the first!\n\n${viewerLine}`),
         periodButtons,
-        row(
+        board.pages <= 1 && periodButtons ? null : row(
           button({ id: cid('nav', 'lb', info.id, board.period, board.page - 1), emoji: ICONS.prev, disabled: board.page === 0 }),
           button({ id: cid('nav', 'lb', info.id, board.period, 'page'), label: `Page ${board.page + 1} of ${board.pages}`, disabled: true }),
           button({ id: cid('nav', 'lb', info.id, board.period, board.page + 1), emoji: ICONS.next, disabled: board.page >= board.pages - 1 }),

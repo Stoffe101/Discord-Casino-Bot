@@ -32,9 +32,53 @@ click on the panel) now cuts an older animation short, and an overtaken animatio
 encoded (`tests/integration/panel-priority.test.ts`). A solo player is dealt 0.7 s after betting;
 Deal now (host) only shows while someone is still deciding, removing the race seen live.
 
+**Lifecycle fixes.**
+- Private tables (both games) are never posted publicly: refused with a refund when Discord refuses
+  the private thread, when threads are off, or when a vanished thread would be re-homed.
+- Private-thread membership is enforced (host first, guests rolled back if they can't be added,
+  re-homed tables re-add everyone, leavers and kicked players removed). The test-mode guard allows
+  exactly one extra request for this: removing a member of a verified casino thread.
+- Failed creations leave no debris. Closing is durable: migration 5 (`discord_closed_at`) and a
+  reconcile step at startup and on every sweep finish any close Discord didn't confirm. On the
+  first start it finished cleanup for 11 previously closed test tables.
+- Emptied Blackjack tables get a new host; event tables are held until 30 minutes after their start;
+  event capacity counts the organizer; tables open only under the configured casino channel; the
+  first sweep runs 5 s after start (idle closes land at 3–4 min empty, 5–6 min occupied).
+
+**Multiplayer tables.** Adaptive layouts (1–4 seats one row, 5–6 as 3+2/3+3, 7 as 4+3) with a compact
+dealer strip and per-seat arrangements for splits and long hands. Measured from geometry in
+`tests/render-readability.test.ts`: smallest card rank or text ≥ 9 px at 400 px display width and
+≥ 11.5 px at 500 px for every fixture (before: down to 3.0 px). Hold'em uses the same standards.
+Animations share the layout. Previews: `npm run` the script `src/scripts/render-tables-preview.ts`.
+
 **Operations.** `<database>.stop` next to the database asks a hidden Windows runtime to shut down
 gracefully (drain, close, release the lock, exit 0). `data/deploy-check.mjs` (local) inspects the
 test database read-only and takes an online SQLite backup.
+
+**Test runtime switch (2026-11-25 01:25).** Verified the recorded PID 44844 (`bdebf81`, command line
+with `data/grand-test.env` and `dist/main.js`) and that no other casino process existed; the database
+had one player (520 chips), nothing held, no open tables, a clean ledger. The old build had no
+graceful trigger, so only that PID was stopped. Backup: `data/grand-test-pre-claude-2026-11-25T00-25-30-313Z.db`;
+rollback build: `data/rollback-dist-bdebf81/`. Started exactly one process (PID 40224, `8831697`);
+recovery and reconciliation clean, no warnings. Later builds can be stopped with the `.stop` file.
+To roll back: create `data/grand-test.db.stop`, wait for exit, start `data/rollback-dist-bdebf81/main.js`
+with the same env files against a copy of the backup, and carry forward any activity since.
+
+**Open decisions for the owner.**
+- Hold'em: no dead button / missed-blind tracking (sitting out one hand dodges the big blind).
+  Two `it.fails` tests describe the standard behaviour.
+- Economy: passive income is ~46% of chips created over 90 seeded days and the median balance
+  reaches ~33× the starting 500, so stakes become trivial over months. Consider a lower passive
+  rate or cap; nothing was changed without your call.
+- Hold'em chip dumping lets a new account move its starting chips to a friend in one hand (the
+  gift age rule doesn't apply at the table). Options: an account-age gate on Hold'em seats.
+- Real nicknames remain disabled until you approve them for a guild.
+- Events still need a manually opened, assigned table; automatic creation near start time is not
+  built yet.
+
+**Still needs a real person (not clickable by Claude this round):** a fresh `/casino` to confirm the
+whole Home appears on first open (Home no longer carries any image attachment); a two-player
+Blackjack hand to observe bet-to-cards time; a two-player private Hold'em hand; mobile wrapping.
 
 The expansion is on `feat/grand-casino-expansion` and stacks on `feat/emerald-room-v1`.
 [PR #2](https://github.com/Stoffe101/Discord-Casino-Bot/pull/2) remains a draft. The

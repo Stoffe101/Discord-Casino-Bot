@@ -4,12 +4,31 @@ import { n } from './svg.js';
 
 /**
  * Original playing-card artwork, drawn as vector shapes so it stays crisp at any size.
- * Design goals: oversized corner indices (readable on phones when cards overlap),
- * one bold centre motif instead of tiny pips, and an ornamented court-card frame.
+ * Design goals: a jumbo corner index (rank over suit, readable on phones when cards overlap),
+ * one bold centre motif instead of tiny pips, and an ornamented court-card frame that keeps
+ * clear of the index.
  */
 
 export const CARD_W = 100;
 export const CARD_H = 140;
+
+/** The corner index, in card units (100 × 140). Everything a covered card must still show. */
+export const INDEX = { cx: 25, baseline: 43, size: 46, suitCy: 60, suitSize: 26 } as const;
+/** Cinzel's cap height as a fraction of the font size (measured from the bundled font). */
+export const CINZEL_CAP = 0.7;
+/** Height of the corner rank glyph as a fraction of the card width. */
+export const RANK_CAP = (INDEX.size * CINZEL_CAP) / CARD_W;
+/**
+ * How much of a covered card must stay uncovered for its whole index (rank and suit) to show:
+ * a fraction of the width when cards overlap sideways, of the height when they cascade down.
+ */
+export const INDEX_REVEAL_X = 0.48;
+export const INDEX_REVEAL_Y = 0.54;
+/** The index's bounding box in card units (the widest rank is a condensed "10" or K). */
+export const INDEX_BOX = { x0: 4, y0: 8.5, x1: 46.5, y1: 73.5 } as const;
+/** The rank alone (descenders included); a last-resort cascade keeps just this visible. */
+export const RANK_BOX = { x0: 4, y0: 8.5, x1: 46.5, y1: 53 } as const;
+export const RANK_REVEAL_Y = 0.385;
 
 const RED = '#c22a3a';
 const BLACK = '#17171c';
@@ -43,7 +62,7 @@ export function cardDefs(): string {
     `<linearGradient id="paper" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fffdf7"/><stop offset="1" stop-color="${PAPER}"/></linearGradient>` +
     '<linearGradient id="courtRed" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fbe9e4"/><stop offset="1" stop-color="#f3d3cc"/></linearGradient>' +
     '<linearGradient id="courtBlack" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#eceff3"/><stop offset="1" stop-color="#d7dce4"/></linearGradient>' +
-    '<clipPath id="courtClip"><rect x="40" y="18" width="44" height="88" rx="3"/></clipPath>' +
+    '<clipPath id="courtClip"><rect x="53" y="16" width="36" height="108" rx="3"/></clipPath>' +
     '<linearGradient id="gold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f4dc8f"/><stop offset="0.5" stop-color="#d6ad4b"/><stop offset="1" stop-color="#a87c27"/></linearGradient>' +
     backs
   );
@@ -66,6 +85,20 @@ const SHADOW =
 const CROWN = 'M10 34 L4 10 L22 22 L32 4 L42 22 L60 10 L54 34 Z';
 
 /**
+ * The jumbo corner index in card units: rank over suit, inside the strip a covering card leaves
+ * visible. "10" is condensed so it fits the same strip as the single-character ranks.
+ */
+export function cardIndex(card: Card): string {
+  const label = rankLabel(rankOf(card));
+  const color = suitColor(suitOf(card));
+  const condensed = label.length > 1 ? ' scale(0.74 1)' : '';
+  return (
+    `<text class="ix" transform="translate(${INDEX.cx} ${INDEX.baseline})${condensed}" text-anchor="middle" font-family="Cinzel" font-weight="900" font-size="${INDEX.size}" fill="${color}">${label}</text>` +
+    suitShape(suitOf(card), INDEX.cx, INDEX.suitCy, INDEX.suitSize)
+  );
+}
+
+/**
  * A face-up card at (x, y) with width `w` (height follows the 5:7 ratio).
  * Optional `dim` greys the card (used for losing hands on the results screen).
  */
@@ -77,37 +110,29 @@ export function cardFace(card: Card, x: number, y: number, w: number, options: {
   const label = rankLabel(rank);
   const isCourt = rank === 'J' || rank === 'Q' || rank === 'K';
   const isAce = rank === 'A';
-  const indexSize = label.length > 1 ? 31 : 36;
   const parts: string[] = [];
   parts.push(
     `<rect x="0" y="0" width="${CARD_W}" height="${CARD_H}" rx="9" fill="url(#paper)" stroke="${PAPER_EDGE}" stroke-width="1.4"/>`,
   );
-  // Corner index (top-left) — oversized for legibility when hands overlap.
-  parts.push(
-    `<text x="${label.length > 1 ? 6 : 9}" y="36" font-family="Cinzel" font-weight="900" font-size="${indexSize}" fill="${color}" letter-spacing="${label.length > 1 ? -2 : 0}">${label}</text>`,
-  );
-  parts.push(suitShape(suit, 20, 52, 22));
-  // Mirrored small index (bottom-right).
-  parts.push(
-    `<g transform="rotate(180 ${CARD_W / 2} ${CARD_H / 2})"><text x="${label.length > 1 ? 7 : 9}" y="27" font-family="Cinzel" font-weight="900" font-size="22" fill="${color}" letter-spacing="${label.length > 1 ? -1.5 : 0}">${label}</text>${suitShape(suit, 16, 38, 13)}</g>`,
-  );
+  parts.push(cardIndex(card));
   if (isCourt) {
     const fill = color === RED ? 'url(#courtRed)' : 'url(#courtBlack)';
-    parts.push(`<rect x="36" y="14" width="52" height="96" rx="5" fill="${fill}" stroke="${color}" stroke-width="1.6" stroke-opacity="0.55"/>`);
-    parts.push(`<rect x="40" y="18" width="44" height="88" rx="3" fill="none" stroke="#c9a54e" stroke-width="1.1"/>`);
-    parts.push(`<path d="${CROWN}" fill="url(#gold)" stroke="#8a6420" stroke-width="1" transform="translate(44.5 26) scale(0.55)"/>`);
+    parts.push(`<rect x="49" y="12" width="44" height="116" rx="5" fill="${fill}" stroke="${color}" stroke-width="1.6" stroke-opacity="0.55"/>`);
+    parts.push(`<rect x="53" y="16" width="36" height="108" rx="3" fill="none" stroke="#c9a54e" stroke-width="1.1"/>`);
+    parts.push(`<path d="${CROWN}" fill="url(#gold)" stroke="#8a6420" stroke-width="1" transform="translate(56.5 24) scale(0.48)"/>`);
     parts.push(
-      `<g clip-path="url(#courtClip)"><text x="62" y="83" text-anchor="middle" font-family="Cinzel" font-weight="900" font-size="38" fill="${color}">${label}</text></g>`,
+      `<g clip-path="url(#courtClip)"><text x="71" y="94" text-anchor="middle" font-family="Cinzel" font-weight="900" font-size="40" fill="${color}">${label}</text></g>`,
     );
-    parts.push(suitShape(suit, 62, 96, 12));
+    parts.push(suitShape(suit, 71, 111, 14));
   } else if (isAce) {
-    parts.push(`<circle cx="60" cy="80" r="30" fill="none" stroke="#c9a54e" stroke-width="1.4" stroke-dasharray="2 3"/>`);
-    parts.push(suitShape(suit, 60, 80, 46));
+    parts.push(`<circle cx="67" cy="100" r="27" fill="none" stroke="#c9a54e" stroke-width="1.4" stroke-dasharray="2 3"/>`);
+    parts.push(suitShape(suit, 67, 100, 40));
   } else {
-    parts.push(suitShape(suit, 60, 82, 48));
+    parts.push(suitShape(suit, 67, 101, 48));
   }
   const shadow = options.shadow === false ? '' : SHADOW;
-  const dim = options.dim ? `<rect x="0" y="0" width="${CARD_W}" height="${CARD_H}" rx="9" fill="#0b1a14" opacity="0.42"/>` : '';
+  // Dimmed (losing) cards stay readable: a light veil, not a blackout.
+  const dim = options.dim ? `<rect x="0" y="0" width="${CARD_W}" height="${CARD_H}" rx="9" fill="#0b1a14" opacity="0.3"/>` : '';
   return `<g transform="translate(${n(x)} ${n(y)}) scale(${n(s)})">${shadow}${parts.join('')}${dim}</g>`;
 }
 

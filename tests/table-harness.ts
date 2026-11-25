@@ -36,7 +36,7 @@ export function createHarness(options: { db?: Database; clock?: ManualClock; see
   const provider = (guildId: string): GuildSettings => {
     let s = settings.get(guildId);
     if (!s) {
-      s = resolveSettings({});
+      s = resolveSettings({ economy: { startingBalance: 1000 } });
       settings.set(guildId, s);
     }
     return s;

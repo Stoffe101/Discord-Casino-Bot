@@ -2,7 +2,7 @@ import type { CasinoApp } from '../../app/casino-app.js';
 import { chips, escapeMarkdown } from '../../core/format.js';
 import { levelInfo } from '../../domain/progression.js';
 import { cid } from '../custom-id.js';
-import { button, container, row, text, type Screen } from '../kit.js';
+import { button, container, linkButton, row, text, type Screen } from '../kit.js';
 import { COLORS, ICONS } from '../theme.js';
 
 /** Who is looking at a screen. Built by the Discord layer from the interaction. */
@@ -12,9 +12,10 @@ export interface Viewer {
   displayName: string;
   avatarUrl: string;
   isAdmin: boolean;
+  canOrganizeEvents?: boolean;
 }
 
-export type NavTarget = 'home' | 'wallet' | 'profile' | 'leaderboard' | 'rewards' | 'tables' | 'games' | 'help';
+export type NavTarget = 'home' | 'games' | 'wallet' | 'leaderboard' | 'profile';
 
 export const NAV = {
   home: cid('nav', 'home'),
@@ -23,24 +24,26 @@ export const NAV = {
   leaderboard: cid('nav', 'lb', 'net', 'all', 0),
   rewards: cid('nav', 'rewards'),
   tables: cid('nav', 'tables'),
+  myTable: cid('nav', 'tables', 'mine'),
   games: cid('nav', 'games'),
+  // A second way into Games from a screen's own content (a message can't repeat a custom id).
+  floor: cid('nav', 'games', 'floor'),
+  events: cid('nav', 'events'),
   help: cid('nav', 'help', 'start'),
 } as const;
 
-/** Bottom navigation row shared by every personal screen (the current screen is omitted). */
-export function navRow(current: NavTarget, extra: ReturnType<typeof button>[] = []) {
-  const items: { target: NavTarget; label: string; emoji: string }[] = [
-    { target: 'home', label: 'Home', emoji: ICONS.home },
-    { target: 'wallet', label: 'Wallet', emoji: ICONS.wallet },
-    { target: 'profile', label: 'Profile', emoji: ICONS.profile },
-    { target: 'leaderboard', label: 'Leaderboards', emoji: ICONS.leaderboard },
-    { target: 'rewards', label: 'Rewards', emoji: ICONS.rewards },
-  ];
-  const buttons = items
-    .filter((i) => i.target !== current)
-    .slice(0, 5 - extra.length)
-    .map((i) => button({ id: NAV[i.target], label: i.label, emoji: i.emoji }));
-  return row(...extra, ...buttons);
+const DESTINATIONS = [
+  { target: 'home', label: 'Home', emoji: ICONS.home },
+  { target: 'games', label: 'Games', emoji: ICONS.games },
+  { target: 'wallet', label: 'Wallet', emoji: ICONS.wallet },
+  { target: 'leaderboard', label: 'Leaderboards', emoji: ICONS.leaderboard },
+  { target: 'profile', label: 'Profile', emoji: ICONS.profile },
+] as const;
+
+/** Keep the destination order and position consistent across private screens. */
+export function navRow(current?: NavTarget, disabled = false) {
+  return row(...DESTINATIONS.map(({ target, label, emoji }) =>
+    button({ id: NAV[target], label, emoji, tone: target === current ? 'primary' : 'secondary', disabled })));
 }
 
 export function name(text: string): string {
@@ -77,7 +80,7 @@ export function errorScreen(title: string, body: string, withHome = true): Scree
     title,
     body,
     tone: 'error',
-    buttons: withHome ? [button({ id: NAV.home, label: 'Casino home', emoji: ICONS.home })] : [],
+    buttons: withHome ? [button({ id: NAV.home, label: 'Home', emoji: ICONS.home })] : [],
   });
 }
 
@@ -88,4 +91,13 @@ export function casinoName(app: CasinoApp, guildId: string): string {
 /** Discord link to a channel or thread (opens it when clicked). */
 export function channelUrl(guildId: string, channelId: string, messageId?: string | null): string {
   return `https://discord.com/channels/${guildId}/${channelId}${messageId ? `/${messageId}` : ''}`;
+}
+
+/** Return to the persistent lobby from any table thread or private receipt. */
+export function returnToCasino(app: CasinoApp, guildId: string, fallbackChannelId?: string | null) {
+  const lobby = app.settings.lobby(guildId);
+  const channelId = lobby.channelId ?? fallbackChannelId;
+  return channelId
+    ? linkButton('Return to casino', channelUrl(guildId, channelId, lobby.messageId), ICONS.home)
+    : button({ id: NAV.home, label: 'Home', emoji: ICONS.home });
 }

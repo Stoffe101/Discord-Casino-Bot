@@ -24,7 +24,7 @@ describe('animated GIFs', () => {
     h = new CasinoHarness({ allowThreads: true, animations: true });
     h.fd.recording = true;
     const [alex, hanna] = [h.user('Alex'), h.user('Hanna')];
-    await h.click(alex, h.seen(await h.slash(alex, 'casino')), 'Play Blackjack');
+    await h.openBlackjack(alex);
     const tableId = h.app.blackjack.tableOfUser(h.guildId, alex.id)!.record.id;
     const panelId = h.tablePanel(tableId).id;
     await h.app.blackjack.debugSetShoe(tableId, ['TS', '5C', '6D', '4H', '6S', 'TD', '3C', '2H', 'KD'] as Card[]);
@@ -62,14 +62,14 @@ describe('animated GIFs', () => {
     h = new CasinoHarness({ animations: true });
     h.fd.recording = true;
     const [alex, hanna] = [h.user('Alex'), h.user('Hanna')];
-    const hub = async (u: typeof alex) => h.seen(await h.click(u, h.seen(await h.slash(u, 'casino'))!, 'More Games'))!;
+    const hub = async (u: typeof alex) => h.seen(await h.click(u, h.seen(await h.slash(u, 'casino'))!, 'Games'))!;
     // Slots: the click answers with rolling reels, then the result.
-    const machine = h.seen(await h.click(alex, await hub(alex), 'Play slots'))!;
+    const machine = h.seen(await h.click(alex, await hub(alex), 'Slots'))!;
     h.fd.timeline.length = 0;
     await h.click(alex, machine, h.buttons(machine).find((b) => b.label?.startsWith('Spin'))!.label!);
     expect(kinds(h.fd.timeline.filter((e) => e.messageId === machine.id))).toEqual(['gif', 'png']);
     // Roulette.
-    await h.click(alex, await hub(alex), 'Open the wheel');
+    await h.click(alex, await hub(alex), 'Roulette');
     const wheel = h.app.roulette.wheelFor(h.guildId)!.record;
     const panel = () => h.fd.messages.get(h.app.roulette.peek(wheel.id)!.record.messageId!)!;
     const select = findComponents(panel().components, 3)[0]!;
@@ -84,7 +84,7 @@ describe('animated GIFs', () => {
     await h.settle();
     expect(kinds(h.fd.timeline.filter((e) => e.messageId === panel().id))).toEqual(['gif', 'png']);
     // Coinflip.
-    const card = h.seen(await h.submit(alex, await h.select(alex, await hub(alex), 'cf:pick', [hanna.id]), { amount: '25', call: 'tails' }))!;
+    const card = h.seen(await h.submit(alex, await h.select(alex, h.seen(await h.click(alex, await hub(alex), 'Coinflip')), 'cf:pick', [hanna.id]), { amount: '25', call: 'tails' }))!;
     h.fd.timeline.length = 0;
     await h.click(hanna, card, /^Accept/);
     expect(kinds(h.fd.timeline.filter((e) => e.messageId === card.id))).toEqual(['gif', 'png']);
@@ -98,7 +98,7 @@ describe('animation timing (real timings, simulated latency)', () => {
     h.fd.recording = true;
     h.fd.latencyMs = 100;
     const alex = h.user('Alex');
-    await h.click(alex, h.seen(await h.slash(alex, 'casino')), 'Play Blackjack');
+    await h.openBlackjack(alex);
     const tableId = h.app.blackjack.tableOfUser(h.guildId, alex.id)!.record.id;
     const panelId = h.tablePanel(tableId).id;
     await h.app.blackjack.debugSetShoe(tableId, ['2S', '9C', '3D', '7H', '4C', '5H', '2C'] as Card[]);
@@ -106,7 +106,10 @@ describe('animation timing (real timings, simulated latency)', () => {
     await h.advance(ALL_IN_DEAL_DELAY_MS);
     h.fd.timeline.length = 0;
     const first = h.fd.click(alex, h.tablePanel(tableId), 'Hit');
-    await new Promise((r) => setTimeout(r, 400)); // the first card's GIF is still playing
+    // The second Hit must use the new controls delivered with the first GIF.
+    const firstGifDelivered = () => h.fd.timeline.some((entry) => entry.messageId === panelId && entry.image?.filename.endsWith('.gif'));
+    for (let i = 0; i < 200 && !firstGifDelivered(); i++) await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(firstGifDelivered()).toBe(true);
     const second = h.fd.click(alex, h.tablePanel(tableId), 'Hit');
     await h.settle();
     expect(first.errors).toEqual([]);
@@ -123,7 +126,7 @@ describe('animation timing (real timings, simulated latency)', () => {
     h.fd.recording = true;
     h.fd.latencyMs = 100;
     const alex = h.user('Alex');
-    await h.click(alex, h.seen(await h.slash(alex, 'casino')), 'Play Blackjack');
+    await h.openBlackjack(alex);
     const tableId = h.app.blackjack.tableOfUser(h.guildId, alex.id)!.record.id;
     const panelId = h.tablePanel(tableId).id;
     // Alex 2+3 vs dealer 9 (7 in the hole); the hit draws a 4.
@@ -150,7 +153,7 @@ describe('animation timing (real timings, simulated latency)', () => {
     h = new CasinoHarness({ animations: true });
     h.fd.recording = true;
     const [alex, hanna] = [h.user('Alex'), h.user('Hanna')];
-    await h.click(alex, h.seen(await h.slash(alex, 'casino')), 'Play Blackjack');
+    await h.openBlackjack(alex);
     const tableId = h.app.blackjack.tableOfUser(h.guildId, alex.id)!.record.id;
     const panelId = h.tablePanel(tableId).id;
     // Dealer shows a king and holds an ace: the hand ends at the deal.
@@ -171,7 +174,7 @@ describe('My hand (private view)', () => {
   it('shows your hand with a tip, acts privately, and keeps the table panel in step', async () => {
     h = new CasinoHarness({ allowThreads: true });
     const [alex, hanna] = [h.user('Alex'), h.user('Hanna')];
-    await h.click(alex, h.seen(await h.slash(alex, 'casino')), 'Play Blackjack');
+    await h.openBlackjack(alex);
     const tableId = h.app.blackjack.tableOfUser(h.guildId, alex.id)!.record.id;
     // Alex 8,8 vs dealer 10 → basic strategy: split.
     await h.app.blackjack.debugSetShoe(tableId, ['8S', '9C', 'TD', '8H', '9H', '7C', '3D', '2S'] as Card[]);

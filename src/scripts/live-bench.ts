@@ -17,7 +17,8 @@
  * Ephemeral screens are shown as a normal (non-ephemeral) message: Discord applies the same
  * component validation to both.
  */
-import { existsSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { REST, Routes, MessageFlags } from 'discord.js';
 import { loadEnvFile, readEnv } from '../config/env.js';
@@ -76,6 +77,13 @@ async function main(): Promise<void> {
     return console.log(`Deleted bench message ${state.messageId}.`);
   }
 
+  if (!flag('dry') && !flag('list')) {
+    const target = await rest.get(Routes.channel(channel)) as { guild_id?: string; type?: number };
+    if (target.guild_id !== allow.guildId || target.type !== 0) {
+      throw new Error('The allowlisted channel must be a text channel in the configured test guild.');
+    }
+  }
+
   const renderStart = performance.now();
   let screens = await buildScreens(allow.guildId, channel);
   const renderMs = performance.now() - renderStart;
@@ -105,6 +113,7 @@ async function main(): Promise<void> {
     const t0 = performance.now();
     try {
       if (!messageId) {
+        mkdirSync(dirname(STATE_FILE), { recursive: true });
         const created = (await rest.post(Routes.channelMessages(channel), { body, files })) as { id: string };
         messageId = created.id;
         writeFileSync(STATE_FILE, JSON.stringify({ messageId, channelId: channel }));

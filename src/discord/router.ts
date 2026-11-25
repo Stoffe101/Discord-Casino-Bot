@@ -6,16 +6,21 @@ import {
   type ChatInputCommandInteraction,
   type GuildMember,
   type Interaction,
+  type MessageEditOptions,
   type ModalSubmitInteraction,
   type RepliableInteraction,
   type TextChannel,
   type UserContextMenuCommandInteraction,
 } from 'discord.js';
 import type { CasinoApp } from '../app/casino-app.js';
-import { InsufficientFundsError, UserError, isUserError } from '../core/errors.js';
-import { chips, escapeMarkdown, plural, signedChips, parseChipAmount } from '../core/format.js';
-import { shortCode } from '../core/random.js';
+import { InsufficientFundsError, StaleActionError, UserError, isUserError } from '../core/errors.js';
+import { chips, discordTime, escapeMarkdown, plural, signedChips, parseChipAmount } from '../core/format.js';
+import { newId, shortCode } from '../core/random.js';
 import { getSpec, type SettingGroup } from '../config/settings.js';
+import { parseEventTime } from '../domain/casino-events.js';
+import { eventBuyInModal, eventDetailsScreen, eventEditor, eventInviteModal, eventSeatConflictScreen, eventSeatedScreen, eventsScreen, eventTableModal } from '../ui/screens/events.js';
+import { assertMaySit, closeEventTable, openEventTable, seatAtEventTable } from './event-tables.js';
+import { MIN_GIFT } from '../domain/economy/economy-service.js';
 import { resetGuildData } from '../domain/dev-reset.js';
 import type { LeaderboardCategory, LeaderboardPeriod } from '../domain/leaderboard-service.js';
 import { LEADERBOARD_CATEGORIES } from '../domain/leaderboard-service.js';
@@ -23,13 +28,16 @@ import type { CosmeticKind } from '../domain/progression.js';
 import type { Challenge, CoinSide } from '../games/coinflip/coinflip-service.js';
 import { isBetType } from '../games/roulette/engine.js';
 import type { PlayerAction } from '../games/blackjack/engine.js';
+import { boardComponent, readBoardLocation } from '../ui/navigation.js';
 import { cid, intArg, parseCid } from '../ui/custom-id.js';
 import { button, linkButton, row, withNote, type Screen } from '../ui/kit.js';
 import { COLORS, ICONS } from '../ui/theme.js';
-import { noticeScreen, errorScreen, NAV, type Viewer } from '../ui/screens/common.js';
-import { homeScreen, walletScreen, historyScreen } from '../ui/screens/home.js';
-import { profileScreen, achievementsScreen, styleScreen, applyCosmetic } from '../ui/screens/profile.js';
+import { noticeScreen, errorScreen, NAV, returnToCasino, type Viewer } from '../ui/screens/common.js';
+import { homeScreen, walletScreen, historyScreen, walletStatsScreen } from '../ui/screens/home.js';
+import { profileScreen, preferencesScreen, achievementsScreen, styleScreen, applyCosmetic } from '../ui/screens/profile.js';
 import { leaderboardScreen } from '../ui/screens/leaderboard.js';
+import { confirmGiftScreen, giftAmountModal, giftingScreen } from '../ui/screens/wallet-social.js';
+import { matchDetailScreen, matchesScreen, parseHistoryGame } from '../ui/screens/match-history.js';
 import { rewardsScreen } from '../ui/screens/rewards.js';
 import {
   accessCodeModal,
@@ -38,20 +46,36 @@ import {
   myHandScreen,
   rulesScreen,
   tablesScreen,
+  TABLE_FILTERS,
+  type TableFilter,
 } from '../ui/screens/blackjack.js';
-import { coinflipModal, gamesHubScreen, paytableScreen, rouletteBetModal, rouletteHelpScreen, slotsScreen } from '../ui/screens/games.js';
+import { myTable } from '../ui/screens/my-table.js';
+import { challengeLingerMs } from './channel-tidy.js';
+import { coinflipLobbyScreen, coinflipModal, gamesHubScreen, paytableScreen, rouletteBetModal, rouletteHelpScreen, slotsScreen } from '../ui/screens/games.js';
 import { HELP_TOPICS, helpScreen, type HelpTopic } from '../ui/screens/help.js';
-import { adjustModal, adminScreen, adminTablesScreen, auditScreen, devResetModal, settingModal } from '../ui/screens/admin.js';
+import { adjustModal, adminScreen, adminTablesScreen, auditScreen, devResetModal, settingModal, unusualTransfersScreen } from '../ui/screens/admin.js';
 import type { ModalSpec } from '../ui/kit.js';
 import type { CasinoBot } from './bot.js';
-import { MIN_FRAME_HOLD_MS, type Carrier } from './panel-sync.js';
-import { createOptions, discordErrorCode, editOptions, replyOptions } from './payload.js';
+import { PokerInteractions } from './poker-interactions.js';
+import { pokerRulesScreen } from '../ui/screens/poker.js';
+import { MIN_FRAME_HOLD_MS, answeringBy, markAnswering, type Carrier } from './panel-sync.js';
+import { DISCORD_ERRORS, canKeepAttachments, createOptions, discordErrorCode, editOptions, replyOptions, type ExistingAttachment } from './payload.js';
 
 type Component = ButtonInteraction | AnySelectMenuInteraction;
 type AckMode = 'update' | 'reply' | 'none';
 
 const ACK_GUARD_MS = 2_200;
 const PLAYER_ACTIONS = new Set<PlayerAction>(['hit', 'stand', 'double', 'split', 'surrender']);
+
+const GIFT_TTL_MS = 5 * 60_000;
+
+interface GiftOffer {
+  guildId: string;
+  senderId: string;
+  recipientId: string;
+  amount: number;
+  expiresAt: number;
+}
 
 /**
  * Routes every interaction. Handlers re-validate everything server-side (guild, table, phase,
@@ -60,16 +84,18 @@ const PLAYER_ACTIONS = new Set<PlayerAction>(['hit', 'stand', 'double', 'split',
 export class InteractionRouter {
   private readonly claimed = new WeakSet<object>();
   private readonly seen = new Map<string, number>();
+  private readonly giftOffers = new Map<string, GiftOffer>();
   private readonly handledChallenges = new Set<string>();
   /** How we deferred each interaction, so later responses go to the right place. */
   private readonly deferredAs = new WeakMap<object, 'update' | 'reply'>();
+  private readonly pokerInteractions: PokerInteractions;
   readonly startedAt = Date.now();
   latency = { count: 0, totalMs: 0, maxMs: 0 };
 
   constructor(
     private readonly app: CasinoApp,
     private readonly bot: CasinoBot,
-  ) {}
+  ) { this.pokerInteractions = new PokerInteractions(app, bot); }
 
   /** Called by the panel observers: the interaction that caused a change answers it. */
   claim(origin?: object): Carrier | undefined {
@@ -130,7 +156,11 @@ export class InteractionRouter {
         ? member.displayAvatarURL({ extension: 'png', size: 128 })
         : i.user.displayAvatarURL({ extension: 'png', size: 128 });
     const isAdmin = i.memberPermissions?.has(PermissionFlagsBits.ManageGuild) ?? false;
-    const viewer = { guildId: i.guildId!, userId: i.user.id, displayName, avatarUrl, isAdmin };
+    const organizerRole = this.app.settings.get(i.guildId!).eventOrganizerRole;
+    const roles = i.member?.roles;
+    const canOrganizeEvents = /^\d{15,22}$/.test(organizerRole)
+      && (Array.isArray(roles) ? roles.includes(organizerRole) : roles?.cache.has(organizerRole) === true);
+    const viewer = { guildId: i.guildId!, userId: i.user.id, displayName, avatarUrl, isAdmin, canOrganizeEvents };
     this.app.economy.ensurePlayer(viewer.guildId, viewer.userId, displayName);
     return viewer;
   }
@@ -147,13 +177,27 @@ export class InteractionRouter {
    */
   private async defer(i: RepliableInteraction, mode: 'update' | 'reply'): Promise<void> {
     if (i.deferred || i.replied) return;
+    await this.panelAnswer(i);
+    if (i.deferred || i.replied) return;
     if (mode === 'update' && (i.isMessageComponent() || (i.isModalSubmit() && i.isFromMessage()))) {
       this.deferredAs.set(i, 'update');
-      await (i as ButtonInteraction).deferUpdate();
+      await this.answer(i, (i as ButtonInteraction).deferUpdate());
     } else {
       this.deferredAs.set(i, 'reply');
-      await i.deferReply({ flags: MessageFlags.Ephemeral });
+      await this.answer(i, i.deferReply({ flags: MessageFlags.Ephemeral }));
     }
+  }
+
+  /** Send the interaction's first answer, recording that the router (not a panel) is giving it. */
+  private async answer(i: RepliableInteraction, request: Promise<unknown>): Promise<void> {
+    markAnswering(i, 'router', request);
+    await request;
+  }
+
+  /** If a table panel is already answering this click (updating its message), let that finish first. */
+  private async panelAnswer(i: RepliableInteraction): Promise<void> {
+    const other = answeringBy(i);
+    if (other?.by === 'panel') await other.done;
   }
 
   /**
@@ -164,17 +208,35 @@ export class InteractionRouter {
   private async show(i: RepliableInteraction, screen: Screen, how: 'auto' | 'private' | 'public' = 'auto'): Promise<void> {
     screen = this.bot.checked(screen);
     const inPlace = how === 'auto' && this.fromEphemeral(i) && (i.isMessageComponent() || i.isModalSubmit());
+    await this.panelAnswer(i);
     if (!i.deferred && !i.replied) {
-      if (inPlace) await (i as ButtonInteraction).update(editOptions(screen));
-      else await i.reply(replyOptions(screen, how !== 'public'));
+      if (inPlace) await this.editInPlace(i, screen, (options) => this.answer(i, (i as ButtonInteraction).update(options)));
+      else await this.answer(i, i.reply(replyOptions(screen, how !== 'public')));
       return;
     }
     const deferred = this.deferredAs.get(i);
     if (i.deferred && !i.replied && (deferred === 'reply' || (deferred === 'update' && inPlace))) {
-      await i.editReply(editOptions(screen));
+      if (deferred === 'update') await this.editInPlace(i, screen, (options) => i.editReply(options));
+      else await i.editReply(editOptions(screen));
       return;
     }
     await i.followUp(replyOptions(screen, how !== 'public'));
+  }
+
+  /**
+   * Replace the user's own private panel. Images it already carries (Games art after Rules, the
+   * wallet badge after Gifting) are not uploaded again; if the message changed under us (a second
+   * click replaced its image) Discord refuses the reference and the screen is sent with its images.
+   */
+  private async editInPlace(i: RepliableInteraction, screen: Screen, send: (options: MessageEditOptions) => Promise<unknown>): Promise<void> {
+    const message = (i as { message?: { attachments?: { values(): Iterable<ExistingAttachment> } } | null }).message;
+    const keep = canKeepAttachments(screen, message?.attachments?.values() ?? []);
+    try {
+      await send(editOptions(screen, keep));
+    } catch (error) {
+      if (!keep || discordErrorCode(error) !== DISCORD_ERRORS.invalidFormBody) throw error;
+      await send(editOptions(screen));
+    }
   }
 
   private async notice(i: RepliableInteraction, title: string, body: string, tone: 'success' | 'info' | 'error' | 'gold' = 'info', buttons: ReturnType<typeof button>[] = []): Promise<void> {
@@ -195,7 +257,8 @@ export class InteractionRouter {
     }
     try {
       const opts = replyOptions(screen, true);
-      if (!i.deferred && !i.replied) await i.reply(opts);
+      await this.panelAnswer(i);
+      if (!i.deferred && !i.replied) await this.answer(i, i.reply(opts));
       else if (this.deferredAs.get(i) === 'reply' && !i.replied) await i.editReply(editOptions(screen));
       else await i.followUp(opts);
     } catch (e) {
@@ -293,20 +356,24 @@ export class InteractionRouter {
     arm('reply');
     switch (i.commandName) {
       case 'casino':
-        return this.show(i, homeScreen(this.app, viewer));
+        return this.show(i, await homeScreen(this.app, viewer));
       case 'wallet':
-        return this.show(i, walletScreen(this.app, viewer));
+        return this.show(i, await walletScreen(this.app, viewer));
       case 'daily': {
         const claim = this.app.economy.claimDaily(viewer.guildId, viewer.userId);
         return this.show(i, noticeScreen({
           title: `+${chips(claim.amount)} chips`,
           body: `Daily reward collected${claim.streak > 1 ? ` — **${claim.streak}-day streak!**` : '.'} Balance: **${chips(claim.balance)}**.`,
           tone: 'gold',
-          buttons: [button({ id: NAV.wallet, label: 'Wallet', emoji: ICONS.wallet }), button({ id: NAV.home, label: 'Casino', emoji: ICONS.home })],
+          buttons: [button({ id: NAV.wallet, label: 'Wallet', emoji: ICONS.wallet }), button({ id: NAV.home, label: 'Home', emoji: ICONS.home })],
         }));
       }
       case 'blackjack':
-        return this.show(i, tablesScreen(this.app, viewer));
+        return this.show(i, tablesScreen(this.app, viewer, 'blackjack'));
+      case 'holdem':
+        return this.show(i, tablesScreen(this.app, viewer, 'poker'));
+      case 'games':
+        return this.show(i, await gamesHubScreen(this.app, viewer));
       case 'roulette':
         return this.openRoulette(i, viewer);
       case 'slots':
@@ -412,6 +479,14 @@ export class InteractionRouter {
     });
   }
 
+  private pokerResponses(arm: (mode: AckMode) => void) {
+    return {
+      show: (interaction: RepliableInteraction, screen: Screen) => this.show(interaction, screen),
+      modal: (interaction: ButtonInteraction, modal: ModalSpec) => this.showModal(interaction, modal),
+      arm: (interaction: RepliableInteraction) => arm(this.fromEphemeral(interaction) ? 'update' : 'reply'),
+    };
+  }
+
   // ───────────────────────────── components ─────────────────────────────
 
   private async component(i: Component, arm: (m: AckMode) => void): Promise<void> {
@@ -429,10 +504,24 @@ export class InteractionRouter {
         const info = LEADERBOARD_CATEGORIES.find((c) => c.id === category);
         return this.show(i, leaderboardScreen(this.app, viewer, category, info?.periods.includes(period) ? period : 'all', 0));
       }
-      case 'lbpro': {
-        arm('update');
-        const userId = i.isStringSelectMenu() ? i.values[0]! : viewer.userId;
-        return this.show(i, profileScreen(this.app, viewer, await this.profileTarget(viewer.guildId, userId)));
+      case 'lbpro':
+      case 'lbback': {
+        arm(ephemeral ? 'update' : 'reply');
+        const location = readBoardLocation(i.customId, viewer);
+        if (!location && !(scope === 'lbpro' && action === 'view')) {
+          return this.show(i, leaderboardScreen(this.app, viewer, 'net', 'all', 0));
+        }
+        if (scope === 'lbback' && location) {
+          return this.show(i, leaderboardScreen(this.app, viewer, location.category, location.period, location.page));
+        }
+        if (!i.isStringSelectMenu()) throw new UserError('Choose a player from the leaderboard.');
+        const userId = i.values[0] ?? '';
+        const player = this.app.economy.getPlayer(viewer.guildId, userId);
+        if (!player || player.leaderboard_opt_out) {
+          throw new UserError('This player is no longer listed. Refresh the leaderboard to see the current rankings.');
+        }
+        return this.show(i, profileScreen(this.app, viewer, await this.profileTarget(viewer.guildId, userId),
+          location ? boardComponent('lbback', viewer, location) : NAV.leaderboard + ':back'));
       }
       case 'help': {
         arm('update');
@@ -449,6 +538,22 @@ export class InteractionRouter {
       case 'eco':
         arm(ephemeral ? 'update' : 'reply');
         return this.claimReward(i, viewer, action, args[0] ?? 'home');
+      case 'prefs': {
+        arm(ephemeral ? 'update' : 'reply');
+        const column = action === 'boards' ? 'leaderboard_opt_out' : action === 'highlights' ? 'highlights_opt_out' : null;
+        if (!column || (args[0] !== 'on' && args[0] !== 'off')) throw new UserError('Open your preferences again.');
+        this.app.db.run(`UPDATE players SET ${column} = ? WHERE guild_id = ? AND user_id = ?`, [args[0] === 'on' ? 0 : 1, viewer.guildId, viewer.userId]);
+        if (action === 'highlights') this.bot.requestLobby(viewer.guildId);
+        return this.show(i, preferencesScreen(this.app, viewer));
+      }
+      case 'match':
+        arm(ephemeral ? 'update' : 'reply');
+        if (!i.isStringSelectMenu()) throw new UserError('Choose a result or game from your match history.');
+        if (action === 'filter') return this.show(i, matchesScreen(this.app, viewer, parseHistoryGame(i.values[0])));
+        if (action === 'open') return this.show(i, matchDetailScreen(this.app, viewer, i.values[0] ?? '', parseHistoryGame(args[0]), intArg(args[1])));
+        throw new UserError('Open your match history again.');
+      case 'gift':
+        return this.gift(i, viewer, action, args[0] ?? '', arm);
       case 'tbl':
         return this.tables(i, viewer, action, args, arm);
       case 'lobby':
@@ -456,6 +561,11 @@ export class InteractionRouter {
         return;
       case 'bj':
         return this.blackjack(i, viewer, action, args, arm);
+      case 'evt':
+        return this.events(i, viewer, action, args, arm);
+      case 'pk':
+        if (i.isButton()) return this.pokerInteractions.component(i, viewer, this.pokerResponses(arm));
+        return;
       case 'rl':
         return this.roulette(i, viewer, action, args, arm);
       case 'sl':
@@ -472,11 +582,21 @@ export class InteractionRouter {
   private async nav(i: Component, viewer: Viewer, action: string, args: string[]): Promise<void> {
     switch (action) {
       case 'home':
-        return this.show(i, homeScreen(this.app, viewer));
+        return this.show(i, await homeScreen(this.app, viewer));
       case 'wallet':
-        return this.show(i, walletScreen(this.app, viewer));
+        return this.show(i, await walletScreen(this.app, viewer));
       case 'history':
         return this.show(i, historyScreen(this.app, viewer, intArg(args[0])));
+      case 'matches':
+        return this.show(i, matchesScreen(this.app, viewer, parseHistoryGame(args[0]), intArg(args[1])));
+      case 'walletstats':
+        return this.show(i, walletStatsScreen(this.app, viewer));
+      case 'gifting':
+        return this.show(i, giftingScreen(this.app, viewer));
+      case 'missions':
+        return this.show(i, rewardsScreen(this.app, viewer, true));
+      case 'preferences':
+        return this.show(i, preferencesScreen(this.app, viewer));
       case 'profile': {
         const target = args[0] ? await this.profileTarget(viewer.guildId, args[0]) : { userId: viewer.userId, displayName: viewer.displayName, avatarUrl: viewer.avatarUrl };
         return this.show(i, profileScreen(this.app, viewer, target));
@@ -500,22 +620,138 @@ export class InteractionRouter {
       }
       case 'rewards':
         return this.show(i, rewardsScreen(this.app, viewer));
-      case 'tables':
-        return this.show(i, tablesScreen(this.app, viewer));
+      case 'tables': {
+        const filter = TABLE_FILTERS.find((item) => item === args[0]) ?? 'all';
+        return this.show(i, tablesScreen(this.app, viewer, filter, intArg(args[1])));
+      }
+      case 'events':
+        return this.show(i, eventsScreen(this.app, viewer, intArg(args[0])));
+      case 'rules': {
+        // The Games floor's "Rules and how to play…" menu (or a direct rules link).
+        const game = i.isStringSelectMenu() ? i.values[0] : args[0];
+        if (game === 'poker') return this.show(i, pokerRulesScreen());
+        if (game === 'roulette') return this.show(i, rouletteHelpScreen());
+        if (game === 'slots') return this.show(i, paytableScreen(this.app.settings.get(viewer.guildId).slots.minBet));
+        if (game === 'coinflip') return this.show(i, coinflipLobbyScreen(this.app, viewer));
+        return this.show(i, rulesScreen(this.app, viewer.guildId));
+      }
+      case 'pkrules':
+        return this.show(i, pokerRulesScreen());
+      case 'bjrules':
+        return this.show(i, rulesScreen(this.app, viewer.guildId));
+      case 'coinflip':
+      case 'cfrules':
+        return this.show(i, coinflipLobbyScreen(this.app, viewer));
       case 'games':
-        return this.show(i, gamesHubScreen(this.app, viewer));
+        return this.show(i, await gamesHubScreen(this.app, viewer));
       case 'help':
         return this.show(i, helpScreen(this.app, viewer, (HELP_TOPICS as readonly string[]).includes(args[0] ?? '') ? (args[0] as HelpTopic) : 'start'));
       case 'slots':
         this.requireOpen(viewer);
+        if (!this.app.settings.get(viewer.guildId).slots.enabled) throw new UserError('Slots are closed on this server.');
         return this.show(i, await slotsScreen(this.app, viewer, intArg(args[0], this.app.settings.get(viewer.guildId).slots.minBet)));
       default:
-        return this.show(i, homeScreen(this.app, viewer));
+        return this.show(i, await homeScreen(this.app, viewer));
     }
+  }
+
+  private async events(i: Component, viewer: Viewer, action: string, args: string[], arm: (mode: AckMode) => void): Promise<void> {
+    const [id = '', rawRevision] = args;
+    const events = this.app.events;
+    const revision = intArg(rawRevision, -1);
+    if (action === 'invite') return this.showModal(i, eventInviteModal());
+    if (action === 'create') {
+      const settings = this.app.settings.get(viewer.guildId);
+      if (!events.canManage(viewer) || !settings.enabled || !settings.blackjack.enabled && !settings.poker.enabled) {
+        throw new UserError('Only organizers can schedule an enabled game.');
+      }
+      return this.showModal(i, eventEditor(this.app, viewer));
+    }
+    if (action === 'edit') {
+      const event = events.view(viewer, id);
+      if (!events.canManage(viewer, event)) throw new UserError('Only this event’s organizer can edit it.');
+      if (event.revision !== revision) throw new StaleActionError('Refresh the event before editing.');
+      return this.showModal(i, eventEditor(this.app, viewer, event));
+    }
+    if (action === 'table') {
+      // The event table's settings, before it opens.
+      const event = events.view(viewer, id);
+      if (!events.canManage(viewer, event)) throw new UserError('Only this event’s organizer can change its table.');
+      if (event.revision !== revision) throw new StaleActionError('Refresh the event before changing its table.');
+      if (events.table(event)) throw new UserError('The table is already open, so its settings are fixed.');
+      return this.showModal(i, eventTableModal(this.app, event));
+    }
+    if (action === 'seat' || action === 'opennow') {
+      // "Join the table" (registered players) and "Open table now" (organizer).
+      this.requireOpen(viewer);
+      const event = events.view(viewer, id);
+      const opening = action === 'opennow';
+      if (opening && !events.canManage(viewer, event)) throw new UserError('Only this event’s organizer can open its table.');
+      if (opening && event.revision !== revision) throw new StaleActionError('Refresh the event before opening its table.');
+      const table = events.table(event);
+      const me = myTable(this.app, viewer);
+      // Hold'em seats need a buy-in first: the modal comes before any acknowledgement.
+      const needsBuyIn = event.game === 'poker' && !me && !(opening && table) && (!opening || events.maySit(event, viewer.userId));
+      if (needsBuyIn) {
+        assertMaySit(this.app, viewer, event);
+        return this.showModal(i, eventBuyInModal(this.app, event, opening));
+      }
+      arm(this.fromEphemeral(i) ? 'update' : 'reply');
+      if (opening) {
+        await openEventTable(this.app, this.bot, viewer.guildId, event.id);
+        return this.show(i, eventDetailsScreen(this.app, viewer, events.view(viewer, id)));
+      }
+      if (me && table && me.id === table.id) {
+        return this.show(i, eventSeatedScreen(event, { tableId: table.id, tableName: table.name, url: me.url, opened: false }, 'You already have a seat at this table.'));
+      }
+      if (me) return this.show(i, eventSeatConflictScreen(event, me));
+      return this.show(i, eventSeatedScreen(event, await seatAtEventTable(this.app, this.bot, viewer, id)));
+    }
+    if (action === 'leave') {
+      // Registration is how this player got their seat: withdrawing while seated would keep the
+      // seat and free a registration place, so they leave the table first.
+      const table = events.table(events.view(viewer, id));
+      if (table && myTable(this.app, viewer)?.id === table.id) {
+        throw new UserError('You’re seated at this event’s table. Leave the table first, then withdraw.', 'seated', 'Still seated');
+      }
+    }
+    arm(this.fromEphemeral(i) ? 'update' : 'reply');
+    let event = action === 'open' ? events.view(viewer, id)
+      : action === 'join' ? events.join(viewer, id, viewer.displayName)
+      : action === 'leave' ? events.leave(viewer, id)
+      : action === 'assign' && i.isStringSelectMenu()
+        ? events.assign(viewer, id, revision, i.values[0] === 'detach' ? null : i.values[0] ?? '')
+        : events.manageAction(viewer, id, revision, action);
+    if (action === 'cancel' && event.opened_table_id) {
+      // Cancelling closes the table the event opened, with refunds (an assigned own table stays).
+      await closeEventTable(this.app, event.opened_table_id, 'the event was cancelled');
+      event = events.view(viewer, id);
+    }
+    return this.show(i, eventDetailsScreen(this.app, viewer, event));
   }
 
   private async claimReward(i: Component, viewer: Viewer, action: string, from: string): Promise<void> {
     let note: string | null = null;
+    if (action === 'nickname') {
+      if (!this.fromEphemeral(i) || from !== viewer.userId || !this.bot.nicknames) throw new UserError('Open your own casino relief controls.');
+      const until = await this.bot.nicknames.accept(viewer.guildId, viewer.userId);
+      return this.notice(i, 'Sosse nickname set', 'Your nickname is set to **Sosse** until ' + discordTime(until) + '.', 'success');
+    }
+    if (action === 'relief') {
+      const claim = this.app.economy.claimRelief(viewer.guildId, viewer.userId, from === 'title');
+      if (from === 'title' && this.bot.nicknames?.offered(viewer.guildId)) {
+        return this.show(i, noticeScreen({
+          title: 'Relief received · +' + chips(claim.amount) + ' chips',
+          body: 'Your chips are in Wallet. You can also opt in to the **Sosse** nickname for the rest of your 30-minute title. This changes how your name appears across this Discord server.',
+          tone: 'gold',
+          buttons: [
+            button({ id: cid('eco', 'nickname', viewer.userId), label: 'Set my server nickname to Sosse' }),
+            button({ id: NAV.wallet, label: 'Back to wallet', emoji: ICONS.wallet }),
+          ],
+        }));
+      }
+      return this.show(i, withNote(await walletScreen(this.app, viewer), `### Relief received · +${chips(claim.amount)} chips`));
+    }
     if (action === 'passive') {
       const { amount } = this.app.economy.claimPassive(viewer.guildId, viewer.userId);
       if (amount === 0) throw new UserError('Nothing to collect yet — passive income builds up over time.', 'nothing', 'Not yet');
@@ -525,49 +761,71 @@ export class InteractionRouter {
       note = `### ✓ Daily reward: +${chips(claim.amount)} chips${claim.streak > 1 ? ` · ${claim.streak}-day streak!` : ''}`;
     }
     // Re-render the personal screen the button was on, with what was just collected.
-    const screen = from === 'wallet' ? walletScreen(this.app, viewer) : from === 'rewards' ? rewardsScreen(this.app, viewer) : homeScreen(this.app, viewer);
+    const screen = from === 'wallet' ? await walletScreen(this.app, viewer) : from === 'rewards' ? rewardsScreen(this.app, viewer) : await homeScreen(this.app, viewer);
     return this.show(i, note ? withNote(screen, note) : screen);
+  }
+
+  private async gift(i: Component, viewer: Viewer, action: string, arg: string, arm: (m: AckMode) => void): Promise<void> {
+    if (action === 'pick') {
+      this.requireOpen(viewer);
+      const settings = this.app.settings.get(viewer.guildId).economy;
+      if (!settings.giftingEnabled) throw new UserError('Chip gifting is disabled on this server.');
+      const user = i.isUserSelectMenu() ? i.users.first() : undefined;
+      if (!user || user.bot || user.id === viewer.userId) throw new UserError('Choose another player in this server.');
+      const recipient = this.app.economy.requirePlayer(viewer.guildId, user.id);
+      return this.showModal(i, giftAmountModal(user.id, recipient.display_name || user.username, settings.giftDailyLimit));
+    }
+    arm(this.fromEphemeral(i) ? 'update' : 'reply');
+    if (action === 'incoming' && (arg === 'on' || arg === 'off')) {
+      this.app.db.run('UPDATE players SET gifts_opt_out = ? WHERE guild_id = ? AND user_id = ?', [arg === 'on' ? 0 : 1, viewer.guildId, viewer.userId]);
+      return this.show(i, giftingScreen(this.app, viewer));
+    }
+    const offer = this.giftOffers.get(arg);
+    if (!offer || offer.guildId !== viewer.guildId || offer.senderId !== viewer.userId || offer.expiresAt <= this.app.clock.now()) {
+      return this.show(i, withNote(giftingScreen(this.app, viewer), '### This confirmation expired. Choose a recipient again.'));
+    }
+    if (action === 'cancel') {
+      this.giftOffers.delete(arg);
+      return this.show(i, giftingScreen(this.app, viewer));
+    }
+    if (action !== 'send') throw new UserError('Choose a recipient again.');
+    this.requireOpen(viewer);
+    const member = await i.guild?.members.fetch({ user: offer.recipientId, force: true }).catch(() => null);
+    if (!member || member.user.bot) throw new UserError('That recipient is no longer available in this server.');
+    if (this.giftOffers.get(arg) !== offer || offer.expiresAt <= this.app.clock.now()) {
+      throw new UserError('This confirmation is no longer active.');
+    }
+    const entry = this.app.economy.gift(viewer.guildId, viewer.userId, offer.recipientId, offer.amount, arg);
+    this.giftOffers.delete(arg);
+    return this.show(i, withNote(await walletScreen(this.app, viewer), `### Gift sent · ${chips(-entry.amount)} chips`));
   }
 
   // ───────────────────────────── tables (finding / creating / joining) ─────────────────────────────
 
   private async tables(i: Component, viewer: Viewer, action: string, args: string[], arm: (m: AckMode) => void): Promise<void> {
+    if (action === 'filter') {
+      arm(this.fromEphemeral(i) ? 'update' : 'reply');
+      const value = i.isStringSelectMenu() ? i.values[0] : undefined;
+      const filter: TableFilter = TABLE_FILTERS.find((item) => item === value) ?? 'all';
+      return this.show(i, tablesScreen(this.app, viewer, filter));
+    }
     this.requireOpen(viewer);
     switch (action) {
       case 'create': {
-        const seated = this.app.blackjack.tableOfUser(viewer.guildId, viewer.userId);
-        if (seated) throw new UserError(`You're already seated at **${escapeMarkdown(seated.record.name)}**. Leave it before opening a new table.`, 'already_seated');
+        if (!this.app.settings.get(viewer.guildId).blackjack.enabled) throw new UserError('Blackjack is closed on this server.');
+        const seat = this.app.blackjack.tableOfUser(viewer.guildId, viewer.userId) ?? this.app.poker.tableOfUser(viewer.guildId, viewer.userId);
+        if (seat) {
+          arm(this.fromEphemeral(i) ? 'update' : 'reply');
+          return this.show(i, tablesScreen(this.app, viewer, 'blackjack'));
+        }
         return this.showModal(i, createTableModal(this.app, viewer.guildId));
       }
       case 'quick':
         arm(this.fromEphemeral(i) ? 'update' : 'reply');
-        return this.quickSeat(i, viewer);
+        return this.show(i, await gamesHubScreen(this.app, viewer));
       case 'join':
         return this.joinTable(i, viewer, args[0] ?? '', arm);
     }
-  }
-
-  private async quickSeat(i: RepliableInteraction, viewer: Viewer): Promise<void> {
-    const mine = this.app.blackjack.tableOfUser(viewer.guildId, viewer.userId);
-    if (mine) {
-      const url = await this.bot.addToTableThread(mine.record.id, viewer.userId);
-      return this.show(i, this.seatedScreen(mine.record.name, url, 'You already have a seat here.'));
-    }
-    const candidates = this.app.blackjack
-      .openTables(viewer.guildId)
-      .filter((t) => !t.record.isPrivate && t.state.seats.length < t.record.config.maxSeats && t.record.messageId)
-      .sort((a, b) => b.state.seats.length - a.state.seats.length);
-    for (const table of candidates) {
-      try {
-        const seat = await this.app.blackjack.join(table.record.id, viewer.userId, viewer.displayName);
-        const url = await this.bot.addToTableThread(table.record.id, viewer.userId);
-        return this.show(i, this.seatedScreen(table.record.name, url, `You're in seat **${seat.seatIndex + 1}**. Press a chip on the table to bet.`));
-      } catch (error) {
-        if (!isUserError(error)) throw error;
-      }
-    }
-    // Nothing open: start a table for them.
-    return this.openTable(i, viewer, {});
   }
 
   private async openTable(i: RepliableInteraction, viewer: Viewer, options: { name?: string; isPrivate?: boolean; maxSeats?: number; minBet?: number; maxBet?: number }): Promise<void> {
@@ -598,7 +856,7 @@ export class InteractionRouter {
       title: `♠ ${escapeMarkdown(tableName)}`,
       body,
       tone: 'success',
-      buttons: [url ? linkButton('Go to the table', url, ICONS.blackjack) : null, button({ id: NAV.home, label: 'Casino home', emoji: ICONS.home })].filter(
+      buttons: [url ? linkButton('Go to the table', url, ICONS.blackjack) : null, button({ id: NAV.home, label: 'Home', emoji: ICONS.home })].filter(
         (b): b is ReturnType<typeof button> => b !== null,
       ),
     });
@@ -613,18 +871,34 @@ export class InteractionRouter {
       const url = await this.bot.addToTableThread(tableId, viewer.userId);
       return this.show(i, this.seatedScreen(snap.record.name, url, 'You already have a seat here.'), this.fromEphemeral(i) ? 'auto' : 'private');
     }
+    if (myTable(this.app, viewer)) {
+      // Seated at another table (either game): explain and offer the way back instead of an error.
+      arm(this.fromEphemeral(i) ? 'update' : 'reply');
+      return this.show(i, tablesScreen(this.app, viewer, 'blackjack'), this.fromEphemeral(i) ? 'auto' : 'private');
+    }
     if (snap.record.isPrivate && snap.record.ownerId !== viewer.userId && !code) {
       return this.showModal(i, accessCodeModal(tableId, snap.record.name));
     }
     arm(this.fromEphemeral(i) ? 'update' : 'reply');
     const seat = await this.app.blackjack.join(tableId, viewer.userId, viewer.displayName, code);
-    const url = await this.bot.addToTableThread(tableId, viewer.userId);
+    const url = await this.seatLink(tableId, viewer.userId);
     const inRound = snap.state.phase !== 'betting';
     return this.show(
       i,
       this.seatedScreen(snap.record.name, url, `You're in seat **${seat.seatIndex + 1}**. ${inRound ? "A hand is in progress — you'll be dealt in next hand." : 'Press a chip on the table to bet.'}`),
       this.fromEphemeral(i) ? 'auto' : 'private',
     );
+  }
+
+  /** Link (and private-thread access) for a seat just taken; the seat is released if Discord refuses access. */
+  private async seatLink(tableId: string, userId: string): Promise<string | null> {
+    try {
+      return await this.bot.addToTableThread(tableId, userId);
+    } catch (error) {
+      await this.app.blackjack.leave(tableId, userId).catch(() => undefined);
+      this.app.logger.warn('private table thread unavailable for a new seat; seat released', { tableId, error });
+      throw new UserError("Discord didn't let me add you to this private table's thread, so your seat was released. Ask the host to try again in a moment.", 'thread_access', 'Could not join');
+    }
   }
 
   // ───────────────────────────── blackjack table panel ─────────────────────────────
@@ -634,7 +908,7 @@ export class InteractionRouter {
     const tables = this.app.blackjack;
     if (action === 'home') {
       arm('reply');
-      return this.show(i, homeScreen(this.app, viewer), this.fromEphemeral(i) ? 'auto' : 'private');
+      return this.show(i, await homeScreen(this.app, viewer), this.fromEphemeral(i) ? 'auto' : 'private');
     }
     const snap = this.table(viewer, tableId);
     switch (action) {
@@ -673,10 +947,15 @@ export class InteractionRouter {
         arm('update');
         await tables.clearBet(tableId, viewer.userId, i);
         return this.settle(i);
-      case 'deal':
+      case 'deal': {
         arm('update');
-        await tables.dealNow(tableId, viewer.userId, i);
-        return this.settle(i);
+        const outcome = await tables.dealNow(tableId, viewer.userId, i, args[1] ?? '');
+        if (outcome === 'dealt') return this.settle(i);
+        const updating = this.bot.refreshIdleTable(tableId);
+        if (this.fromEphemeral(i)) return this.show(i, await myHandScreen(this.app, viewer, tableId, { revealing: this.bot.tableAnimating(tableId) }));
+        await this.settle(i);
+        return this.notice(i, 'Table update', updating ? 'The deal is in progress. The table is updating.' : 'That betting window has closed. Use the current table controls.');
+      }
       case 'act': {
         arm('update');
         const move = args[1] as PlayerAction;
@@ -704,7 +983,7 @@ export class InteractionRouter {
             title: result === 'left' ? 'You left the table' : "You'll leave after this hand",
             body: result === 'left' ? 'Any open bet was returned to your wallet. Come back any time!' : 'Your remaining hands will stand automatically and your seat frees up when the hand ends.',
             tone: 'info',
-            buttons: [button({ id: NAV.tables, label: 'Other tables', emoji: ICONS.tables }), button({ id: NAV.home, label: 'Casino home', emoji: ICONS.home })],
+            buttons: [returnToCasino(this.app, viewer.guildId, snap.record.channelId)],
           }),
           this.fromEphemeral(i) ? 'auto' : 'private',
         );
@@ -714,9 +993,9 @@ export class InteractionRouter {
         await tables.setSittingOut(tableId, viewer.userId, args[1] === '1');
         return this.show(i, await myHandScreen(this.app, viewer, tableId, { revealing: this.bot.tableAnimating(tableId) }));
       case 'close':
-        arm('update');
+        arm(this.fromEphemeral(i) ? 'update' : 'reply');
         await tables.closeTable(tableId, `closed by the host`, { actorId: viewer.userId });
-        return this.show(i, noticeScreen({ title: 'Table closed', body: 'All open bets were refunded.', tone: 'success', buttons: [button({ id: NAV.home, label: 'Casino home', emoji: ICONS.home })] }));
+        return this.show(i, noticeScreen({ title: 'Table closed', body: 'Any open bets were refunded.', tone: 'success', buttons: [returnToCasino(this.app, viewer.guildId, snap.record.channelId)] }));
       case 'kick': {
         arm('update');
         if (!i.isUserSelectMenu()) return;
@@ -742,7 +1021,15 @@ export class InteractionRouter {
         ? `https://discord.com/channels/${viewer.guildId}/${wheel.record.threadId}`
         : `https://discord.com/channels/${viewer.guildId}/${wheel.record.channelId}/${wheel.record.messageId}`;
     }
-    return this.show(i, noticeScreen({ title: '🎡 The wheel is ready', body: 'Pick a bet from the menu under the wheel. It spins shortly after the first bet.', tone: 'success', buttons: url ? [linkButton('Go to the wheel', url)] : [] }));
+    return this.show(i, noticeScreen({
+      title: `${ICONS.roulette} The wheel is ready`,
+      body: 'Pick a bet from the menu under the wheel. It spins shortly after the first bet, or as soon as most bettors are ready.',
+      tone: 'success',
+      // Never a dead end: the way to the wheel, and the way back to the floor.
+      buttons: [url ? linkButton('Go to the wheel', url, ICONS.roulette) : null, button({ id: NAV.floor, label: 'Games', emoji: ICONS.back })].filter(
+        (b): b is ReturnType<typeof button> => b !== null,
+      ),
+    }));
   }
 
   private async roulette(i: Component, viewer: Viewer, action: string, args: string[], arm: (m: AckMode) => void): Promise<void> {
@@ -751,7 +1038,7 @@ export class InteractionRouter {
         arm(this.fromEphemeral(i) ? 'update' : 'reply');
         return this.openRoulette(i, viewer);
       case 'help':
-        return this.show(i, rouletteHelpScreen(), 'private');
+        return this.show(i, rouletteHelpScreen());
       case 'bet': {
         this.requireOpen(viewer);
         if (!i.isStringSelectMenu()) return;
@@ -759,11 +1046,21 @@ export class InteractionRouter {
         if (!isBetType(type)) throw new UserError('Unknown bet type.');
         const wheel = this.wheel(viewer, args[0] ?? '');
         const limits = this.app.settings.get(viewer.guildId).roulette;
-        return this.showModal(i, rouletteBetModal(wheel.record.id, type, limits.minBet, limits.maxBet));
+        if (args[1] && args[1] !== wheel.state.roundId) throw new StaleActionError('Pick a bet from the current spin.');
+        return this.showModal(i, rouletteBetModal(wheel.record.id, type, limits.minBet, limits.maxBet, wheel.state.roundId));
       }
-      case 'clear':
+      case 'clear': {
         arm('update');
-        await this.app.roulette.clearBets(this.wheel(viewer, args[0] ?? '').record.id, viewer.userId, i);
+        const wheel = this.wheel(viewer, args[0] ?? '');
+        if (!args[1]) throw new StaleActionError('Use the controls on the current spin.');
+        await this.app.roulette.clearBets(wheel.record.id, viewer.userId, i, args[1]);
+        return this.settle(i);
+      }
+      case 'ready':
+      case 'unready':
+        arm('update');
+        this.requireOpen(viewer);
+        await this.app.roulette.vote(this.wheel(viewer, args[0] ?? '').record.id, viewer.userId, args[1] ?? '', action === 'ready', i);
         return this.settle(i);
     }
   }
@@ -772,12 +1069,13 @@ export class InteractionRouter {
 
   private async slots(i: Component, viewer: Viewer, action: string, args: string[], arm: (m: AckMode) => void): Promise<void> {
     arm('update');
-    if (action === 'pay') return this.show(i, paytableScreen(intArg(args[0])));
+    if (action === 'pay') return this.show(i, paytableScreen(intArg(args[0], this.app.settings.get(viewer.guildId).slots.minBet)));
     if (action === 'spin') {
       this.requireOpen(viewer);
       const bet = intArg(args[0]);
       // The spin is settled first (money is final); the reels then stop one after another.
       await this.app.slots.spin(viewer.guildId, viewer.userId, bet, intArg(args[1], -1));
+      this.bot.requestLobby(viewer.guildId);
       const reels = this.bot.animatesGames(viewer.guildId)
         ? [() => slotsScreen(this.app, viewer, bet, { animate: true }), () => slotsScreen(this.app, viewer, bet, { result: true })]
         : [() => slotsScreen(this.app, viewer, bet, { stopped: 0 }), () => slotsScreen(this.app, viewer, bet, { stopped: 2 }), () => slotsScreen(this.app, viewer, bet, { result: true })];
@@ -811,6 +1109,7 @@ export class InteractionRouter {
       else if (action === 'cancel') challenge = await this.app.coinflip.cancel(id, viewer.userId);
       else return;
       if (action === 'accept' && challenge.status === 'resolved') {
+        this.bot.requestLobby(viewer.guildId);
         // The coin goes up first, then lands.
         await this.playFrames(
           i,
@@ -841,7 +1140,28 @@ export class InteractionRouter {
   }
 
   /** Observer path: refresh a challenge message after expiry (clicks update it directly). */
+  private readonly challengeTidy = new Map<string, NodeJS.Timeout>();
+
+  /** A finished challenge card leaves #casino after a short while (the result stays in history). */
+  private scheduleChallengeTidy(challenge: Challenge): void {
+    const linger = challengeLingerMs(challenge.status);
+    const { channelId, messageId } = challenge;
+    if (linger === null || !channelId || !messageId || this.challengeTidy.has(challenge.id)) return;
+    const timer = setTimeout(() => {
+      this.challengeTidy.delete(challenge.id);
+      void (async () => {
+        const channel = await this.bot.client.channels.fetch(channelId).catch(() => null);
+        if (!channel?.isTextBased() || !('messages' in channel)) return;
+        this.bot.guard?.allowDelete(messageId);
+        await channel.messages.delete(messageId).catch(() => undefined);
+      })();
+    }, linger);
+    timer.unref?.();
+    this.challengeTidy.set(challenge.id, timer);
+  }
+
   async refreshChallenge(challenge: Challenge): Promise<void> {
+    this.scheduleChallengeTidy(challenge);
     if (this.handledChallenges.has(challenge.id) || !challenge.channelId || !challenge.messageId) return;
     try {
       const screen = await this.bot.coinflipScreen(challenge.id);
@@ -884,6 +1204,10 @@ export class InteractionRouter {
       case 'tables':
         arm('update');
         return this.show(i, adminTablesScreen(this.app, viewer.guildId));
+      case 'transfers':
+        // Read-only review of this server's transfers (admins only, checked above).
+        arm('update');
+        return this.show(i, unusualTransfersScreen(this.app, viewer.guildId));
       case 'close':
         arm('update');
         await this.app.blackjack.closeTable(this.table(viewer, args[0] ?? '').record.id, 'closed by an admin', { force: true });
@@ -932,6 +1256,36 @@ export class InteractionRouter {
       if (n === null) throw new UserError(`Please enter a number of chips — e.g. 250, 2k${context ? ' or all' : ''}.`, 'bad_amount', 'Not a number');
       return n;
     };
+    if (action === 'evtcode' || action === 'evtnew' || action === 'evtedt' || action === 'evttbl' || action === 'evtbuy') {
+      arm(this.fromEphemeral(i) ? 'update' : 'reply');
+      const events = this.app.events;
+      if (action === 'evtcode') return this.show(i, eventDetailsScreen(this.app, viewer, events.joinWithCode(viewer, field('code'), viewer.displayName)));
+      if (action === 'evttbl') {
+        const event = events.view(viewer, args[0] ?? '');
+        const seats = intArg(selectValue('seats'), -1);
+        const config = event.game === 'blackjack'
+          ? { game: 'blackjack', seats, minBet: amount(field('min')), maxBet: amount(field('max')) } as const
+          : { game: 'poker', seats, buyIn: amount(field('buyin')) } as const;
+        return this.show(i, eventDetailsScreen(this.app, viewer, events.configureTable(viewer, event.id, intArg(args[1], -1), config)));
+      }
+      if (action === 'evtbuy') {
+        this.requireOpen(viewer);
+        const event = events.view(viewer, args[0] ?? '');
+        return this.show(i, eventSeatedScreen(event, await seatAtEventTable(this.app, this.bot, viewer, event.id, amount(field('buyin')))));
+      }
+      const [game, visibility] = selectValue('format').split('-');
+      if ((game !== 'blackjack' && game !== 'poker') || (visibility !== 'public' && visibility !== 'private')) throw new UserError('Choose a game and visibility.');
+      const startsAt = parseEventTime(field('time'));
+      const capacity = /^(\d+)\s*-\s*(\d+)$/.exec(field('capacity'));
+      if (startsAt === null || !capacity) throw new UserError('Enter a time with a UTC offset and a player range such as 2-5.');
+      const input = { title: field('title'), description: field('description'), game, startsAt, minPlayers: Number(capacity[1]),
+        maxPlayers: Number(capacity[2]), private: visibility === 'private' } as const;
+      const event = action === 'evtedt' ? events.edit(viewer, args[0] ?? '', intArg(args[1], -1), input) : events.create(viewer, input);
+      return this.show(i, eventDetailsScreen(this.app, viewer, event));
+    }
+    if (action === 'pkcreate' || action === 'pkjoin' || action === 'pkraise') {
+      return this.pokerInteractions.submit(i, viewer, this.pokerResponses(arm), field, selectValue);
+    }
     const wallet = () => this.app.economy.getWallet(viewer.guildId, viewer.userId).balance;
     switch (action) {
       case 'tblcreate': {
@@ -954,7 +1308,7 @@ export class InteractionRouter {
         const snap = this.table(viewer, args[0] ?? '');
         const tableId = snap.record.id;
         await this.app.blackjack.join(tableId, viewer.userId, viewer.displayName, field('code'));
-        const url = await this.bot.addToTableThread(tableId, viewer.userId);
+        const url = await this.seatLink(tableId, viewer.userId);
         return this.show(i, this.seatedScreen(snap.record.name, url, 'Code accepted — welcome to the table.'), this.fromEphemeral(i) ? 'auto' : 'private');
       }
       case 'bjbet': {
@@ -970,12 +1324,33 @@ export class InteractionRouter {
       case 'rlbet': {
         arm('update');
         this.requireOpen(viewer);
-        const [rawWheelId = '', type = ''] = args;
-        const wheelId = this.wheel(viewer, rawWheelId).record.id;
+        const [rawWheelId = '', type = '', roundId = ''] = args;
+        const wheel = this.wheel(viewer, rawWheelId);
+        if (wheel.state.roundId !== roundId) throw new StaleActionError('Reopen the bet menu for the current spin.');
+        const wheelId = wheel.record.id;
         if (!isBetType(type)) throw new UserError('Unknown bet type.');
         const number = type === 'straight' ? amount(field('number')) : undefined;
-        await this.app.roulette.placeBet(wheelId, { userId: viewer.userId, displayName: viewer.displayName, type, number, amount: amount(field('amount'), { available: wallet(), max: this.app.settings.get(viewer.guildId).roulette.maxBet }) }, i);
+        await this.app.roulette.placeBet(wheelId, { roundId, userId: viewer.userId, displayName: viewer.displayName, type, number, amount: amount(field('amount'), { available: wallet(), max: this.app.settings.get(viewer.guildId).roulette.maxBet }) }, i);
         return this.settle(i);
+      }
+      case 'gift': {
+        arm(this.fromEphemeral(i) ? 'update' : 'reply');
+        this.requireOpen(viewer);
+        const settings = this.app.settings.get(viewer.guildId).economy;
+        if (!settings.giftingEnabled) throw new UserError('Chip gifting is disabled on this server.');
+        const recipientId = args[0] ?? '';
+        if (recipientId === viewer.userId) throw new UserError('Choose another player for your gift.');
+        const recipient = this.app.economy.requirePlayer(viewer.guildId, recipientId);
+        const sum = amount(field('amount'));
+        if (sum < MIN_GIFT || sum > settings.giftDailyLimit) throw new UserError(`A gift must be between ${MIN_GIFT} and ${settings.giftDailyLimit} chips.`);
+        const now = this.app.clock.now();
+        for (const [id, offer] of this.giftOffers) {
+          if (offer.expiresAt <= now) this.giftOffers.delete(id);
+        }
+        if (this.giftOffers.size >= 500) throw new UserError('Too many pending gift confirmations. Try again shortly.');
+        const id = newId();
+        this.giftOffers.set(id, { guildId: viewer.guildId, senderId: viewer.userId, recipientId, amount: sum, expiresAt: now + GIFT_TTL_MS });
+        return this.show(i, confirmGiftScreen(id, recipient.display_name || 'Player', sum));
       }
       case 'cf': {
         const opponentId = args[0] ?? '';

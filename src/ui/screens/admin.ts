@@ -2,6 +2,7 @@ import { ComponentType, type APILabelComponent } from 'discord.js';
 import type { CasinoApp } from '../../app/casino-app.js';
 import { chips, discordTime, escapeMarkdown, signedChips } from '../../core/format.js';
 import { SETTING_GROUPS, SETTING_SPECS, getPath, type SettingGroup, type SettingSpec } from '../../config/settings.js';
+import { NEW_ACCOUNT_MIN_SHARE, NEW_ACCOUNT_MS, REPEATED_GIFT_MIN, REVIEW_WINDOW_MS, reviewTransfers, type TransferChannel } from '../../domain/economy/transfer-review.js';
 import { cid } from '../custom-id.js';
 import { button, container, modal, option, row, section, select, separator, text, textInputLabel, type ModalSpec, type Screen } from '../kit.js';
 import { COLORS, ICONS } from '../theme.js';
@@ -46,6 +47,7 @@ export function adminScreen(app: CasinoApp, guildId: string, group: SettingGroup
           button({ id: cid('adm', 'lobby'), label: 'Refresh lobby', emoji: ICONS.refresh, disabled: !lobby.channelId }),
           button({ id: cid('adm', 'health'), label: 'Health check' }),
         ),
+        row(button({ id: cid('adm', 'transfers'), label: 'Unusual transfers' })),
       ]),
     ],
   };
@@ -73,18 +75,51 @@ export function adjustModal(): ModalSpec {
 }
 
 export function auditScreen(app: CasinoApp, guildId: string): Screen {
-  const rows = app.db.all<{ user_id: string; amount: number; memo: string | null; actor_id: string | null; created_at: number }>(
-    "SELECT user_id, amount, memo, actor_id, created_at FROM ledger WHERE guild_id = ? AND type = 'admin_adjust' ORDER BY created_at DESC LIMIT 15",
+  const rows = app.db.all<{ user_id: string; amount: number; type: string; memo: string | null; actor_id: string | null; reference: string | null; created_at: number }>(
+    "SELECT user_id, amount, type, memo, actor_id, reference, created_at FROM ledger WHERE guild_id = ? AND type IN ('admin_adjust', 'gift_sent', 'gift_received', 'emergency_relief') ORDER BY created_at DESC, rowid DESC LIMIT 15",
     [guildId],
   );
-  const lines = rows.map(
-    (r) => `\`${signedChips(r.amount).padStart(8)}\` <@${r.user_id}> by <@${r.actor_id ?? '0'}> — ${escapeMarkdown(r.memo ?? '')} · ${discordTime(r.created_at)}`,
-  );
+  const labels: Record<string, string> = { gift_sent: 'Gift sent', gift_received: 'Gift received', emergency_relief: 'Relief grant' };
+  const lines = rows.map((entry) => {
+    const reason = entry.type === 'admin_adjust'
+      ? `by <@${entry.actor_id ?? '0'}> · ${escapeMarkdown(entry.memo ?? '')}`
+      : `${labels[entry.type]}${entry.reference ? ` · ref ${entry.reference.slice(0, 8)}` : ''}`;
+    return `**${signedChips(entry.amount)}** <@${entry.user_id}> · ${reason} · ${discordTime(entry.created_at)}`;
+  });
   return {
     components: [
       container(COLORS.charcoal, [
-        text(`## Audit log\n-# The last 15 administrative wallet adjustments.\n${lines.join('\n') || 'No adjustments yet.'}`),
+        text(`## Audit log\n-# Recent wallet adjustments, relief and gifts.\n${lines.join('\n') || 'No entries yet.'}`),
         row(button({ id: cid('adm', 'group', 'general'), label: 'Back', emoji: ICONS.back })),
+      ]),
+    ],
+  };
+}
+
+const CHANNEL_LABELS: Record<TransferChannel, string> = { poker: 'Hold’em', coinflip: 'coinflip', gift: 'gifts' };
+
+/** Read-only review of transfer patterns; explains its own criteria and never changes a wallet. */
+export function unusualTransfersScreen(app: CasinoApp, guildId: string): Screen {
+  const review = reviewTransfers(app.db, guildId, app.clock.now());
+  const days = Math.round(REVIEW_WINDOW_MS / 86_400_000);
+  const fresh = review.newAccounts.map((f) =>
+    `**${chips(f.amount)}** of ${chips(f.startingGrant)} starting chips · <@${f.userId}> → <@${f.counterpartyId}> · ${f.via.map((v) => CHANNEL_LABELS[v]).join(', ')} · joined ${discordTime(f.joinedAt)}`);
+  const pairs = review.giftPairs.map((p) =>
+    `<@${p.senderId}> → <@${p.recipientId}> · **${p.count} gifts**, ${chips(p.total)} chips · last ${discordTime(p.lastAt)}`);
+  return {
+    components: [
+      container(COLORS.charcoal, [
+        text(`## Unusual transfers\n-# Read-only. Patterns from the last ${days} days that may be worth a quiet look. Friends share chips too, so none of this is proof of anything, and nothing here changes a wallet.`),
+        separator(),
+        text(
+          `**New accounts that passed on most of their starting chips**\n-# Joined in the last ${days} days and, within ${Math.round(NEW_ACCOUNT_MS / 3_600_000)} hours of joining, ` +
+            `lost or gave at least ${Math.round(NEW_ACCOUNT_MIN_SHARE * 100)}% of their starting chips to one player through Hold’em, coinflip or gifts, after subtracting anything won back from that player. House games are not counted.\n${fresh.join('\n') || 'None.'}`,
+        ),
+        text(`**Repeated gifts**\n-# The same sender gifted the same player ${REPEATED_GIFT_MIN} or more times.\n${pairs.join('\n') || 'None.'}`),
+        row(
+          button({ id: cid('adm', 'group', 'economy'), label: 'Back', emoji: ICONS.back }),
+          button({ id: cid('adm', 'audit'), label: 'Audit log', emoji: ICONS.history }),
+        ),
       ]),
     ],
   };

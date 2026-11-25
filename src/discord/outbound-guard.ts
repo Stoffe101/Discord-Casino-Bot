@@ -288,7 +288,9 @@ export class OutboundGuard {
     }
     if (s[2] === 'thread-members') {
       if (!isThread) return 'thread membership is only allowed in verified threads';
-      return read || method === 'PUT' ? null : 'only adding members to a thread is allowed';
+      // Removing one player from a verified casino thread (a private table's departed seat).
+      if (method === 'DELETE' && s.length === 4 && /^\d+$/.test(s[3] ?? '')) return null;
+      return read || method === 'PUT' ? null : 'only adding or removing members of a casino thread is allowed';
     }
     if (s[2] === 'typing' && s.length === 3) return method === 'POST' ? null : 'unsupported typing request';
     if (s[2] !== 'messages') return `only messages are allowed in the channel (not ${s[2]})`;

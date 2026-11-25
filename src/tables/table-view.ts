@@ -34,6 +34,8 @@ export interface SeatView {
   status: Badge | null;
   active: boolean;
   net: number | null;
+  /** Insurance bought this round: still open, or how it settled (shown once the hand is over). */
+  insurance?: 'taken' | 'paid' | 'lost';
 }
 
 export interface DealerView {
@@ -173,6 +175,7 @@ export function buildTableView(
       }
       view.bet = rs.hands.reduce((sum, h) => sum + h.bet, 0);
       view.active = rs.userId === activeUser;
+      if (rs.insurance.decision === 'taken') view.insurance = 'taken';
       view.hands = rs.hands.map((hand, index) => {
         const active = view.active && round.turn?.hand === index;
         const { total } = handValue(hand.cards);
@@ -227,6 +230,7 @@ export function buildTableView(
       view.name = rs.displayName;
       view.bet = rs.wagered;
       view.net = revealing ? null : rs.net;
+      if (rs.insurance) view.insurance = revealing ? 'taken' : rs.insurance.payout > 0 ? 'paid' : 'lost';
       view.hands = rs.hands.map((hand) => {
         // Outcome badges appear only on the final (non-reveal) results frame.
         const show = !revealing;

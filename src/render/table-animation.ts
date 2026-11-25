@@ -3,14 +3,15 @@ import type { TableView } from '../tables/table-view.js';
 import { cardBack, cardFace } from './cards.js';
 import type { GifFrame } from './gif.js';
 import { n } from './svg.js';
-import { SHOE, TRAY, chip, dealerLayout, renderTableSvg, seatHandLayout, seatRects } from './table-image.js';
+import { chip, renderTableSvg, tableLayout, type TableLayout } from './table-image.js';
 
 /**
  * Card and chip motion for the blackjack table, as GIF frames.
  *
  * Every animation is laid out for the FINAL state of the table: cards still in the air are hidden
  * from the table and drawn in flight on top, so nothing shifts when they land, and the last frame
- * is exactly the final table.
+ * is exactly the final table. All anchors (card spots, the shoe, the chip tray, each seat's bet)
+ * come from the same `tableLayout` the still image is drawn from.
  */
 
 export type CardTarget = { seat: number; hand: number; card: number } | { dealer: number };
@@ -43,19 +44,16 @@ interface Spot {
   card: Card | null;
 }
 
-function locate(view: TableView, to: CardTarget): Spot | null {
+function locate(view: TableView, layout: TableLayout, to: CardTarget): Spot | null {
   if ('dealer' in to) {
-    const layout = dealerLayout(view.dealer.cards.length);
-    const at = layout.cards[to.dealer];
-    return at ? { x: at.x, y: at.y, w: layout.cardW, card: view.dealer.cards[to.dealer] ?? null } : null;
+    const at = layout.dealer.cards[to.dealer];
+    return at ? { x: at.x, y: at.y, w: layout.dealer.cardW, card: view.dealer.cards[to.dealer] ?? null } : null;
   }
   const seat = view.seats[to.seat];
-  const rect = seatRects(view)[to.seat];
-  if (!seat || !rect) return null;
-  const layout = seatHandLayout(seat, rect.x, rect.y, rect.w, rect.h, view);
-  const at = layout.hands[to.hand]?.cards[to.card];
-  const card = seat.hands[to.hand]?.cards[to.card];
-  return at && card ? { x: at.x, y: at.y, w: layout.cardW, card } : null;
+  const hand = layout.seats[to.seat]?.hands[to.hand];
+  const at = hand?.cards[to.card];
+  const card = seat?.hands[to.hand]?.cards[to.card];
+  return hand && at && card ? { x: at.x, y: at.y, w: hand.cardW, card } : null;
 }
 
 /** A card drawn squashed horizontally around its centre (``sx`` 1 = flat, 0 = edge-on). */
@@ -64,7 +62,7 @@ function turning(svg: string, x: number, y: number, w: number, sx: number): stri
   return `<g transform="translate(${n(cx)} 0) scale(${n(Math.max(0.04, sx))} 1) translate(${n(-cx)} 0)">${svg}</g>`;
 }
 
-function inFlight(view: TableView, arrival: Arrival, spot: Spot, p: number): string {
+function inFlight(view: TableView, shoe: TableLayout['shoe'], arrival: Arrival, spot: Spot, p: number): string {
   const back = (x: number, y: number, w: number) => cardBack(x, y, w, view.cardBackId);
   if (arrival.flipOnly) {
     const sx = Math.abs(1 - 2 * p);
@@ -72,9 +70,9 @@ function inFlight(view: TableView, arrival: Arrival, spot: Spot, p: number): str
   }
   // Travel for the first 70%, then turn face up (face-down cards just land).
   const m = easeOut(Math.min(1, p / 0.7));
-  const x = lerp(SHOE.x, spot.x, m);
-  const y = lerp(SHOE.y, spot.y, m);
-  const w = lerp(SHOE.w, spot.w, m);
+  const x = lerp(shoe.x, spot.x, m);
+  const y = lerp(shoe.y, spot.y, m);
+  const w = lerp(shoe.w, spot.w, m);
   if (p < 0.7 || !spot.card) {
     const tilt = (1 - m) * -16;
     return `<g transform="rotate(${n(tilt)} ${n(x + w / 2)} ${n(y + w * 0.7)})">${back(x, y, w)}</g>`;
@@ -86,7 +84,8 @@ function inFlight(view: TableView, arrival: Arrival, spot: Spot, p: number): str
 
 /** Frames for cards arriving at the table (dealing, a hit, the dealer's reveal and draws). */
 export function cardArrivalFrames(view: TableView, arrivals: Arrival[], timing: MotionTiming): GifFrame[] {
-  const spots = arrivals.map((a) => locate(view, a.to));
+  const layout = tableLayout(view);
+  const spots = arrivals.map((a) => locate(view, layout, a.to));
   const total = timing.stagger * Math.max(0, arrivals.length - 1) + timing.flight + 1;
   const frames: GifFrame[] = [];
   for (let f = 0; f < total; f++) {
@@ -120,7 +119,7 @@ export function cardArrivalFrames(view: TableView, arrivals: Arrival[], timing: 
         if (p >= 1 && p < 1 + 1 / timing.flight) landing = true;
         return;
       }
-      overlay += inFlight(view, a, spot, p);
+      overlay += inFlight(view, layout.shoe, a, spot, p);
     });
     const last = f === total - 1;
     frames.push({ svg: renderTableSvg(last ? view : frameView, last ? '' : overlay), delayMs: timing.frameMs + (landing && timing.landMs ? timing.landMs : 0) });
@@ -137,22 +136,22 @@ export interface ChipMove {
 
 /** Frames for chips sliding between the dealer's tray and the seats (settling a hand). */
 export function chipFrames(view: TableView, moves: ChipMove[], frames = 8, frameMs = 60): GifFrame[] {
-  const rects = seatRects(view);
+  const layout = tableLayout(view);
+  const { tray } = layout;
   const out: GifFrame[] = [];
   for (let f = 0; f <= frames; f++) {
     const t = easeOut(f / frames);
     let overlay = '';
     if (f < frames) {
       for (const move of moves) {
-        const r = rects[move.seat];
-        if (!r) continue;
-        // Winnings land on the seat's own bet stack (top right of the seat).
-        const seatX = r.x + r.w - 26;
-        const seatY = r.y + 24;
-        const [fromX, fromY, toX, toY] = move.toSeat ? [TRAY.x, TRAY.y, seatX, seatY] : [seatX, seatY, TRAY.x, TRAY.y];
+        const seat = layout.seats[move.seat];
+        if (!seat) continue;
+        // Winnings land on the seat's own bet stack; lost bets go to the dealer's rack.
+        const { x: seatX, y: seatY } = seat.chip;
+        const [fromX, fromY, toX, toY] = move.toSeat ? [tray.x, tray.y, seatX, seatY] : [seatX, seatY, tray.x, tray.y];
         for (let k = 0; k < 4; k++) {
           const lag = Math.max(0, t - k * 0.07);
-          overlay += chip(lerp(fromX, toX, lag) + k * 2, lerp(fromY, toY, lag) - k * 5, 19, move.amount);
+          overlay += chip(lerp(fromX, toX, lag) + k * 2, lerp(fromY, toY, lag) - k * 5, seat.chip.r + 4, move.amount);
         }
       }
     }

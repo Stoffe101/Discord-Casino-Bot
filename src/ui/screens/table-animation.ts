@@ -18,7 +18,7 @@ export interface TableAnimation {
   holdMs: number;
 }
 
-const DEAL = { flight: 6, stagger: 2, frameMs: 55, quiet: true };
+const DEAL = { flight: 4, stagger: 1, frameMs: 65, quiet: true };
 const DRAW = { flight: 6, stagger: 0, frameMs: 50 };
 const REVEAL = { flight: 6, stagger: 7, frameMs: 55, landMs: 170 };
 
@@ -81,7 +81,7 @@ export async function tableAnimation(app: CasinoApp, snapshot: Readonly<TableSna
 }
 
 async function encode(frames: GifFrame[], mode: TableAnimation['mode']): Promise<TableAnimation> {
-  const { gif, durationMs } = await framesToGif(frames, GIF_WIDTH);
+  const { gif, durationMs } = await framesToGif(frames, mode === 'deal' ? 560 : GIF_WIDTH);
   const name = `table-anim-${createHash('sha1').update(gif).digest('hex').slice(0, 12)}.gif`;
-  return { mode, file: { name, data: gif }, holdMs: durationMs + LOAD_SLACK_MS };
+  return { mode, file: { name, data: gif }, holdMs: durationMs + (mode === 'deal' ? 250 : LOAD_SLACK_MS) };
 }

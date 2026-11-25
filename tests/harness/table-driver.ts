@@ -1,6 +1,6 @@
 /**
  * Multi-table driver: N tables × M players playing several hands concurrently through the real
- * Discord surface (FakeDiscord). Hosts open public tables through the "Open a table" modal; the
+ * Discord surface (FakeDiscord). Hosts open public tables through the "Open Blackjack" modal; the
  * other players press a chip on their table's panel to sit down and bet; turn actions are pressed
  * on the panel by whoever's turn it is. Every table's clicks are dispatched at the same time.
  */
@@ -61,8 +61,9 @@ export async function driveTables(h: CasinoHarness, options: DriveOptions): Prom
     for (const p of players) h.app.economy.ensurePlayer(h.guildId, p.id, p.name);
     const host = players[0]!;
     const home = h.seen(track(await h.slash(host, 'casino')));
-    const tablesScreen = h.seen(track(await h.click(host, home, 'Tables')));
-    const opener = track(await h.click(host, tablesScreen, 'Open a table'));
+    const tablesScreen = h.seen(track(await h.click(host, home, 'Games')));
+    const blackjack = h.seen(track(await h.click(host, tablesScreen, 'Blackjack')));
+    const opener = track(await h.click(host, blackjack, 'Open a Blackjack table'));
     track(await h.submit(host, opener, { name: `Table ${t + 1}`, visibility: 'public' }));
     const tableId = h.app.blackjack.tableOfUser(h.guildId, host.id)?.record.id;
     if (!tableId) throw new Error(`host ${host.name} has no table: ${opener.errors.join(', ')}`);

@@ -18,7 +18,16 @@ export class RealScheduler implements Scheduler {
     this.clear(key);
     const delay = Math.min(MAX_DELAY, Math.max(0, at - this.clock.now()));
     const handle = setTimeout(() => {
-      if (this.timers.get(key) === handle) this.timers.delete(key);
+      const current = this.timers.get(key) === handle;
+      // Node's timers run on their own monotonic clock, so a timer can fire a millisecond or two
+      // before the wall clock reaches `at` (and a delay capped at MAX_DELAY fires long before it).
+      // Callers check the clock (a roulette spin or a Hold'em turn timeout that is "not due yet"
+      // does nothing), so an early call would be lost: wait out the rest instead.
+      if (current && this.clock.now() < at) {
+        this.set(key, at, fn);
+        return;
+      }
+      if (current) this.timers.delete(key);
       fn();
     }, delay);
     handle.unref?.();

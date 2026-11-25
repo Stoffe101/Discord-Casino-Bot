@@ -11,16 +11,21 @@ import { CasinoApp } from '../app/casino-app.js';
 import { ALL_IN_DEAL_DELAY_MS } from '../tables/blackjack-table-service.js';
 import { currentTurnUserId } from '../games/blackjack/engine.js';
 import type { Card } from '../games/cards.js';
+import { eventDetailsScreen, eventsScreen } from '../ui/screens/events.js';
+import { playerPokerScreen, pokerPanel, pokerRulesScreen } from '../ui/screens/poker.js';
+import { boardComponent } from '../ui/navigation.js';
 import { withNote, type Screen } from '../ui/kit.js';
 import type { Viewer } from '../ui/screens/common.js';
 import { noticeScreen, errorScreen } from '../ui/screens/common.js';
-import { homeScreen, walletScreen, historyScreen } from '../ui/screens/home.js';
+import { homeScreen, walletScreen, walletStatsScreen, historyScreen } from '../ui/screens/home.js';
 import { rewardsScreen } from '../ui/screens/rewards.js';
-import { profileScreen, achievementsScreen, styleScreen } from '../ui/screens/profile.js';
+import { profileScreen, preferencesScreen, achievementsScreen, styleScreen } from '../ui/screens/profile.js';
 import { leaderboardScreen } from '../ui/screens/leaderboard.js';
 import { helpScreen } from '../ui/screens/help.js';
 import { tablesScreen, blackjackPanel, mySeatScreen, myHandScreen, rulesScreen, closedTablePanel } from '../ui/screens/blackjack.js';
-import { gamesHubScreen, slotsScreen, paytableScreen, roulettePanel, coinflipMessage } from '../ui/screens/games.js';
+import { gamesHubScreen, slotsScreen, paytableScreen, roulettePanel, rouletteHelpScreen, coinflipMessage, coinflipLobbyScreen } from '../ui/screens/games.js';
+import { matchDetailScreen, matchesScreen } from '../ui/screens/match-history.js';
+import { giftingScreen, confirmGiftScreen } from '../ui/screens/wallet-social.js';
 import { lobbyScreen } from '../ui/screens/lobby.js';
 import { adminScreen, auditScreen, adminTablesScreen } from '../ui/screens/admin.js';
 
@@ -32,10 +37,11 @@ export async function buildScreens(guildId: string, channelId: string): Promise<
   const db = new Database(':memory:');
   db.migrate();
   // Start in the past: the history below advances the clock to roughly now, so timers look real.
-  const clock = new ManualClock(Date.now() - 5 * 3600_000 - 60_000);
+  const clock = new ManualClock(Date.now() - 5 * 3600_000);
   const scheduler = new ManualScheduler(clock);
   const app = new CasinoApp({ db, logger: new Logger({ level: 'error' }), clock, scheduler, rng: seededRng(11) });
   app.settings.setLobby(guildId, channelId, null);
+  app.settings.set(guildId, 'economy.startingBalance', 1000);
   const id = (i: number) => `90000000000000000${i}`;
   NAMES.forEach((n, i) => app.economy.ensurePlayer(guildId, id(i), n));
   const viewer: Viewer = { guildId, userId: id(0), displayName: NAMES[0]!, avatarUrl: AVATAR, isAdmin: true };
@@ -87,6 +93,8 @@ export async function buildScreens(guildId: string, channelId: string): Promise<
   await app.roulette.placeBet(wheel.record.id, { userId: id(0), displayName: NAMES[0]!, type: 'red', amount: 50 });
   await app.roulette.placeBet(wheel.record.id, { userId: id(1), displayName: NAMES[1]!, type: 'straight', number: 17, amount: 20 });
   await app.roulette.placeBet(wheel.record.id, { userId: id(2), displayName: NAMES[2]!, type: 'odd', amount: 30 });
+  await app.roulette.vote(wheel.record.id, id(0), wheel.state.roundId, true);
+  await add('roulette-rules', rouletteHelpScreen());
   await add('roulette-betting', roulettePanel(app, app.roulette.peek(wheel.record.id)!));
   clock.advance(app.settings.get(guildId).roulette.bettingSeconds * 1000 + 100);
   scheduler.runDue();
@@ -106,18 +114,37 @@ export async function buildScreens(guildId: string, channelId: string): Promise<
 
   await add('lobby', lobbyScreen(app, guildId));
   await add('home', homeScreen(app, viewer));
-  await add('home-collected', withNote(homeScreen(app, viewer), '### ✓ Collected 13 chips'));
+  await add('home-collected', withNote(await homeScreen(app, viewer), '### ✓ Collected 13 chips'));
   await add('wallet', walletScreen(app, viewer));
   await add('history', historyScreen(app, viewer, 0));
+  await add('wallet-statistics', walletStatsScreen(app, viewer));
+  await add('missions', rewardsScreen(app, viewer, true));
+  await add('matches', matchesScreen(app, viewer));
+  const latest = app.history.page(guildId, viewer.userId, 'slots', 0, 1).results[0]!;
+  await add('match-detail', matchDetailScreen(app, viewer, latest.round_id, 'slots', 0));
+  await add('preferences', preferencesScreen(app, viewer));
+  app.settings.set(guildId, 'economy.giftingEnabled', false);
+  await add('gifting-disabled', giftingScreen(app, viewer));
+  app.settings.set(guildId, 'economy.giftingEnabled', true);
+  await add('gifting', giftingScreen(app, viewer));
+  await add('gift-confirm', confirmGiftScreen('example', NAMES[1]!, 25));
   await add('rewards', rewardsScreen(app, viewer));
   await add('profile', profileScreen(app, viewer, { userId: viewer.userId, displayName: viewer.displayName, avatarUrl: AVATAR }));
   await add('achievements', achievementsScreen(app, viewer, viewer.userId, viewer.displayName, 0));
   await add('style', styleScreen(app, viewer));
   await add('leaderboard', leaderboardScreen(app, viewer, 'net', 'week', 0));
+  await add('leaderboard-profile', profileScreen(app, viewer, { userId: id(1), displayName: NAMES[1]!, avatarUrl: AVATAR },
+    boardComponent('lbback', viewer, { category: 'net', period: 'week', page: 2 })));
   await add('leaderboard-richest', leaderboardScreen(app, viewer, 'richest', 'all', 0));
   await add('tables', tablesScreen(app, viewer));
+  await add('public-tables', tablesScreen(app, viewer, 'public'));
+  // Game-specific lists; the viewer is seated at Blackjack, so the Hold'em list shows the seat conflict.
+  await add('tables-blackjack', tablesScreen(app, viewer, 'blackjack'));
+  await add('tables-holdem-seat-conflict', tablesScreen(app, viewer, 'poker'));
+  await add('my-table', tablesScreen(app, viewer, 'mine'));
   await add('rules', rulesScreen(app, guildId, t));
   await add('games', gamesHubScreen(app, viewer));
+  await add('coinflip-lobby', coinflipLobbyScreen(app, viewer));
   await add('slots-spinning', slotsScreen(app, viewer, 25, { stopped: 1 }));
   await add('slots-reels-gif', slotsScreen(app, viewer, 25, { animate: true }));
   await add('slots-result', slotsScreen(app, viewer, 25, { result: true }));
@@ -131,8 +158,37 @@ export async function buildScreens(guildId: string, channelId: string): Promise<
   await add('admin-tables', adminTablesScreen(app, guildId));
   await add('notice', noticeScreen({ title: 'Bet placed', body: 'You have **150** chips on the table.', tone: 'success' }));
   await add('error', errorScreen('Something went wrong', "That didn't work — sorry about that. Nothing was charged."));
-  await add('closed-table', closedTablePanel('The Velvet Rope', 'the host closed the table'));
+  await add('closed-table', closedTablePanel(app, { guildId, channelId, name: 'The Velvet Rope' }, 'the host closed the table'));
   await app.shutdown();
+  app.settings.set(guildId, 'poker.enabled', true);
+  await add('games-with-poker', gamesHubScreen(app, viewer));
+  const pokerHost = '900000000000000079';
+  const pokerGuest = '900000000000000080';
+  const pokerViewer = { ...viewer, userId: pokerHost, displayName: 'Ellis' };
+  const poker = await app.poker.create({ guildId, userId: pokerHost, name: 'Ellis', tableName: 'The Oak Table', buyIn: 200 });
+  await app.poker.join(poker.record.id, pokerGuest, 'Mina', 200);
+  await add('poker-rules', pokerRulesScreen());
+  await add('poker-waiting', pokerPanel(app, app.poker.peek(poker.record.id)!));
+  await app.poker.start(poker.record.id, pokerHost, app.poker.peek(poker.record.id)!.record.version);
+  await add('poker-playing', pokerPanel(app, app.poker.peek(poker.record.id)!));
+  await add('poker-deal', pokerPanel(app, app.poker.peek(poker.record.id)!, 'dealt'));
+  await add('poker-my-hand', playerPokerScreen(app.poker.peek(poker.record.id)!, pokerViewer));
+  const event = app.events.create(viewer, {
+    title: 'Friday at the Oak Table', game: 'poker', private: false,
+    description: 'A friendly evening of Hold’em. New players welcome.',
+    startsAt: clock.now() + 26 * 3600_000, minPlayers: 2, maxPlayers: 6,
+  });
+  app.events.join(pokerViewer, event.id, pokerViewer.displayName);
+  await add('events', eventsScreen(app, viewer));
+  await add('event-details', eventDetailsScreen(app, viewer, app.events.view(viewer, event.id)));
+  // Empty-account screens use their own fixture account in this disposable catalogue.
+  app.settings.set(guildId, 'economy.startingBalance', 0);
+  app.settings.set(guildId, 'economy.passivePerHour', 0);
+  app.settings.set(guildId, 'economy.dailyReward', 0);
+  const reliefViewer = { ...viewer, userId: id(7), displayName: 'Saga' };
+  await add('wallet-relief', walletScreen(app, reliefViewer));
+  app.economy.claimRelief(guildId, reliefViewer.userId, true);
+  await add('profile-sosse', profileScreen(app, reliefViewer, reliefViewer));
   db.close();
   return screens;
 }

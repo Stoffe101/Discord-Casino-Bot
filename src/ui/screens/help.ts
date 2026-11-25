@@ -50,7 +50,7 @@ export function helpScreen(app: CasinoApp, viewer: Viewer, topic: HelpTopic): Sc
       `▸ Up to ${s.blackjack.maxSeats} players per table. You can sit at one table at a time and switch between hands.\n` +
       `▸ Join mid-hand and you'll be dealt in next hand. Anyone can watch a public table's thread.\n` +
       `▸ **Private tables** need the host's access code. The host can deal early, remove players and close the table.\n` +
-      `▸ Tables close after ${s.tables.idleMinutes} minutes without bets (never during a hand); open bets are refunded.`,
+      `▸ Tables close after ${s.tables.idleMinutes} minutes of inactivity between hands. Empty tables close after ${s.tables.idleEmptyMinutes} minutes.`,
     games:
       `▸ **Roulette:** a shared European wheel. Bet during the window; it spins for everyone at once.\n` +
       `▸ **Slots:** a private machine — three reels, one payline.\n` +
@@ -71,13 +71,13 @@ export function helpScreen(app: CasinoApp, viewer: Viewer, topic: HelpTopic): Sc
   return {
     components: [
       container(COLORS.emerald, [
+        navRow(),
         text(`## ❔ ${TITLES[topic]}\n${bodies[topic]}`),
         select({
           id: cid('help', 'topic'),
           placeholder: 'More help topics…',
           options: HELP_TOPICS.map((t) => option(TITLES[t], t, undefined, undefined, t === topic)),
         }),
-        navRow('help'),
       ]),
     ],
   };

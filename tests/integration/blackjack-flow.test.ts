@@ -16,7 +16,7 @@ afterEach(async () => {
 
 async function openTable(host: FakeUser): Promise<string> {
   const home = h.seen(await h.slash(host, 'casino'));
-  const rec = await h.click(host, home, 'Play Blackjack');
+  const rec = await h.openBlackjack(host, home);
   expect(rec.errors).toEqual([]);
   return h.app.blackjack.tableOfUser(h.guildId, host.id)!.record.id;
 }
@@ -97,8 +97,9 @@ describe('blackjack via the Discord panel', () => {
     expect(button(tableId, 'Hit')).toBeUndefined();
     expect(h.enabled(panelOf(tableId))).toEqual(expect.arrayContaining(['10', '25', 'Rebet']));
     // Balance = start + game result + any achievement/mission rewards credited along the way.
-    expect(h.balance(alice)).toBe(1000 + 100 + rewardsOf(alice));
-    expect(h.balance(bob)).toBe(1000 + 50 + rewardsOf(bob));
+    const start = h.app.settings.get(h.guildId).economy.startingBalance;
+    expect(h.balance(alice)).toBe(start + 100 + rewardsOf(alice));
+    expect(h.balance(bob)).toBe(start + 50 + rewardsOf(bob));
     expect(h.app.economy.reconcile()).toEqual([]);
     expect(h.fd.problems).toEqual([]);
     expect(h.guard!.blockedCount).toBe(0);
@@ -128,7 +129,7 @@ describe('blackjack via the Discord panel', () => {
     const net = Object.fromEntries(result.seats.map((s) => [s.displayName, s.net]));
     // Dealer 17: Ana's 11 loses and her 17 pushes (−100), Ben gets half back, Cleo is paid 3:2.
     expect(net).toEqual({ Ana: -100, Ben: -50, Cleo: 150 });
-    expect(h.text(panelOf(tableId))).toContain('blackjack!');
+    expect(h.text(panelOf(tableId))).toContain('A♥  K♠ → **Blackjack**');
     expect(h.app.economy.reconcile()).toEqual([]);
     expect(h.fd.problems).toEqual([]);
   });
@@ -193,10 +194,10 @@ describe('blackjack via the Discord panel', () => {
   });
 
   it('protects private tables and host-only controls', async () => {
-    h = new CasinoHarness();
+    h = new CasinoHarness({ allowThreads: true }); // private tables only exist in private threads
     const [host, guest, stranger] = [h.user('Host'), h.user('Guest'), h.user('Stranger')];
-    const tables = h.seen(await h.click(host, h.seen(await h.slash(host, 'casino')), 'Tables'));
-    const opener = await h.click(host, tables, 'Open a table');
+    const tables = h.seen(await h.slash(host, 'blackjack'));
+    const opener = await h.click(host, tables, 'Open a Blackjack table');
     expect(opener.modal).not.toBeNull();
     const visibility = findComponents(opener.modal.components, 3).find((s) => s.custom_id === 'visibility')!;
     expect(visibility.options.map((o: { value: string }) => o.value)).toEqual(['public', 'private']);

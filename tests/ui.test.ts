@@ -86,8 +86,8 @@ describe('UI payloads', () => {
   it('every personal screen fits Discord limits for new and active players', async () => {
     const v = viewer(1);
     const screens: Screen[] = [
-      homeScreen(app, v),
-      walletScreen(app, v),
+      await homeScreen(app, v),
+      await walletScreen(app, v),
       historyScreen(app, v, 0),
       historyScreen(app, v, 99),
       profileScreen(app, v, { userId: v.userId, displayName: v.displayName, avatarUrl: v.avatarUrl }),
@@ -98,7 +98,7 @@ describe('UI payloads', () => {
       await styleScreen(app, v),
       rewardsScreen(app, v),
       tablesScreen(app, v),
-      gamesHubScreen(app, v),
+      await gamesHubScreen(app, v),
       await slotsScreen(app, v, 25),
       paytableScreen(25),
       rouletteHelpScreen(),
@@ -113,7 +113,7 @@ describe('UI payloads', () => {
       auditScreen(app, GUILD),
       adminTablesScreen(app, GUILD),
       await lobbyScreen(app, GUILD),
-      closedTablePanel('Table 01', 'idle'),
+      closedTablePanel(app, { guildId: GUILD, channelId: null, name: 'Table 01' }, 'idle'),
     ];
     for (const s of screens) expectValid(s);
   });
@@ -180,7 +180,7 @@ describe('UI payloads', () => {
       const split2 = byAction(panel, 'bj', 'act').find((b) => parseCid(b.custom_id!).args[1] === 'split')!;
       expect(split2.disabled).toBeFalsy(); // 8,8 can split
       // A player who cannot afford it sees Double/Split disabled with an explanation.
-      app.economy.adminAdjust({ guildId: GUILD, userId: userId(2), amount: -850, reason: 'test', actorId: userId(9) });
+      app.economy.adminAdjust({ guildId: GUILD, userId: userId(2), amount: 50 - app.economy.requirePlayer(GUILD, userId(2)).balance, reason: 'test', actorId: userId(9) });
       panel = await blackjackPanel(app, app.blackjack.peek(tableId)!);
       const dbl = byAction(panel, 'bj', 'act').find((b) => parseCid(b.custom_id!).args[1] === 'double')!;
       expect(dbl.disabled).toBe(true);

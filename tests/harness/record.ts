@@ -57,7 +57,7 @@ async function session(name: string, title: string, play: (h: CasinoHarness, use
 
 async function blackjack(h: CasinoHarness, users: (n: string) => FakeUser): Promise<string> {
   const [alex, hanna, oskar] = [users('Alex'), users('Hanna'), users('Oskar')];
-  await h.click(alex, h.seen(await h.slash(alex, 'casino')), 'Play Blackjack');
+  await h.openBlackjack(alex);
   const tableId = h.app.blackjack.tableOfUser(h.guildId, alex.id)!.record.id;
   const panel = () => h.tablePanel(tableId);
   // Alex 8,8 (split) · Hanna 10,6 · Oskar 9,2 (double) · dealer 6 up, 10 hole; then draws.
@@ -87,8 +87,8 @@ async function blackjack(h: CasinoHarness, users: (n: string) => FakeUser): Prom
 
 async function roulette(h: CasinoHarness, users: (n: string) => FakeUser): Promise<string> {
   const [alex, hanna] = [users('Alex'), users('Hanna')];
-  const hub = h.seen(await h.click(alex, h.seen(await h.slash(alex, 'casino')), 'More Games'))!;
-  await h.click(alex, hub, 'Open the wheel');
+  const hub = h.seen(await h.click(alex, h.seen(await h.slash(alex, 'casino')), 'Games'))!;
+  await h.click(alex, hub, 'Roulette');
   const record = h.app.roulette.wheelFor(h.guildId)!.record;
   const panel = () => h.fd.messages.get(h.app.roulette.peek(record.id)!.record.messageId!)!;
   const select = findComponents(panel().components, 3)[0]!;
@@ -106,8 +106,8 @@ async function roulette(h: CasinoHarness, users: (n: string) => FakeUser): Promi
 
 async function slots(h: CasinoHarness, users: (n: string) => FakeUser): Promise<string> {
   const alex = users('Alex');
-  const hub = h.seen(await h.click(alex, h.seen(await h.slash(alex, 'casino')), 'More Games'))!;
-  const machine = h.seen(await h.click(alex, hub, 'Play slots'))!;
+  const hub = h.seen(await h.click(alex, h.seen(await h.slash(alex, 'casino')), 'Games'))!;
+  const machine = h.seen(await h.click(alex, hub, 'Slots'))!;
   for (let i = 0; i < 3; i++) {
     await sleep(THINK);
     const spin = h.buttons(machine).find((b) => b.label?.startsWith('Spin'))!;
@@ -119,9 +119,9 @@ async function slots(h: CasinoHarness, users: (n: string) => FakeUser): Promise<
 
 async function coinflip(h: CasinoHarness, users: (n: string) => FakeUser): Promise<string> {
   const [alex, hanna] = [users('Alex'), users('Hanna')];
-  const hub = h.seen(await h.click(alex, h.seen(await h.slash(alex, 'casino')), 'More Games'))!;
+  const hub = h.seen(await h.click(alex, h.seen(await h.slash(alex, 'casino')), 'Games'))!;
   await sleep(THINK);
-  const pick = await h.select(alex, hub, 'cf:pick', [hanna.id]);
+  const pick = await h.select(alex, h.seen(await h.click(alex, hub, 'Coinflip')), 'cf:pick', [hanna.id]);
   const sent = await h.submit(alex, pick, { amount: '100', call: 'heads' });
   const card = h.seen(sent)!;
   await sleep(THINK);

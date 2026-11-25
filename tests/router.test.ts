@@ -126,6 +126,8 @@ describe('InteractionRouter (headless)', () => {
     scheduler = new ManualScheduler(clock);
     app = new CasinoApp({ db, logger: silentLogger, clock, scheduler, rng: seededRng(5) });
     bot = new CasinoBot(app, silentLogger, { animations: false }); // routing, not animation, is under test here
+    // No casino channel exists in this headless setup; tables are created directly by the tests.
+    app.blackjack.setCreationCheck(() => undefined);
   });
 
   afterEach(async () => {
@@ -145,8 +147,8 @@ describe('InteractionRouter (headless)', () => {
     expect(kinds(calls)).toEqual(['reply']);
     expect(flagsOf(calls[0]) & MessageFlags.Ephemeral).toBeTruthy();
     expect(flagsOf(calls[0]) & MessageFlags.IsComponentsV2).toBeTruthy();
-    expect(textOf(calls[0])).toContain('1,000 chips');
-    expect(app.economy.getPlayer(GUILD, userId(1))!.balance).toBe(1000);
+    expect(textOf(calls[0])).toContain('500 chips');
+    expect(app.economy.getPlayer(GUILD, userId(1))!.balance).toBe(500);
   });
 
   it('navigates in place from a private panel, but opens a private reply from a public one', async () => {
@@ -159,11 +161,11 @@ describe('InteractionRouter (headless)', () => {
 
   it('claims the daily reward once and reports the second attempt as a friendly error', async () => {
     await run({ kind: 'button', user: 1, customId: 'eco:daily:wallet', ephemeralSource: true });
-    expect(app.economy.getPlayer(GUILD, userId(1))!.balance).toBe(1250);
+    expect(app.economy.getPlayer(GUILD, userId(1))!.balance).toBe(600);
     const again = await run({ kind: 'button', user: 1, customId: 'eco:daily:wallet', ephemeralSource: true });
     expect(kinds(again.calls)).toEqual(['reply']);
     expect(textOf(again.calls[0])).toContain('Already claimed');
-    expect(app.economy.getPlayer(GUILD, userId(1))!.balance).toBe(1250);
+    expect(app.economy.getPlayer(GUILD, userId(1))!.balance).toBe(600);
   });
 
   it('a chip click on the table panel places the bet and updates the panel in the same response', async () => {
@@ -203,7 +205,7 @@ describe('InteractionRouter (headless)', () => {
     expect(app.blackjack.peek(t.record.id)!.state.round!.seats[0]!.hands[0]!.cards).toHaveLength(2);
     // A stale sequence number (old message / double click) is refused too.
     const stale = await run({ kind: 'button', user: 1, customId: `bj:act:${t.record.id}:hit:${round.seq - 1}` });
-    expect(textOf(stale.calls[0])).toContain('Already handled');
+    expect(textOf(stale.calls[0])).toContain('The table moved on');
     const ok = await run({ kind: 'button', user: 1, customId: `bj:act:${t.record.id}:hit:${round.seq}` });
     expect(kinds(ok.calls)).toEqual(['update']);
     expect(app.blackjack.peek(t.record.id)!.state.round!.seats[0]!.hands[0]!.cards).toHaveLength(3);
@@ -218,13 +220,22 @@ describe('InteractionRouter (headless)', () => {
     expect(textOf(ok.calls[0])).toContain('Casino admin');
   });
 
+  it('the Unusual transfers review opens for admins only, in place', async () => {
+    const refused = await run({ kind: 'button', user: 3, customId: 'adm:transfers', ephemeralSource: true, admin: false });
+    expect(textOf(refused.calls[0])).toContain('Admins only');
+    const ok = await run({ kind: 'button', user: 4, customId: 'adm:transfers', ephemeralSource: true, admin: true });
+    expect(kinds(ok.calls)).toEqual(['update']);
+    expect(textOf(ok.calls[0])).toContain('Unusual transfers');
+    expect(textOf(ok.calls[0])).toContain('Read-only');
+  });
+
   it('admin wallet adjustments require a reason and are logged', async () => {
     app.economy.ensurePlayer(GUILD, userId(5), 'Player 5');
     const target = { id: userId(5), bot: false, username: 'p5', globalName: 'Player 5' };
     const noReason = await run({ kind: 'command', user: 4, admin: true, commandName: 'casinoadmin', subcommand: 'adjust', options: { player: target, amount: 100, reason: '' } });
     expect(textOf(noReason.calls[0])).toContain('reason');
     await run({ kind: 'command', user: 4, admin: true, commandName: 'casinoadmin', subcommand: 'adjust', options: { player: target, amount: 100, reason: 'Tournament prize' } });
-    expect(app.economy.getPlayer(GUILD, userId(5))!.balance).toBe(1100);
+    expect(app.economy.getPlayer(GUILD, userId(5))!.balance).toBe(600);
     expect(app.economy.ledgerPage(GUILD, userId(5), 1)[0]).toMatchObject({ type: 'admin_adjust', actor_id: userId(4), memo: 'Tournament prize' });
   });
 
@@ -235,9 +246,9 @@ describe('InteractionRouter (headless)', () => {
     expect(kinds(custom.calls)).toEqual(['showModal']);
     const create = await run({ kind: 'button', user: 2, customId: 'tbl:create' });
     expect(kinds(create.calls)).toEqual(['showModal']);
-    // Someone already seated is told to leave first instead.
+    // Someone already seated can recover their existing table.
     const blocked = await run({ kind: 'button', user: 1, customId: 'tbl:create' });
-    expect(textOf(blocked.calls[0])).toContain('already seated');
+    expect(textOf(blocked.calls[0])).toContain('My table');
   });
 
   it('custom bet modal places the bet and validates numbers', async () => {
@@ -254,7 +265,7 @@ describe('InteractionRouter (headless)', () => {
     // The click answers with spinning reels, then two edits stop the reels in turn.
     expect(kinds(first.calls)).toEqual(['update', 'editReply', 'editReply']);
     const dupe = await run({ kind: 'button', user: 1, customId: 'sl:spin:10:0', ephemeralSource: true });
-    expect(textOf(dupe.calls[0])).toContain('Already handled');
+    expect(textOf(dupe.calls[0])).toContain('The table moved on');
     expect(app.slots.spinCount(GUILD, userId(1))).toBe(1);
   });
 
@@ -317,7 +328,7 @@ describe('InteractionRouter (headless)', () => {
     const { blackjackPanel } = await import('../src/ui/screens/blackjack.js');
     const viewer = { guildId: GUILD, userId: userId(1), displayName: 'Player 1', avatarUrl: 'https://cdn.discordapp.com/embed/avatars/0.png', isAdmin: false };
     app.economy.ensurePlayer(GUILD, userId(1), 'Player 1');
-    const home = homeScreen(app, viewer);
+    const home = await homeScreen(app, viewer);
     const target = { client: bot.client } as never; // a plain channel-like target
     const body = MessagePayload.create(target, replyOptions(home)).resolveBody().body as { components: unknown; flags: number };
     expect(body.components).toEqual(JSON.parse(JSON.stringify(home.components)));
@@ -337,6 +348,6 @@ describe('InteractionRouter (headless)', () => {
     await bot.router.handle(f.i as never);
     await bot.router.handle(f.i as never);
     expect(kinds(f.calls)).toEqual(['reply']);
-    expect(app.economy.getPlayer(GUILD, userId(1))!.balance).toBe(1250);
+    expect(app.economy.getPlayer(GUILD, userId(1))!.balance).toBe(600);
   });
 });

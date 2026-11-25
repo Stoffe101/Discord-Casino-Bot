@@ -22,6 +22,8 @@ export interface PanelSyncOptions<Hint> {
   render(key: string, frame: number | undefined, hint: Hint | undefined): Promise<Screen | null>;
   /** Number of animation frames to show before the final render for this hint. */
   frames?(key: string, hint: Hint | undefined): number;
+  /** Optional deadline for rendering a nonessential animation before sending the static state. */
+  frameBudgetMs?(key: string, hint: Hint | undefined): number | undefined;
   /** Pause after each animation frame (may depend on what is being animated). */
   frameDelayMs?: number | ((hint: Hint | undefined) => number);
   /** Multiplier for a frame's own `holdMs` (animated GIFs); 0 in fast tests. */
@@ -34,11 +36,34 @@ export interface PanelSyncOptions<Hint> {
 
 interface Slot<Hint> {
   running: boolean;
+  retired: boolean;
   /** The hint of the job being rendered and sent right now (with its animation hold). */
   current: { hint: Hint | undefined } | null;
   pending: { hint: Hint | undefined; carriers: Carrier[] } | null;
   lastFile: string | null;
   lastSentAt: number;
+}
+
+/**
+ * Who is answering an interaction directly, recorded before the request goes out. A click on a
+ * shared panel can be both a panel carrier and a router reply (Deal (host) also opens the host's
+ * private hand): discord.js only marks an interaction replied once its request returns, so
+ * without this both sides answered and one request failed with "already acknowledged".
+ */
+interface Answer { by: 'router' | 'panel'; done: Promise<unknown> }
+const answers = new WeakMap<object, Answer>();
+
+export function markAnswering(interaction: object, by: Answer['by'], done: Promise<unknown>): void {
+  answers.set(interaction, { by, done: done.catch(() => undefined) });
+}
+
+export function answeringBy(interaction: object): Answer | undefined {
+  return answers.get(interaction);
+}
+
+/** Free for a panel to answer: nobody has acknowledged it or is acknowledging it right now. */
+function openForPanel(c: Carrier): boolean {
+  return !c.deferred && !c.replied && !answers.has(c);
 }
 
 const ACK_SAFETY_MS = 2_200;
@@ -61,9 +86,10 @@ export class PanelSync<Hint = unknown> {
   request(key: string, hint?: Hint, carrier?: Carrier): void {
     let slot = this.slots.get(key);
     if (!slot) {
-      slot = { running: false, current: null, pending: null, lastFile: null, lastSentAt: 0 };
+      slot = { running: false, retired: false, current: null, pending: null, lastFile: null, lastSentAt: 0 };
       this.slots.set(key, slot);
     }
+    if (slot.retired) return;
     if (!slot.pending) slot.pending = { hint, carriers: [] };
     else if (hint !== undefined && (slot.pending.hint === undefined || this.options.frames?.(key, hint))) slot.pending.hint = hint;
     if (carrier) {
@@ -73,8 +99,13 @@ export class PanelSync<Hint = unknown> {
     if (!slot.running) void this.run(key, slot);
   }
 
-  forget(key: string): void {
-    this.slots.delete(key);
+  async retire(key: string): Promise<void> {
+    const slot = this.slots.get(key);
+    if (!slot) return;
+    slot.retired = true;
+    slot.pending = null;
+    while (slot.running) await sleep(25);
+    if (this.slots.get(key) === slot) this.slots.delete(key);
   }
 
   /** True while a job matching ``test`` is queued for this panel or being shown (with its hold). */
@@ -93,7 +124,10 @@ export class PanelSync<Hint = unknown> {
   private armSafetyAck(carrier: Carrier): void {
     const wait = Math.max(0, ACK_SAFETY_MS - (Date.now() - carrier.createdTimestamp));
     setTimeout(() => {
-      if (!carrier.deferred && !carrier.replied) carrier.deferUpdate().catch(() => undefined);
+      if (!openForPanel(carrier)) return;
+      const ack = carrier.deferUpdate();
+      markAnswering(carrier, 'panel', ack);
+      ack.catch(() => answers.delete(carrier));
     }, wait).unref?.();
   }
 
@@ -102,19 +136,30 @@ export class PanelSync<Hint = unknown> {
     return slot.pending;
   }
 
-  private async holdUnlessClicked(slot: Slot<Hint>, ms: number): Promise<boolean> {
+  /**
+   * A newer change is waiting that makes what is on screen obsolete: someone clicked the panel, or
+   * another animated change arrived (a hit from the private My hand view, a timeout, the dealer's
+   * turn). Plain redraws (a bet, a countdown) wait for the current animation instead.
+   */
+  private superseded(key: string, slot: Slot<Hint>): boolean {
+    const next = slot.pending;
+    if (!next) return false;
+    return next.carriers.length > 0 || (this.options.frames?.(key, next.hint) ?? 0) > 0;
+  }
+
+  private async holdUnlessClicked(key: string, slot: Slot<Hint>, ms: number): Promise<boolean> {
     const until = Date.now() + ms;
     while (Date.now() < until) {
-      if (slot.pending?.carriers.length) return true;
+      if (slot.retired || this.superseded(key, slot)) return true;
       await sleep(Math.min(40, until - Date.now()));
     }
-    return Boolean(slot.pending?.carriers.length);
+    return this.superseded(key, slot);
   }
 
   private async run(key: string, slot: Slot<Hint>): Promise<void> {
     slot.running = true;
     try {
-      while (slot.pending) {
+      while (!slot.retired && slot.pending) {
         const job = slot.pending;
         slot.pending = null;
         slot.current = { hint: job.hint };
@@ -123,13 +168,20 @@ export class PanelSync<Hint = unknown> {
         const delay = typeof this.options.frameDelayMs === 'function' ? this.options.frameDelayMs(job.hint) : (this.options.frameDelayMs ?? 900);
         let interrupted = false;
         for (let frame = 0; frame < frames && !interrupted; frame++) {
+          // Never encode an animation that a newer change has already overtaken.
+          if (this.superseded(key, slot)) {
+            interrupted = true;
+            break;
+          }
           const started = Date.now();
           const hold = await this.renderAndSend(key, slot, frame, carriers, job.hint);
+          if (slot.retired) return;
+          if (hold === 'skip') break; // preserve carriers for the authoritative still
           carriers = [];
           if (hold !== undefined) {
             // An animated frame (GIF) only starts playing once Discord has it, so its hold counts
             // from now. A player's click cuts it short: their action is never kept waiting.
-            interrupted = await this.holdUnlessClicked(slot, hold * (this.options.holdScale ?? 1));
+            interrupted = await this.holdUnlessClicked(key, slot, hold * (this.options.holdScale ?? 1));
           } else {
             // A still frame paces by cadence: the time the send took counts towards its slot, so a
             // slow connection doesn't stretch the animation (a short minimum hold keeps it readable).
@@ -143,6 +195,7 @@ export class PanelSync<Hint = unknown> {
           queued.carriers.unshift(...carriers);
           continue;
         }
+        if (slot.retired) return;
         await this.renderAndSend(key, slot, undefined, carriers, job.hint);
       }
     } catch (error) {
@@ -150,26 +203,54 @@ export class PanelSync<Hint = unknown> {
     } finally {
       slot.running = false;
       slot.current = null;
-      if (slot.pending) void this.run(key, slot);
+      if (!slot.retired && slot.pending) void this.run(key, slot);
+    }
+  }
+
+  private async renderFrame(key: string, frame: number | undefined, hint: Hint | undefined): Promise<Screen | null | 'skip'> {
+    const render = this.options.render(key, frame, hint);
+    const budget = frame === undefined ? undefined : this.options.frameBudgetMs?.(key, hint);
+    if (budget === undefined) return render;
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      return await Promise.race([
+        render,
+        new Promise<'skip'>((resolve) => { timer = setTimeout(() => resolve('skip'), budget); }),
+      ]);
+    } finally {
+      clearTimeout(timer);
     }
   }
 
   /** Returns the rendered frame's own hold time (animated frames), if any. */
-  private async renderAndSend(key: string, slot: Slot<Hint>, frame: number | undefined, carriers: Carrier[], hint?: Hint): Promise<number | undefined> {
+  private async renderAndSend(key: string, slot: Slot<Hint>, frame: number | undefined, carriers: Carrier[], hint?: Hint): Promise<number | undefined | 'skip'> {
     const spacing = (this.options.minIntervalMs ?? 300) - (Date.now() - slot.lastSentAt);
     if (spacing > 0 && carriers.length === 0 && frame === undefined) await sleep(spacing);
+    if (slot.retired) return 'skip';
     let screen: Screen | null = null;
     const renderStarted = Date.now();
     try {
-      screen = await this.options.render(key, frame, hint);
+      this.options.logger.debug('panel render started', { panel: this.options.name, key, frame: frame ?? 'final', at: renderStarted });
+      const rendered = await this.renderFrame(key, frame, hint);
+      if (rendered === 'skip') {
+        this.options.logger.debug('panel animation exceeded its render budget', { panel: this.options.name, key, ms: Date.now() - renderStarted });
+        return 'skip';
+      }
+      screen = rendered;
     } catch (error) {
       this.options.logger.error(`${this.options.name} render failed`, { key, error });
     }
-    const fresh = carriers.filter((c) => !c.deferred && !c.replied && Date.now() - c.createdTimestamp < CARRIER_MAX_AGE_MS);
+    if (slot.retired) return 'skip';
+    const fresh = carriers.filter((c) => openForPanel(c) && Date.now() - c.createdTimestamp < CARRIER_MAX_AGE_MS);
     const chosen = screen ? fresh.at(-1) : undefined;
     for (const c of carriers) {
-      if (c !== chosen && !c.deferred && !c.replied) await c.deferUpdate().catch(() => undefined);
+      if (c !== chosen && openForPanel(c)) {
+        const ack = c.deferUpdate();
+        markAnswering(c, 'panel', ack);
+        await ack.catch(() => answers.delete(c));
+      }
     }
+    if (slot.retired) return 'skip';
     if (!screen) return undefined;
     const file = primaryFileName(screen);
     const reuse = file !== null && file === slot.lastFile;
@@ -182,34 +263,42 @@ export class PanelSync<Hint = unknown> {
         key,
         frame: frame ?? 'final',
         via,
+        renderedAt: sendStarted,
+        acknowledgedAt: Date.now(),
         renderMs: sendStarted - renderStarted,
         sendMs: Date.now() - sendStarted,
         kb: reuse ? 0 : Math.round((screen.files ?? []).reduce((n, f) => n + f.data.length, 0) / 1024),
       });
-    if (chosen && 'update' in chosen) {
+    // The router may have started answering this click while the frame was rendering.
+    if (chosen && 'update' in chosen && openForPanel(chosen)) {
       try {
-        await chosen.update(editOptions(screen, reuse));
+        const update = chosen.update(editOptions(screen, reuse));
+        markAnswering(chosen, 'panel', update);
+        await update;
         this.stats.viaInteraction++;
         slot.lastFile = file;
         slot.lastSentAt = Date.now();
         timing('click');
         return screen.holdMs;
       } catch (error) {
+        answers.delete(chosen); // not acknowledged by us: the safety acknowledgement still applies
         const code = discordErrorCode(error);
         if (code !== DISCORD_ERRORS.unknownInteraction && code !== DISCORD_ERRORS.alreadyAcknowledged) {
           this.options.logger.warn(`${this.options.name} interaction update failed; falling back`, { key, code, error });
         }
       }
     }
-    await this.editViaRest(key, slot, screen, reuse, file);
-    timing('rest');
-    return screen.holdMs;
+    if (await this.editViaRest(key, slot, screen, reuse, file)) {
+      timing('rest');
+      return screen.holdMs;
+    }
+    return undefined;
   }
 
-  private async editViaRest(key: string, slot: Slot<Hint>, screen: Screen, reuse: boolean, file: string | null): Promise<void> {
+  private async editViaRest(key: string, slot: Slot<Hint>, screen: Screen, reuse: boolean, file: string | null): Promise<boolean> {
     const location = this.options.locate(key);
     const channelId = location?.threadId ?? location?.channelId;
-    if (!location || !channelId || !location.messageId) return;
+    if (!location || !channelId || !location.messageId) return false;
     try {
       const channel = await this.options.client.channels.fetch(channelId);
       if (!channel || !channel.isTextBased()) throw Object.assign(new Error('channel missing'), { code: DISCORD_ERRORS.unknownChannel });
@@ -218,6 +307,7 @@ export class PanelSync<Hint = unknown> {
       this.stats.viaRest++;
       slot.lastFile = file;
       slot.lastSentAt = Date.now();
+      return true;
     } catch (error) {
       this.stats.failures++;
       const code = discordErrorCode(error);
@@ -230,10 +320,11 @@ export class PanelSync<Hint = unknown> {
       } else if (reuse) {
         // The cached image may be gone (e.g. edited elsewhere): retry once with a fresh upload.
         slot.lastFile = null;
-        await this.editViaRest(key, slot, screen, false, file).catch(() => undefined);
+        return this.editViaRest(key, slot, screen, false, file);
       } else {
         this.options.logger.warn(`${this.options.name} edit failed`, { key, code, error });
       }
+      return false;
     }
   }
 }

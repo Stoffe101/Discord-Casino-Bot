@@ -9,14 +9,14 @@ import { COLORS, ICONS } from '../theme.js';
 import { claimButtons } from './home.js';
 import { navRow, type Viewer } from './common.js';
 
-export function rewardsScreen(app: CasinoApp, viewer: Viewer): Screen {
+export function rewardsScreen(app: CasinoApp, viewer: Viewer, missionsOnly = false): Screen {
   const player = app.economy.ensurePlayer(viewer.guildId, viewer.userId, viewer.displayName);
   const wallet = app.economy.getWallet(viewer.guildId, viewer.userId);
   const econ = app.settings.get(viewer.guildId).economy;
   const missions = app.progress.todaysMissions(viewer.guildId, viewer.userId);
   const streak = wallet.daily.streak;
   const streakDays = Array.from({ length: econ.dailyStreakMaxDays }, (_, i) => (i < (wallet.daily.available ? streak - 1 : streak) ? '◆' : '◇')).join(' ');
-  const daily = wallet.daily.available
+  const daily = econ.dailyReward === 0 ? '**Daily reward** · disabled on this server' : wallet.daily.available
     ? `**Daily reward** · ready — **${chips(wallet.daily.amount)}** chips\nStreak ${streakDays}${streak > 1 ? ` · day ${streak}` : ''}`
     : `**Daily reward** · claimed — next ${discordTime(wallet.daily.nextAt)}\nStreak ${streakDays} · ${streak} ${streak === 1 ? 'day' : 'days'}`;
   const passive = `**Passive income** · ${chips(wallet.passive.available)} ready of ${chips(wallet.passive.cap)}`;
@@ -39,17 +39,17 @@ export function rewardsScreen(app: CasinoApp, viewer: Viewer): Screen {
   return {
     components: [
       container(COLORS.gold, [
+        navRow('wallet'),
         text(`## 🎁 Rewards\n-# Free chips for showing up. Rewards never depend on how much you bet.`),
         text(`${daily}\n${passive}`),
-        row(...claimButtons(app, viewer, 'rewards')),
+        missionsOnly ? null : row(...claimButtons(app, viewer, 'rewards')),
         separator(),
-        text(`### Today's missions\n${missionLines.join('\n') || 'No missions today.'}\n-# New missions ${discordTime(resets)}`),
+        missionsOnly ? text(`### Today's missions\n${missionLines.join('\n') || 'No missions today.'}\n-# New missions ${discordTime(resets)}`) : null,
         close.length ? text(`### Almost there\n${close.join('\n')}`) : null,
         row(
           button({ id: cid('nav', 'achv', viewer.userId, 0), label: 'Achievements', emoji: ICONS.achievements }),
-          button({ id: cid('nav', 'rewards'), label: 'Refresh', emoji: ICONS.refresh }),
+          button({ id: cid('nav', missionsOnly ? 'rewards' : 'missions'), label: missionsOnly ? 'Rewards' : 'Missions' }),
         ),
-        navRow('rewards'),
       ]),
     ],
   };

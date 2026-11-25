@@ -6,11 +6,12 @@ import { chips } from '../../core/format.js';
 import { KeyedSerialQueue } from '../../core/serial-queue.js';
 import { newId, secureRng, type Rng } from '../../core/random.js';
 import type { EconomyService, SettingsProvider } from '../../domain/economy/economy-service.js';
+import { readResultDetail, type MatchResult } from '../../domain/match-history.js';
 import type { RecordedPlayer, RoundRecorder } from '../../domain/round-recorder.js';
-import { spin, type SpinResult } from './engine.js';
+import { evaluateLine, spin, spinFromStops, STOPS, SYMBOLS, type SpinResult } from './engine.js';
 
 export interface SlotsSpinOutcome {
-  spin: SpinResult;
+  spin: Omit<SpinResult, 'rows' | 'stops'> & { rows: SpinResult['rows'] | null };
   bet: number;
   payout: number;
   net: number;
@@ -55,7 +56,24 @@ export class SlotsService {
   }
 
   lastSpin(guildId: string, userId: string): SlotsSpinOutcome | undefined {
-    return this.lastSpins.get(`${guildId}:${userId}`);
+    const cached = this.lastSpins.get(`${guildId}:${userId}`);
+    if (cached) return cached;
+    const row = this.db.get<MatchResult>(
+      "SELECT * FROM round_results WHERE guild_id = ? AND user_id = ? AND game = 'slots' ORDER BY created_at DESC, rowid DESC LIMIT 1",
+      [guildId, userId],
+    );
+    if (!row) return undefined;
+    const { line, stops } = readResultDetail(row.detail_json);
+    if (!Array.isArray(line) || line.length !== 3 || !line.every((symbol) => SYMBOLS.includes(symbol))) return undefined;
+    const savedLine = line as SpinResult['line'];
+    const normal = Array.isArray(stops) && stops.length === 3 && stops.every((stop) => Number.isInteger(stop) && stop >= 0 && stop < STOPS)
+      ? spinFromStops(stops as SpinResult['stops'])
+      : null;
+    const spin = normal?.line.every((symbol, i) => symbol === savedLine[i]) ? normal : { line: savedLine, rows: null, ...evaluateLine(savedLine) };
+    return {
+      spin, bet: row.wagered, payout: row.returned, net: row.net, recorded: undefined,
+      balance: this.economy.requirePlayer(guildId, userId).balance, spinCount: this.spinCount(guildId, userId),
+    };
   }
 
   async spin(guildId: string, userId: string, bet: number, expectedCount: number | null): Promise<SlotsSpinOutcome> {
@@ -92,7 +110,7 @@ export class SlotsService {
               flags,
               xp: 2,
               label: result.multiplier > 0 ? 'win' : 'lose',
-              detail: { line: result.line, multiplier: result.multiplier },
+              detail: { line: result.line, stops: result.stops, multiplier: result.multiplier },
             },
           ],
         });

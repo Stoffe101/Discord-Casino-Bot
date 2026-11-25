@@ -9,6 +9,7 @@ import { ManualClock } from '../../src/core/clock.js';
 import { ManualScheduler } from '../../src/core/scheduler.js';
 import { silentLogger, type Logger } from '../../src/core/logger.js';
 import { seededRng } from '../../src/core/random.js';
+import type { NicknameMembers } from '../../src/domain/sosse-nicknames.js';
 import { CasinoApp } from '../../src/app/casino-app.js';
 import { CasinoBot } from '../../src/discord/bot.js';
 import { OutboundGuard } from '../../src/discord/outbound-guard.js';
@@ -30,6 +31,7 @@ export interface HarnessOptions {
   discord?: FakeDiscord;
   clock?: ManualClock;
   logger?: Logger;
+  nicknameMembers?: NicknameMembers;
 }
 
 export class CasinoHarness {
@@ -65,6 +67,7 @@ export class CasinoHarness {
     this.guard = options.guard === false ? null : new OutboundGuard({ guildId: this.guildId, channelId: this.casino, applicationId: this.fd.appId, allowThreads: options.allowThreads ?? false }, logger);
     this.bot = new CasinoBot(this.app, logger, {
       guard: this.guard,
+      ...(options.nicknameMembers ? { nicknameGuildId: this.guildId, nicknameMembers: options.nicknameMembers } : {}),
       animations: options.animations ?? options.timing === 'real',
       makeRequest: this.fd.makeRequest as never,
       ...(options.timing === 'real' ? {} : { timing: { frameDelayMs: 0, dealFrameMs: 0, spinFrameMs: 0, animationScale: 0, tableMinIntervalMs: 0, wheelMinIntervalMs: 0, lobbyDebounceMs: 0 } }),
@@ -104,6 +107,14 @@ export class CasinoHarness {
     const rec = this.fd.click(user, message, match);
     await this.bot.idle();
     return rec;
+  }
+
+  async openBlackjack(user: FakeUser, source?: FakeMessage | null, channelId = this.casino): Promise<InteractionRecord> {
+    const home = source ?? this.seen(await this.slash(user, 'casino', {}, channelId));
+    const games = this.seen(await this.click(user, home, 'Games'));
+    const tables = this.seen(await this.click(user, games, 'Blackjack'));
+    const create = await this.click(user, tables, 'Open a Blackjack table');
+    return this.submit(user, create, {});
   }
 
   async select(user: FakeUser, message: FakeMessage | null, prefix: string, values: string[]): Promise<InteractionRecord> {

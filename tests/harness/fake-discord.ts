@@ -76,6 +76,8 @@ export interface FakeMessage {
   type: number;
   /** For thread notices: the thread they point at. */
   referenceChannelId: string | null;
+  /** A member's own message (not the bot's); undefined for everything the bot posts. */
+  authorUser?: FakeUser;
 }
 
 export interface FakeChannel {
@@ -325,7 +327,7 @@ export class FakeDiscord {
       }
       return { status: 201, body: this.channelJson(thread) };
     }
-    if (s[1] === 'thread-members' && method === 'PUT') return { status: 204 };
+    if (s[1] === 'thread-members' && (method === 'PUT' || method === 'DELETE')) return { status: 204 };
     if (s[1] === 'messages') {
       if (s.length === 2 && method === 'GET') {
         const list = [...this.messages.values()].filter((m) => m.channelId === channel.id && !m.forUser && !m.deleted).reverse().slice(0, 50);
@@ -639,12 +641,23 @@ export class FakeDiscord {
     };
   }
 
+  /** A member writes in a channel (for tests that must prove their messages are never touched). */
+  postAsUser(user: FakeUser, channelId: string, content: string): FakeMessage {
+    const channel = this.channels.get(channelId)!;
+    const message: FakeMessage = {
+      id: snowflake(), channelId, guildId: channel.guildId, flags: 0, content, components: [], attachments: [],
+      forUser: null, edits: 0, deleted: false, loading: false, type: 0, referenceChannelId: null, authorUser: user,
+    };
+    this.messages.set(message.id, message);
+    return message;
+  }
+
   messageJson(m: FakeMessage): Json {
     return {
       id: m.id,
       channel_id: m.channelId,
       guild_id: m.guildId,
-      author: this.botUser,
+      author: m.authorUser ? this.userJson(m.authorUser) : this.botUser,
       content: m.content,
       timestamp: new Date().toISOString(),
       edited_timestamp: m.edits ? new Date().toISOString() : null,

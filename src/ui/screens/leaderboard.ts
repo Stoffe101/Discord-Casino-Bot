@@ -1,10 +1,11 @@
 import type { CasinoApp } from '../../app/casino-app.js';
 import { escapeMarkdown, truncate } from '../../core/format.js';
 import { LEADERBOARD_CATEGORIES, type LeaderboardCategory, type LeaderboardPeriod } from '../../domain/leaderboard-service.js';
+import { boardComponent } from '../navigation.js';
 import { cid } from '../custom-id.js';
 import { button, container, option, row, select, separator, text, type Screen } from '../kit.js';
 import { COLORS, ICONS } from '../theme.js';
-import { NAV, type Viewer } from './common.js';
+import { navRow, type Viewer } from './common.js';
 
 export const LEADERBOARD_PAGE = 10;
 
@@ -38,12 +39,15 @@ export function leaderboardScreen(
         ...info.periods.map((p) =>
           button({ id: cid('nav', 'lb', info.id, p, 0, 'p'), label: PERIOD_LABEL[p], tone: p === board.period ? 'primary' : 'secondary', disabled: p === board.period }),
         ),
+        // One page: Refresh lives here and the pager row is not shown at all.
+        board.pages <= 1 ? button({ id: cid('nav', 'lb', info.id, board.period, board.page, 'r'), label: 'Refresh', emoji: ICONS.refresh }) : null,
       )
     : null;
   const profileOptions = board.entries.map((e) => option(`#${e.rank} ${truncate(e.displayName || 'Player', 60)}`, e.userId, e.display));
   return {
     components: [
       container(COLORS.gold, [
+        navRow('leaderboard'),
         text(`## 🏆 ${info.label}\n-# ${PERIOD_LABEL[board.period]} · ${info.description}`),
         select({
           id: cid('lbcat', board.period),
@@ -53,14 +57,13 @@ export function leaderboardScreen(
         separator(),
         text(lines.length ? `${lines.join('\n')}\n\n${viewerLine}` : `Nobody is on this board yet — be the first!\n\n${viewerLine}`),
         periodButtons,
-        row(
-          button({ id: cid('nav', 'lb', info.id, board.period, board.page - 1), emoji: ICONS.back, disabled: board.page === 0 }),
+        board.pages <= 1 && periodButtons ? null : row(
+          button({ id: cid('nav', 'lb', info.id, board.period, board.page - 1), emoji: ICONS.prev, disabled: board.page === 0 }),
           button({ id: cid('nav', 'lb', info.id, board.period, 'page'), label: `Page ${board.page + 1} of ${board.pages}`, disabled: true }),
           button({ id: cid('nav', 'lb', info.id, board.period, board.page + 1), emoji: ICONS.next, disabled: board.page >= board.pages - 1 }),
           button({ id: cid('nav', 'lb', info.id, board.period, board.page, 'r'), label: 'Refresh', emoji: ICONS.refresh }),
-          button({ id: NAV.home, label: 'Home', emoji: ICONS.home }),
         ),
-        profileOptions.length ? select({ id: cid('lbpro', 'view'), placeholder: 'View a player’s profile…', options: profileOptions }) : null,
+        profileOptions.length ? select({ id: boardComponent('lbpro', viewer, { category: info.id, period: board.period, page: board.page }), placeholder: 'View a player’s profile…', options: profileOptions }) : null,
       ]),
     ],
   };

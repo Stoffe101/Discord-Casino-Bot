@@ -24,6 +24,8 @@ export function commandDefinitions(): RESTPostAPIApplicationCommandsJSONBody[] {
     slash('wallet', 'Your chips, passive income and transaction history'),
     slash('daily', 'Claim your daily chip reward'),
     slash('blackjack', 'Find a blackjack table or open your own'),
+    slash('games', 'Open the gaming floor: every game in one place'),
+    slash('holdem', 'Find a Hold’em poker table or open your own'),
     slash('roulette', 'Go to the roulette wheel'),
     slash('slots', 'Play your personal slot machine'),
     slash('help', 'How the casino works'),

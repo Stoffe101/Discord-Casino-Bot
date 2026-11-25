@@ -22,7 +22,7 @@ describe('blackjack animation frames', () => {
     h = new CasinoHarness({ allowThreads: true });
     h.fd.recording = true;
     const [alex, hanna] = [h.user('Alex'), h.user('Hanna')];
-    await h.click(alex, h.seen(await h.slash(alex, 'casino')), 'Play Blackjack');
+    await h.openBlackjack(alex);
     const tableId = h.app.blackjack.tableOfUser(h.guildId, alex.id)!.record.id;
     const panelId = h.tablePanel(tableId).id;
     // Alex 10+9, Hanna 10+7 · dealer 6 up, 10 hole, then draws 5 (21).
@@ -35,7 +35,7 @@ describe('blackjack animation frames', () => {
     expect(dealIndex).toBeGreaterThan(-1);
     expect(frames[dealIndex]!.buttons.map((b) => b.label)).not.toContain('Hit'); // no controls mid-deal
     expect(frames.at(-1)!.text).toContain('Alex to act');
-    expect(frames.at(-1)!.text).toContain('Hanna — 10♣ 7♠ **17**'); // every hand in the summary
+    expect(frames.at(-1)!.text).toContain('**Hanna** · 10♣  7♠ → **17**'); // every hand in the summary
     expect(frames.at(-1)!.text).toContain('dealer shows 6♦');
 
     await h.click(alex, h.tablePanel(tableId), 'Stand');
@@ -55,7 +55,7 @@ describe('blackjack animation frames', () => {
   it('marks the card that just arrived', async () => {
     h = new CasinoHarness();
     const alex = h.user('Alex');
-    await h.click(alex, h.seen(await h.slash(alex, 'casino')), 'Play Blackjack');
+    await h.openBlackjack(alex);
     const tableId = h.app.blackjack.tableOfUser(h.guildId, alex.id)!.record.id;
     await h.app.blackjack.debugSetShoe(tableId, ['5S', '9D', '4H', 'TD', '3C'] as Card[]);
     await h.click(alex, h.tablePanel(tableId), '25');
@@ -69,14 +69,14 @@ describe('blackjack animation frames', () => {
 
 describe('other game animations', () => {
   async function hub(user: ReturnType<CasinoHarness['user']>) {
-    return h.seen(await h.click(user, h.seen(await h.slash(user, 'casino'))!, 'More Games'))!;
+    return h.seen(await h.click(user, h.seen(await h.slash(user, 'casino'))!, 'Games'))!;
   }
 
   it('slots: reels stop in turn, controls locked and balance unchanged until the result', async () => {
     h = new CasinoHarness();
     h.fd.recording = true;
     const alex = h.user('Alex');
-    const machine = h.seen(await h.click(alex, await hub(alex), 'Play slots'))!;
+    const machine = h.seen(await h.click(alex, await hub(alex), 'Slots'))!;
     const before = h.balance(alex);
     const spin = h.buttons(machine).find((b) => b.label?.startsWith('Spin'))!;
     const rec = await h.click(alex, machine, spin.label!);
@@ -94,12 +94,12 @@ describe('other game animations', () => {
     h = new CasinoHarness();
     h.fd.recording = true;
     const alex = h.user('Alex');
-    await h.click(alex, await hub(alex), 'Open the wheel');
+    await h.click(alex, await hub(alex), 'Roulette');
     const record = h.app.roulette.wheelFor(h.guildId)!.record;
     const panel = () => h.fd.messages.get(h.app.roulette.peek(record.id)!.record.messageId!)!;
     const select = findComponents(panel().components, 3)[0]!;
     await h.submit(alex, await h.select(alex, panel(), select.custom_id, ['red']), { amount: 'half' });
-    expect(h.app.roulette.peek(record.id)!.state.bets[0]!.amount).toBe(Math.min(500, Math.floor(1000 / 2)));
+    expect(h.app.roulette.peek(record.id)!.state.bets[0]!.amount).toBe(Math.min(500, Math.floor(h.app.settings.get(h.guildId).economy.startingBalance / 2)));
     await h.advance(h.app.settings.get(h.guildId).roulette.bettingSeconds * 1000 + 500);
     await h.app.roulette.idle();
     await h.settle();
@@ -115,7 +115,8 @@ describe('other game animations', () => {
     h = new CasinoHarness();
     h.fd.recording = true;
     const [alex, hanna] = [h.user('Alex'), h.user('Hanna')];
-    const sent = await h.submit(alex, await h.select(alex, await hub(alex), 'cf:pick', [hanna.id]), { amount: '1k', call: 'heads' });
+    h.app.settings.set(h.guildId, 'economy.startingBalance', 1000);
+    const sent = await h.submit(alex, await h.select(alex, h.seen(await h.click(alex, await hub(alex), 'Coinflip')), 'cf:pick', [hanna.id]), { amount: '1k', call: 'heads' });
     const card = h.seen(sent)!;
     expect(h.app.economy.getWallet(h.guildId, alex.id).reserved).toBe(Math.min(1000, h.app.settings.get(h.guildId).coinflip.maxBet));
     await h.click(hanna, card, /^Accept/);
@@ -129,8 +130,8 @@ describe('animation safety', () => {
   it('slots never stay stuck mid-spin when an animation edit fails', async () => {
     h = new CasinoHarness();
     const alex = h.user('Alex');
-    const hubMessage = h.seen(await h.click(alex, h.seen(await h.slash(alex, 'casino'))!, 'More Games'))!;
-    const machine = h.seen(await h.click(alex, hubMessage, 'Play slots'))!;
+    const hubMessage = h.seen(await h.click(alex, h.seen(await h.slash(alex, 'casino'))!, 'Games'))!;
+    const machine = h.seen(await h.click(alex, hubMessage, 'Slots'))!;
     // Every edit of the interaction's message fails (e.g. a network blip after the first frame).
     h.fd.fault = (method, route) => (method === 'PATCH' && route.startsWith('/webhooks/') ? { status: 500, body: { code: 0, message: 'boom' } } : null);
     const spin = h.buttons(machine).find((b) => b.label?.startsWith('Spin'))!;
@@ -155,7 +156,7 @@ describe('animation safety', () => {
     h = new CasinoHarness();
     h.app.settings.set(h.guildId, 'blackjack.maxSeats', 7);
     const players = Array.from({ length: 7 }, (_, i) => h.user(`${'W'.repeat(28)}${i}`));
-    await h.click(players[0]!, h.seen(await h.slash(players[0]!, 'casino')), 'Play Blackjack');
+    await h.openBlackjack(players[0]!);
     const tableId = h.app.blackjack.tableOfUser(h.guildId, players[0]!.id)!.record.id;
     for (const p of players) await h.click(p, h.tablePanel(tableId), '25');
     await h.advance(ALL_IN_DEAL_DELAY_MS);

@@ -32,7 +32,7 @@ describe('resilience through Discord', () => {
     const [alice, bob] = [first.user('Alice'), first.user('Bob')];
     const admin = first.user('Admin', true);
     await first.slash(admin, 'casinoadmin', { subcommand: 'setup' });
-    await first.click(alice, first.seen(await first.slash(alice, 'casino')), 'Play Blackjack');
+    await first.openBlackjack(alice);
     const tableId = first.app.blackjack.tableOfUser(first.guildId, alice.id)!.record.id;
     await first.app.blackjack.debugSetShoe(tableId, ['TS', '9C', '7S', '6H', '8D', 'TD', '4C', '2H'] as Card[]);
     await first.click(alice, first.tablePanel(tableId), '100');
@@ -63,7 +63,7 @@ describe('resilience through Discord', () => {
     cleanup.push(() => h.close());
     h.fd.latencyMs = 60;
     const players = Array.from({ length: 5 }, (_, i) => h.user(`P${i}`));
-    await h.click(players[0]!, h.seen(await h.slash(players[0]!, 'casino')), 'Play Blackjack');
+    await h.openBlackjack(players[0]!);
     const tableId = h.app.blackjack.tableOfUser(h.guildId, players[0]!.id)!.record.id;
     // Five bets land at once; renders overlap with in-flight edits.
     for (const [i, p] of players.entries()) h.fd.click(p, h.tablePanel(tableId), ['10', '25', '100', '250', '500'][i]!);
@@ -78,7 +78,7 @@ describe('resilience through Discord', () => {
     const h = new CasinoHarness();
     cleanup.push(() => h.close());
     const alice = h.user('Alice');
-    await h.click(alice, h.seen(await h.slash(alice, 'casino')), 'Play Blackjack');
+    await h.openBlackjack(alice);
     const tableId = h.app.blackjack.tableOfUser(h.guildId, alice.id)!.record.id;
     const original = h.tablePanel(tableId);
     original.deleted = true; // a moderator deleted the message
@@ -95,7 +95,7 @@ describe('resilience through Discord', () => {
     const h = new CasinoHarness();
     cleanup.push(() => h.close());
     const [alice, bob] = [h.user('Alice'), h.user('Bob')];
-    await h.click(alice, h.seen(await h.slash(alice, 'casino')), 'Play Blackjack');
+    await h.openBlackjack(alice);
     const tableId = h.app.blackjack.tableOfUser(h.guildId, alice.id)!.record.id;
     await h.click(alice, h.tablePanel(tableId), '25');
     await h.click(bob, h.tablePanel(tableId), '25');

@@ -46,7 +46,9 @@ import type {
 /** Extra time after a visible turn deadline before the timeout fires (network latency). */
 export const TURN_GRACE_MS = 2_000;
 /** When every seated player has bet, the deal happens this soon (lets people change their bet). */
-export const ALL_IN_DEAL_DELAY_MS = 3_000;
+export const ALL_IN_DEAL_DELAY_MS = 1_500;
+/** A solo player's deal follows their bet after this beat: room for a quick second chip, cards on screen within about a second. */
+export const SOLO_DEAL_DELAY_MS = 400;
 /** Consecutive timeouts before a player is automatically sat out. */
 export const TIMEOUTS_BEFORE_SIT_OUT = 2;
 /** Consecutive hands dealt without this player betting before they are sat out. */
@@ -98,6 +100,18 @@ export interface CreateTableInput {
   cardBackId?: string;
 }
 
+/**
+ * Asked before an otherwise idle table is closed: true keeps it open (e.g. it is assigned to a
+ * casino event that is due). Implementations must be bounded in time — never a permanent hold.
+ */
+export type IdleExemption = (tableId: string, guildId: string, now: number) => boolean;
+
+/** Throws a UserError when a table may not be opened (checked before anything is created). */
+export type CreationCheck = (guildId: string, options: { isPrivate: boolean }) => void;
+
+export const PRIVATE_TABLES_NEED_THREADS =
+  'Private tables live in private threads, and table threads are not available on this server. Open a public table instead, or ask a server manager to turn table threads on.';
+
 export interface TableServiceDeps {
   db: Database;
   economy: EconomyService;
@@ -107,6 +121,7 @@ export interface TableServiceDeps {
   scheduler: Scheduler;
   logger: Logger;
   rng?: Rng;
+  idleExempt?: IdleExemption;
 }
 
 export function rulesFromSettings(s: GuildSettings['blackjack']): BlackjackRules {
@@ -144,7 +159,12 @@ export class BlackjackTableService {
   private readonly scheduler: Scheduler;
   private readonly logger: Logger;
   private readonly rng: Rng;
+  private readonly idleExempt: IdleExemption | undefined;
   private observer: TableObserver = { tableChanged: () => undefined, tableClosed: () => undefined };
+  /** Without a Discord adapter, private tables still require table threads to be enabled. */
+  private creationCheck: CreationCheck = (guildId, { isPrivate }) => {
+    if (isPrivate && !this.settings(guildId).tables.useThreads) throw new UserError(PRIVATE_TABLES_NEED_THREADS, 'private_unavailable', 'Private tables unavailable');
+  };
 
   constructor(deps: TableServiceDeps) {
     this.db = deps.db;
@@ -155,10 +175,16 @@ export class BlackjackTableService {
     this.scheduler = deps.scheduler;
     this.logger = deps.logger.child({ component: 'blackjack' });
     this.rng = deps.rng ?? secureRng;
+    this.idleExempt = deps.idleExempt;
   }
 
   setObserver(observer: TableObserver): void {
     this.observer = observer;
+  }
+
+  /** The Discord adapter refuses tables it could not host (no casino channel, no private threads). */
+  setCreationCheck(check: CreationCheck): void {
+    this.creationCheck = check;
   }
 
   // ───────────────────────────── queries ─────────────────────────────
@@ -229,6 +255,7 @@ export class BlackjackTableService {
     const settings = this.settings(input.guildId);
     if (!settings.enabled) throw new UserError('The casino is closed right now.', 'casino_closed');
     if (!settings.blackjack.enabled) throw new UserError('Blackjack is disabled on this server.', 'game_disabled');
+    this.creationCheck(input.guildId, { isPrivate: input.isPrivate ?? false });
     return this.queue.run(`guild:${input.guildId}:create`, () => {
       const openCount =
         this.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM game_tables WHERE guild_id = ? AND status = 'open'", [input.guildId])
@@ -338,12 +365,15 @@ export class BlackjackTableService {
    * Close a table. Allowed between rounds; `force` (admins, unrecoverable errors) also voids a
    * round in progress, refunding every stake atomically.
    */
-  async closeTable(tableId: string, reason: string, options: { force?: boolean; actorId?: string } = {}): Promise<void> {
+  async closeTable(tableId: string, reason: string, options: { force?: boolean; actorId?: string; idleAsOf?: number } = {}): Promise<void> {
     await this.queue.run(tableId, () => {
       const rt = this.tables.get(tableId);
       if (!rt) return;
       const { record, state } = rt;
-      if (options.actorId && options.actorId !== record.ownerId && !options.force) {
+      if (options.idleAsOf !== undefined && !this.idleReason(record, state, options.idleAsOf)) return;
+      // The host must still be seated: an old "Close table" control of someone who left is refused.
+      const actorIsHost = options.actorId === record.ownerId && state.seats.some((s) => s.userId === options.actorId);
+      if (options.actorId && !actorIsHost && !options.force) {
         throw new UserError('Only the table host can close this table.', 'not_host');
       }
       if (state.phase !== 'betting' && !options.force) {
@@ -396,10 +426,16 @@ export class BlackjackTableService {
       if (state.seats.length >= record.config.maxSeats) {
         throw new UserError('This table is full. You can spectate, or open a new table.', 'table_full', 'Table full');
       }
+      // An emptied table keeps its departed host's id; whoever sits down first takes over.
+      const hostSeated = state.seats.some((s) => s.userId === record.ownerId);
       const seat = this.seatPlayer(record, state, userId, displayName, now);
       this.insertSeatRow(record, seat);
       const inRound = state.phase !== 'betting';
       pushLog(state, now, inRound ? `${displayName} sat down — playing from the next hand` : `${displayName} sat down`, 'info');
+      if (!hostSeated && record.ownerId !== userId) {
+        record.ownerId = userId;
+        pushLog(state, now, `${displayName} is now the table host`, 'info');
+      }
       return { value: { ...seat } };
     });
   }
@@ -473,7 +509,7 @@ export class BlackjackTableService {
     return this.mutate(tableId, origin, (ctx) => {
       const { record, state } = ctx;
       if (state.phase !== 'betting') {
-        throw new StaleActionError('Bets are closed for this hand — you can bet again when it finishes.');
+        throw new StaleActionError('The cards are already out — you can bet again when this hand finishes.', 'Bets are closed');
       }
       const seat = state.seats.find((s) => s.userId === userId);
       if (!seat) throw new UserError('Take a seat first, then place your bet.', 'not_seated');
@@ -519,13 +555,16 @@ export class BlackjackTableService {
     });
   }
 
-  /** Deal immediately (host only, when at least one bet is in). */
-  async dealNow(tableId: string, userId: string, origin?: object): Promise<void> {
-    await this.mutate(tableId, origin, (ctx) => {
-      if (ctx.state.phase !== 'betting') throw new StaleActionError('The cards are already out.');
+  /** Deal the displayed betting round once, even when the automatic timer wins the race. */
+  async dealNow(tableId: string, userId: string, origin?: object, expectedRoundId?: string): Promise<'dealt' | 'refresh'> {
+    return this.mutate<'dealt' | 'refresh'>(tableId, origin, (ctx) => {
       if (ctx.record.ownerId !== userId) throw new UserError('Only the table host can deal early.', 'not_host');
-      if (Object.keys(ctx.state.bets).length === 0) throw new UserError('Nobody has bet yet.', 'no_bets');
-      return { value: undefined, hint: this.deal(ctx) };
+      const { state } = ctx;
+      if (state.phase !== 'betting' || (expectedRoundId !== undefined && expectedRoundId !== state.roundId)) {
+        return { value: 'refresh', unchanged: true };
+      }
+      if (Object.keys(state.bets).length === 0) throw new UserError('Nobody has bet yet.', 'no_bets');
+      return { value: 'dealt', hint: this.deal(ctx) };
     });
   }
 
@@ -632,22 +671,27 @@ export class BlackjackTableService {
     }
   }
 
-  /** Close tables that have been idle too long (never while a round is in progress). */
+  private idleReason(record: TableRecord, state: BlackjackTableState, now: number): string | undefined {
+    if (state.phase !== 'betting' || Object.keys(state.bets).length > 0) return;
+    const { idleEmptyMinutes, idleMinutes } = this.settings(record.guildId).tables;
+    const empty = state.seats.length === 0;
+    if (now - record.lastActivityAt < (empty ? idleEmptyMinutes : idleMinutes) * 60_000) return;
+    if (this.idleExempt?.(record.id, record.guildId, now)) return;
+    return empty ? 'empty table' : 'closed after inactivity';
+  }
+
+  /** Close idle tables without racing a queued wager or a seating change. */
   async sweepIdle(): Promise<string[]> {
     const closed: string[] = [];
     const now = this.clock.now();
     for (const { record, state } of this.allOpenTables()) {
-      if (state.phase !== 'betting' || Object.keys(state.bets).length > 0) continue;
-      const { idleEmptyMinutes, idleMinutes } = this.settings(record.guildId).tables;
-      const idleFor = now - record.lastActivityAt;
-      const limit = (state.seats.length === 0 ? idleEmptyMinutes : idleMinutes) * 60_000;
-      if (idleFor >= limit) {
-        try {
-          await this.closeTable(record.id, state.seats.length === 0 ? 'empty table' : 'no bets for a while');
-          closed.push(record.id);
-        } catch (error) {
-          this.logger.warn('idle close failed', { tableId: record.id, error });
-        }
+      const reason = this.idleReason(record, state, now);
+      if (!reason) continue;
+      try {
+        await this.closeTable(record.id, reason, { idleAsOf: now });
+        if (!this.tables.has(record.id)) closed.push(record.id);
+      } catch (error) {
+        this.logger.warn('idle close failed', { tableId: record.id, error });
       }
     }
     return closed;
@@ -785,6 +829,9 @@ export class BlackjackTableService {
         return r;
       });
       if (result.unchanged) return result.value;
+      if (draft.roundNumber > rt.state.roundNumber) {
+        this.logger.debug('blackjack deal committed', { tableId, hand: draft.roundNumber, phase: draft.phase, at: Date.now() });
+      }
       record.version++;
       record.lastActivityAt = now;
       rt.record = record;
@@ -910,7 +957,8 @@ export class BlackjackTableService {
     if (state.phase !== 'betting' || state.deadline === null) return;
     const active = state.seats.filter((s) => !s.sittingOut && !s.leaving);
     if (active.length > 0 && active.every((s) => state.bets[s.userId])) {
-      state.deadline = Math.min(state.deadline, now + ALL_IN_DEAL_DELAY_MS);
+      // Alone at the table there is nobody to wait for: a short beat to stack another chip, then deal.
+      state.deadline = Math.min(state.deadline, now + (state.seats.length === 1 ? SOLO_DEAL_DELAY_MS : ALL_IN_DEAL_DELAY_MS));
     }
   }
 
@@ -950,6 +998,7 @@ export class BlackjackTableService {
       state.shoe = [];
       state.shoeSize = 0;
     }
+    this.logger.debug('blackjack deal started', { tableId: record.id, hand: state.roundNumber + 1, deadline: state.deadline, at: Date.now() });
     const round = startRound({ id: state.roundId, rules, shoe: state.shoe, shoeSize: state.shoeSize, seats: playable }, this.rng);
     state.roundNumber++;
     state.bets = {};

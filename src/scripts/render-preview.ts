@@ -18,6 +18,9 @@ import { bannerSvg, coinSvg, rouletteSvg, slotsSvg, stylePreviewSvg } from '../r
 import { svgToPng } from '../render/png.js';
 import { currentTurnUserId } from '../games/blackjack/engine.js';
 import { spinFromStops } from '../games/slots/engine.js';
+import { dealPoker, playPoker, publicPokerHand } from '../games/poker/engine.js';
+import { pokerTableSvg } from '../render/poker-image.js';
+import { framesToGif } from '../render/gif.js';
 import type { Card } from '../games/cards.js';
 
 async function main(): Promise<void> {
@@ -35,6 +38,7 @@ async function main(): Promise<void> {
   const scheduler = new ManualScheduler(clock);
   const app = new CasinoApp({ db, logger: new Logger({ level: 'error' }), clock, scheduler, rng: seededRng(3) });
   const G = 'preview';
+  app.settings.set(G, 'economy.startingBalance', 1000);
   const names = ['Alex', 'Hanna', 'Christoffer', 'Maja', 'Oskar'];
   names.forEach((name, i) => app.economy.ensurePlayer(G, `u${i}`, name));
   const table = await app.blackjack.createTable({ guildId: G, ownerId: 'u0', ownerName: 'Alex', name: 'The Velvet Rope' });
@@ -74,6 +78,20 @@ async function main(): Promise<void> {
   await save('slots', slotsSvg({ rows: jackpot.rows, win: true, label: jackpot.label, bet: 10, payout: 2000 }), 640);
   await save('coin', coinSvg('heads'), 420);
   await save('cosmetics', stylePreviewSvg('burgundy', 'royal'), 560);
+  const roster = ['Alex', 'Hanna', 'Chris', 'Maja', 'Oskar', 'Linnea'];
+  const pokerNames = Object.fromEntries(roster.map((name, i) => [String(i), name]));
+  let poker = dealPoker(roster.map((_, seat) => ({ seat, userId: String(seat), stack: 250 })), 0, 5, 10, seededRng(8));
+  const firstFrame = pokerTableSvg(publicPokerHand(poker), pokerNames);
+  await save('poker-preflop', firstFrame, 840);
+  while (poker.street === 'preflop') {
+    poker = playPoker(poker, String(poker.actor), poker.seq, { type: poker.actor === poker.bigBlindSeat ? 'check' : 'call' });
+  }
+  const flopFrame = pokerTableSvg(publicPokerHand(poker), pokerNames);
+  await save('poker-flop', flopFrame, 840);
+  if (!process.argv.includes('--docs')) {
+    const { gif } = await framesToGif([{ svg: firstFrame, delayMs: 1200 }, { svg: flopFrame, delayMs: 1800 }], 640);
+    writeFileSync(join(out, 'poker-streets.gif'), gif);
+  }
   db.close();
 }
 

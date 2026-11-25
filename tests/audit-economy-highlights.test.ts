@@ -110,11 +110,13 @@ describe('wager floor applies to every big-win tier', () => {
 
 describe('Hold’em highlights through the real PokerTableService', () => {
   async function headsUpShove(seed: number, bigStack: number, shortStack: number) {
-    const { app } = makeApp(seededRng(seed));
+    const { app, clock } = makeApp(seededRng(seed));
     app.settings.set(G, 'poker.enabled', true);
     app.settings.set(G, 'poker.maxBuyIn', Math.max(bigStack, shortStack));
     fund(app, 'big', bigStack);
     fund(app, 'short', shortStack);
+    // Established accounts: this is about highlight labels, not the first-day Hold'em limit.
+    clock.advance(25 * 3_600_000);
     const table = await app.poker.create({ guildId: G, userId: 'big', name: 'Big', buyIn: bigStack });
     const id = table.record.id;
     await app.poker.join(id, 'short', 'Short', shortStack);

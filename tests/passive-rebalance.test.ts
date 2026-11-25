@@ -72,7 +72,9 @@ it('credits income earned at the old rate once, then accrues at 8/h', () => {
   expect(player(db, G, 'veteran').highest_balance).toBeGreaterThanOrEqual(start + 480);
   expect(app.economy.reconcile()).toEqual([]);
 
-  // Accrual restarted at the new settings: nothing waiting now, 8 per hour from here.
+  // Accrual restarted at the new settings, from the moment the migration ran (SQLite's clock):
+  // nothing waiting now, 8 per hour from here.
+  clock.set(player(db, G, 'veteran').passive_anchor_at);
   expect(app.economy.getWallet(G, 'veteran').passive.available).toBe(0);
   clock.advance(10 * HOUR);
   expect(app.economy.getWallet(G, 'veteran').passive).toMatchObject({ available: 80, ratePerHour: 8, cap: 384 });

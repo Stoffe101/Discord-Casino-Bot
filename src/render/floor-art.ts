@@ -184,6 +184,44 @@ export function floorSvg(open: Record<FloorTile, boolean>): string {
 }
 
 /**
+ * The Games screen's banner: one wide, decorative scene (no tiles, frames or game names, so it never
+ * reads as a menu), with the title on the left and the floor's objects drifting along a felt rail.
+ * 960×260: about half the height of the old 3×2 tile grid. The controls are the buttons below it.
+ */
+export function floorBannerSvg(): string {
+  const W = 960;
+  const H = 260;
+  const pieces: Array<[FloorTile, number, number, number]> = [
+    ['roulette', 520, 4, 0.78],
+    ['poker', 738, 126, 0.44],
+    ['blackjack', 640, 82, 0.6],
+    ['slots', 790, 6, 0.58],
+    ['coinflip', 842, 148, 0.42],
+  ];
+  return svgDoc(W, H,
+    `<rect width="${W}" height="${H}" rx="16" fill="url(#floorGlow)"/>`
+      // A curved felt rail sweeping under the objects, with a gold edge: atmosphere, not a frame.
+      + `<path d="M420 ${H} C 560 ${H * 0.6}, 760 ${H * 0.5}, ${W} ${H * 0.55} V${H} Z" fill="#0f3a2a" opacity=".9"/>`
+      + `<path d="M420 ${H} C 560 ${H * 0.6}, 760 ${H * 0.5}, ${W} ${H * 0.55}" fill="none" stroke="${GOLD}" stroke-opacity=".45" stroke-width="2"/>`
+      + `<ellipse cx="740" cy="${H * 0.42}" rx="290" ry="${H * 0.62}" fill="#1d6b4c" opacity=".16"/>`
+      + pieces.map(([id, x, y, sc]) => `<g transform="translate(${x} ${y}) scale(${sc})">${ART[id]()}</g>`).join('')
+      + `<text x="46" y="84" font-family="Manrope" font-weight="800" font-size="15" letter-spacing="6" fill="${GOLD}">THE EMERALD ROOM</text>`
+      + `<text x="44" y="138" font-family="Cinzel" font-weight="900" font-size="44" fill="${CREAM}">The Gaming Floor</text>`
+      + `<path d="M46 160h260" stroke="${GOLD}" stroke-width="1.5" opacity=".7"/>`
+      + `<text x="46" y="194" font-family="Manrope" font-weight="700" font-size="18" fill="#cfe3d8">Pull up a chair. The cards are warm.</text>`
+      + `<rect x="8" y="8" width="${W - 16}" height="${H - 16}" rx="11" fill="none" stroke="${GOLD}" stroke-opacity=".35" stroke-width="1.2"/>`,
+    DEFS);
+}
+
+export function floorBanner(): Promise<ArtFile | undefined> {
+  return cached('banner', async () => ({
+    name: 'emerald-gaming-floor.png',
+    data: await svgToPng(floorBannerSvg(), 960),
+    description: 'The Emerald Room gaming floor: a roulette wheel, playing cards, chips, a slot machine and a gold coin.',
+  }));
+}
+
+/**
  * The public lobby's sign: the casino's name in gold over deep emerald, with the games laid out
  * along the right like a lit gaming floor seen through the door.
  */

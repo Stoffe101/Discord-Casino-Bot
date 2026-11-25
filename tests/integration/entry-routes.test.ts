@@ -20,7 +20,7 @@ function setup() {
 describe('entry routes', () => {
   it('slash commands open the matching screens', async () => {
     const alex = setup();
-    expect(h.text(h.seen(await h.slash(alex, 'games')))).toContain('The Gaming Floor');
+    expect(h.text(h.seen(await h.slash(alex, 'games')))).toContain('Live now');
     const bj = h.seen(await h.slash(alex, 'blackjack'))!;
     expect(h.text(bj)).toContain('Blackjack tables');
     expect(h.buttons(bj).map((b) => b.label)).toContain('Open a Blackjack table');

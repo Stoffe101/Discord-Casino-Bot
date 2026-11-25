@@ -27,7 +27,7 @@ import {
   type Screen,
 } from '../kit.js';
 import { COLORS, ICONS } from '../theme.js';
-import { FLOOR_ORDER, floorArt, type FloorTile } from '../../render/floor-art.js';
+import { FLOOR_ORDER, floorBanner, type FloorTile } from '../../render/floor-art.js';
 import { NAV, navRow, type Viewer } from './common.js';
 
 /** Extra time after a GIF's own length, so clients that load it a moment late still see it end. */
@@ -52,23 +52,21 @@ export async function gamesHubScreen(app: CasinoApp, viewer: Viewer): Promise<Sc
     coinflip: gameEnabled(settings, 'coinflip'),
     events: settings.enabled,
   };
-  const art = await floorArt(open);
+  const art = await floorBanner();
   const bj = app.blackjack.openTables(viewer.guildId);
   const pk = app.poker.openTables(viewer.guildId);
   const wheel = app.roulette.wheelFor(viewer.guildId);
   const bettors = wheel ? new Set(wheel.state.bets.map((bet) => bet.userId)).size : 0;
-  const playing = (n: number) => (n === 1 ? '1 player' : `${n} players`);
-  const tables = (n: number) => (n === 1 ? '1 table' : `${n} tables`);
+  const people = (n: number) => (n === 1 ? '1 player' : `${n} players`);
+  const tables = (n: number, game: string) => `${n} ${game} ${n === 1 ? 'table' : 'tables'}`;
+  const seated = (list: { state: { seats: unknown[] } }[]) => list.reduce((sum, t) => sum + t.state.seats.length, 0);
   const next = app.events.upcoming(viewer.guildId, viewer.userId)[0];
-  const status = [
-    `${ICONS.blackjack} **Blackjack** · ${bj.length ? `${tables(bj.length)} · ${playing(bj.reduce((sum, t) => sum + t.state.seats.length, 0))}` : 'no tables yet'} · bets ${chips(settings.blackjack.minBet)}–${chips(settings.blackjack.maxBet)}`,
-    settings.poker.enabled
-      ? `${ICONS.poker} **Hold’em** · ${pk.length ? `${tables(pk.length)} · ${playing(pk.reduce((sum, t) => sum + t.state.seats.length, 0))}` : 'no tables yet'} · blinds ${chips(settings.poker.smallBlind)}/${chips(settings.poker.bigBlind)}`
-      : null,
-    `${ICONS.roulette} **Roulette** · ${bettors ? `${playing(bettors)} betting now` : 'the wheel is waiting for bets'} · ${chips(settings.roulette.minBet)}–${chips(settings.roulette.maxBet)}`,
-    `${ICONS.slots} **Slots** · your own machine · ${chips(settings.slots.minBet)}–${chips(settings.slots.maxBet)}`,
-    `${ICONS.coinflip} **Coinflip** · challenge a friend · ${chips(settings.coinflip.minBet)}–${chips(settings.coinflip.maxBet)}`,
-    `${ICONS.events} **Events** · ${next ? `next: ${escapeMarkdown(truncate(next.title, 40))} ${discordTime(next.starts_at)}` : 'nothing scheduled yet'}`,
+  // Only what is actually happening: the art sets the mood, the buttons navigate, this says what's live.
+  const live = [
+    bj.length ? `${ICONS.blackjack} ${tables(bj.length, 'Blackjack')} · ${people(seated(bj))}` : null,
+    pk.length && settings.poker.enabled ? `${ICONS.poker} ${tables(pk.length, 'Hold’em')} · ${people(seated(pk))}` : null,
+    bettors ? `${ICONS.roulette} The wheel has ${people(bettors)} betting · spins soon` : null,
+    next ? `${ICONS.events} ${escapeMarkdown(truncate(next.title, 40))} · ${discordTime(next.starts_at)}` : null,
   ].filter(Boolean);
   const play = (id: FloorTile) => {
     const game = id === 'events' ? null : GAMES.find((g) => g.id === id)!;
@@ -82,15 +80,16 @@ export async function gamesHubScreen(app: CasinoApp, viewer: Viewer): Promise<Sc
     components: [
       container(COLORS.emerald, [
         navRow('games'),
-        text('## The Gaming Floor\n-# Tables and the wheel are shared with everyone. Slots is your own machine.'),
-        art ? gallery([{ url: `attachment://${art.name}`, description: art.description }]) : null,
+        art ? gallery([{ url: `attachment://${art.name}`, description: art.description }]) : text('## The Gaming Floor'),
         row(...FLOOR_ORDER.slice(0, 3).map(play)),
         row(...FLOOR_ORDER.slice(3).map(play)),
-        text(`-# ${status.join('\n-# ')}`),
+        text(live.length
+          ? `**Live now**\n-# ${live.join('\n-# ')}`
+          : '**Live now**\n-# The floor is quiet. Open a table and it shows up in the lobby for everyone.'),
         select({
           id: cid('nav', 'rules'),
-          placeholder: '📖  Rules and how to play…',
-          options: rules.map((game) => option(game.id === 'slots' ? 'Emerald Slots — paytable' : `${game.label} — how to play`, game.id, undefined, game.icon)),
+          placeholder: `${ICONS.rules} Game rules`,
+          options: rules.map((game) => option(game.id === 'slots' ? 'Emerald Slots' : game.label, game.id, game.id === 'slots' ? 'Paytable and odds' : 'How to play', game.icon)),
         }),
       ]),
     ],

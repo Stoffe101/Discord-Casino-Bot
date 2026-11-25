@@ -302,3 +302,84 @@ For a future coordinated rollout:
   thread access, each player's My hand, flop through showdown, and both cash-outs.
 - Create an event with a future offset-qualified time. Have a second player register, assign
   an owned matching table, start when ready and confirm the table link from both accounts.
+
+## Economy rebalance (2026-11)
+
+**Change.** The default passive income is now **8 chips per hour, stored for up to 48 hours**.
+It was 20 per hour for up to 24 hours, so at most 384 chips can wait instead of 480. No other
+economy default changed.
+
+**Evidence.** Run `npx tsx src/scripts/simulate-economy.ts [--seeds N] [--json] [--only 20/24,8/48]`.
+The script drives the real app (ledger, escrow, Hold'em stacks, missions, achievements, relief
+and gifts) for 52 seeded players over 180 days. The players are infrequent, regular,
+Blackjack-focused, Hold'em-focused, roulette, slots, reward collectors and late joiners, with
+fixed and balance-proportional stakes. Visits are drawn from their own seeded stream, so every
+scenario sees the same visits, and two runs produce identical output. The table shows means
+across seeds 20261125 and 20261126:
+
+| Passive | Day | Chips created | Passive share | Wallet p10 / p50 / p90 | p50 ÷ max bet (500) |
+|---|---|---|---|---|---|
+| 20/h, 24 h (old) | 90 | 1.82M | 70% | 13.4k / 33.8k / 54.1k | 68 |
+| | 180 | 3.66M | 72% | 29.5k / 66.7k / 106.7k | 133 |
+| 10/h, 24 h | 90 | 1.18M | 54% | 7.3k / 20.8k / 36.9k | 42 |
+| **8/h, 48 h (new)** | 90 | 1.21M | 56% | 8.3k / 22.7k / 37.3k | 45 |
+| | 180 | 2.40M | 58% | 23.0k / 43.2k / 70.7k | 86 |
+| off (reference) | 180 | 1.01M | 0% | 7.0k / 14.6k / 39.5k | 29 |
+
+The table was produced before another session's first-day Hold'em buy-in limit landed. With that
+limit, the script now falls back to the minimum buy-in. A one-seed rerun of 8/h, 48 h moved chips
+created by under 0.2% and that seed's day-90 median from 20.7k to 21.3k.
+
+**Why 8/h with a 48-hour cap.**
+- About a third fewer chips are created at every horizon, about the same as 10/h with a 24-hour cap.
+- Visiting every other day now earns as much passive income as visiting daily, which takes away
+  the pressure to check in every day.
+- The day-180 median of reward collectors versus infrequent players narrows from 3.6× to 2.4×.
+
+Shortfalls stay rare in every scenario:
+- With passive income at 5/h or more, no visit wanted a stake the player could not afford, and
+  nobody was blocked from playing.
+- At 8/h, 48 h there were 2 busts and 1 relief claim in 2,107 visits during days 1–30, and none
+  after that.
+- Only with passive income off did any visit want an unaffordable stake: 5 of about 4,500
+  intended plays. That scenario also had 18 relief claims in the first 30 days (0.85 per 100
+  visits).
+
+The older "46%" figure divided passive income by grants plus house payouts. On that basis
+passive income is now 23% at 90 days, down from 35%.
+
+**What this does not fix.** Daily rewards, missions and achievements still grant about 100 chips
+per player per day. The house edge removes only about 1% of what is created, which is within
+noise. Even with passive income off, the median wallet holds about 29 maximum bets by day 180.
+Keeping 10–500 stakes meaningful for months needs a decision on those other sources, or chip
+sinks or higher limits. None of that was changed here.
+
+**Existing servers.** `guild_settings.settings_json` holds only the keys an admin set, and
+defaults are read from code. There is no migration, and nothing is written at deploy.
+- **Never set either passive key:** the server moves to 8/h and 48 h on the next start. The test
+  server stores only `poker.enabled`, so it moves.
+- **Admin set either key, even to 20:** the server keeps that value. Changing another setting does
+  not copy the passive keys in, and Reset all lands on the new defaults.
+- **Admin set only one key:** each key stands alone. A server that set only the rate keeps its
+  rate but gets the new 48-hour cap, so 20/h can now store 960 chips instead of 480. If that
+  matters, set the cap too. Alternatively, ship 10/h with a 24-hour cap: it creates the same
+  chips (1.18M vs 1.21M at 90 days) with no cross-effect, but loses the skip-a-day parity.
+- **Balances, ledger, streaks and committed chips** (escrows, Hold'em stacks) are untouched. No
+  balance goes down.
+- **Uncollected passive income** is recomputed from each player's stored anchor at the current
+  rate, so a pending Collect button shows the new amount. For example, 24 hours waiting showed 480
+  and now shows 192.
+- **To keep the old behaviour:** in the admin panel, under Economy, set Passive chips / hour to 20
+  and Passive cap to 24.
+- **Tests:** `tests/economy-defaults.test.ts`.
+
+**Unusual transfers (admin, read-only).** The admin panel has a second row with an
+"Unusual transfers" button (`adm:transfers`). It shows patterns from the last 7 days and states
+its own criteria. It never acts on a wallet.
+- **New accounts:** accounts that joined in the window and, within 48 hours of joining, passed
+  at least half of their actual starting grant to one player. This counts Hold'em and coinflip
+  losses (each hand pairs the loser with a winner by `MIN(lost, won)`) and gifts. Chips won back
+  from that player are subtracted. House games are ignored.
+- **Repeated gifts:** sender→recipient pairs with 3 or more gifts.
+- **Limits:** each list shows at most 10 rows, and every query is scoped to one guild.
+- **Code and tests:** `src/domain/economy/transfer-review.ts` and `tests/economy-transfer-review.test.ts`.

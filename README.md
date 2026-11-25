@@ -199,7 +199,7 @@ changes needed. Defaults:
 | Group | Setting (default) |
 | --- | --- |
 | General | Casino name (*The Emerald Room*), casino open (on) |
-| Economy | Starting chips 500 · passive 20/h · passive cap 24 h · daily 100 · streak +10/day up to 7 days · relief 50 per 24 h |
+| Economy | Starting chips 500 · passive 8/h · passive cap 48 h · daily 100 · streak +10/day up to 7 days · relief 50 per 24 h |
 | Blackjack | Bets 10–500 · 5 seats · turn 30 s · betting window 20 s · insurance window 12 s · 6 decks · S17 · 3:2 · DAS on · surrender on · insurance on · split to 4 hands · no resplit aces · 75% penetration · reveal animation on |
 | Tables | Max 6 open tables · threads on · close empty tables after 10 min · close tables without bets after 30 min |
 | Other games | Coinflip 10–1,000, 120 s expiry · Roulette 10–500 per spot, 25 s window, ready majority after 8 s · Slots 5–250 |

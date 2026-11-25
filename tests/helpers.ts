@@ -27,7 +27,7 @@ export function createTestEnv(): TestEnv {
     let s = settings.get(guildId);
     if (!s) {
       // Stable amounts for unit tests that assert exact legacy payouts and accrual.
-      s = resolveSettings({ economy: { startingBalance: 1000, passivePerHour: 50, dailyReward: 250, dailyStreakBonus: 25 } });
+      s = resolveSettings({ economy: { startingBalance: 1000, passivePerHour: 50, passiveCapHours: 24, dailyReward: 250, dailyStreakBonus: 25 } });
       settings.set(guildId, s);
     }
     return s;

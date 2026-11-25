@@ -37,18 +37,18 @@ describe('economy through Discord', () => {
     healthy();
   });
 
-  it('accrues passive income by the hour, capped at 24 hours', async () => {
+  it('accrues passive income by the hour, capped at 48 hours', async () => {
     h = new CasinoHarness();
     const alice = h.user('Alice');
     await h.slash(alice, 'casino');
     await h.advance(3 * 3600_000);
     let home = h.seen(await h.slash(alice, 'casino'))!;
-    expect(h.enabled(home)).toContain('Collect 60');
-    await h.click(alice, home, 'Collect 60');
+    expect(h.enabled(home)).toContain('Collect 24');
+    await h.click(alice, home, 'Collect 24');
     expect(ledgerCount(alice.id, 'passive_income')).toBe(1);
     await h.advance(72 * 3600_000);
     home = h.seen(await h.slash(alice, 'casino'))!;
-    expect(h.enabled(home)).toContain('Collect 480');
+    expect(h.enabled(home)).toContain('Collect 384');
     healthy();
   });
 

@@ -114,8 +114,8 @@ describe('eligibility', () => {
     app.economy.claimDaily(G, 'a');
     setBalance(app, 'a', 0);
     expect(status(app, 'a')).toMatchObject({ eligible: true });
-    // The wallet showed a claim button; three minutes later one passive chip has accrued.
-    clock.advance(HOUR / 20);
+    // The wallet showed a claim button; 7.5 minutes later (8/h) one passive chip has accrued.
+    clock.advance(HOUR / 8);
     expect(app.economy.getWallet(G, 'a').passive.available).toBe(1);
     // 0 + 1 chip still cannot afford the cheapest game (5), so relief must not be refused.
     expect(status(app, 'a')).toMatchObject({ eligible: true });

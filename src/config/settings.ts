@@ -61,8 +61,11 @@ export const DEFAULT_SETTINGS: GuildSettings = {
   enabled: true,
   economy: {
     startingBalance: 500,
-    passivePerHour: 20,
-    passiveCapHours: 24,
+    // 2026-11 rebalance (was 20/h, 24 h; see docs/DEVELOPMENT_HANDOFF.md and simulate-economy.ts):
+    // about a third fewer chips created, and visiting every other day earns as much as daily.
+    // Servers that set either key keep their value; only untouched servers follow these.
+    passivePerHour: 8,
+    passiveCapHours: 48,
     dailyReward: 100,
     dailyStreakBonus: 10,
     dailyStreakMaxDays: 7,

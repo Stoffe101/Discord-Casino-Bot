@@ -1,5 +1,6 @@
 import { afterEach, expect, it } from 'vitest';
 import { CasinoApp } from '../../src/app/casino-app.js';
+import { DAY } from '../../src/core/clock.js';
 import { silentLogger } from '../../src/core/logger.js';
 import { ManualScheduler } from '../../src/core/scheduler.js';
 import { cardLabel } from '../../src/games/cards.js';
@@ -70,6 +71,10 @@ it('resumes every street, rejects stale or foreign turns and settles one multiwa
   const guildId = h.guildId;
   h.app.settings.set(guildId, 'poker.enabled', true);
   h.app.settings.set(guildId, 'poker.minBuyIn', 20);
+  // Established accounts: buy-ins of 100 and 50 exceed a new account's limit of two 20-chip
+  // minimums (covered in tests/poker-new-accounts.test.ts).
+  for (const user of ids) h.app.economy.ensurePlayer(guildId, user, user);
+  h.clock.advance(DAY);
   let app = h.app;
   const host = await app.poker.create({ guildId, userId: ids[0]!, name: 'A', buyIn: 100 });
   const id = host.record.id;

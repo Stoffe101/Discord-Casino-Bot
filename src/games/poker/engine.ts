@@ -14,7 +14,10 @@ export interface PokerSeat {
 interface HandSeat extends PokerSeat {
   cards: [Card, Card];
   streetPaid: number;
+  /** Every chip this player put in this hand, dead blinds included. */
   committed: number;
+  /** Dead blind chips inside `committed`: they always play in the main pot and never count as a bet. */
+  dead?: number;
   actedAt: number | null;
   folded: boolean;
 }
@@ -35,8 +38,10 @@ export interface PokerResult {
 export interface PokerHand {
   seq: number;
   street: Street;
+  /** The button seat. Under the dead-button rule it can be an empty seat or a seat not dealt in. */
   dealer: number;
-  smallBlindSeat: number;
+  /** Null when the small blind is dead (last hand's big blind is not in this hand). */
+  smallBlindSeat: number | null;
   bigBlindSeat: number;
   bigBlind: number;
   currentBet: number;
@@ -53,47 +58,147 @@ export interface PokerHand {
 
 export type PokerAction = { type: 'fold' | 'check' | 'call' | 'all-in' } | { type: 'raise'; to: number };
 
+/**
+ * Who has the button and the blinds in one hand.
+ *
+ * Cash-game blind rule: the "dead button" rule (TDA, Robert's Rules of Poker, the large online rooms).
+ * - The big blind moves forward exactly one player every hand: to the first player after last hand's
+ *   big blind who is in the game. Nobody can skip it and nobody posts it twice in a row.
+ * - The small blind is posted by last hand's big blind. If that player is not in this hand (left or
+ *   sitting out), nobody posts a small blind: it is "dead" (`smallBlind: null`).
+ * - The button goes to last hand's small-blind seat, even when that seat is now empty or not dealt in
+ *   (a "dead" button). When that seat no longer sits behind the small blind (straight after a heads-up
+ *   hand), the button goes to the nearest player dealt in behind the small blind.
+ * - Heads-up, the button posts the small blind and acts first before the flop.
+ */
+export interface BlindPositions {
+  button: number;
+  smallBlind: number | null;
+  bigBlind: number;
+}
+
+/** An out-of-turn post by a player entering the game: `live` counts toward their bet, `dead` goes into the main pot. */
+export interface PokerPost {
+  seat: number;
+  live: number;
+  dead: number;
+}
+
 function leftOf<T extends { seat: number }>(players: readonly T[], button: number): T[] {
   const sorted = [...players].sort((a, b) => a.seat - b.seat);
   return [...sorted.filter((player) => player.seat > button), ...sorted.filter((player) => player.seat <= button)];
 }
 
-/** Pass the previous big blind when a table becomes heads-up to avoid a repeated big blind. */
-export function nextDealer(seats: readonly PokerSeat[], previousDealer: number, previousBigBlind?: number): number {
-  if (seats.length < 2) throw new RangeError('Poker needs at least two active players.');
-  if (seats.length === 2 && previousBigBlind !== undefined) {
-    const nextBigBlind = leftOf(seats, previousBigBlind)[0]!;
-    return seats.find((player) => player.seat !== nextBigBlind.seat)!.seat;
-  }
-  return leftOf(seats, previousDealer)[0]!.seat;
+/** True when `seat` lies strictly after `from` and strictly before `to`, going clockwise. */
+export function seatBetween(from: number, seat: number, to: number): boolean {
+  return from < to ? seat > from && seat < to : seat > from || seat < to;
 }
 
-export function dealPoker(seats: readonly PokerSeat[], dealer: number, smallBlind: number, bigBlind: number, rng?: Rng): PokerHand {
+/** Positions when the blinds simply follow a seated button (the first hand at a table). */
+export function livePositions(seats: readonly { seat: number }[], button: number): BlindPositions {
+  const order = leftOf(seats, button);
+  return seats.length === 2
+    ? { button, smallBlind: button, bigBlind: order[0]!.seat }
+    : { button, smallBlind: order[0]!.seat, bigBlind: order[1]!.seat };
+}
+
+/** The big blind goes to the first candidate after last hand's big blind (that seat itself comes last). */
+export function nextBigBlind(candidates: readonly { seat: number }[], previousBigBlind: number): number {
+  if (!candidates.length) throw new RangeError('Poker needs a player for the big blind.');
+  return leftOf(candidates, previousBigBlind)[0]!.seat;
+}
+
+/**
+ * Button and small blind once the big blind is chosen, under the dead-button rule. `dealtIn` are the
+ * players receiving cards; `previous` holds last hand's big-blind seat and small-blind seat (the
+ * seat even when that small blind was dead).
+ */
+export function blindPositions(
+  dealtIn: readonly { seat: number }[],
+  bigBlind: number,
+  previous: { bigBlind: number; smallBlind?: number | null },
+): BlindPositions {
+  if (dealtIn.length < 2 || !dealtIn.some((player) => player.seat === bigBlind)) throw new RangeError('Poker needs two players and a seated big blind.');
+  if (dealtIn.length === 2) {
+    const other = dealtIn.find((player) => player.seat !== bigBlind)!.seat;
+    return { button: other, smallBlind: other, bigBlind };
+  }
+  const smallSeat = previous.bigBlind;
+  const smallBlind = smallSeat !== bigBlind && dealtIn.some((player) => player.seat === smallSeat) ? smallSeat : null;
+  const lastSmall = previous.smallBlind;
+  if (lastSmall !== undefined && lastSmall !== null && seatBetween(bigBlind, lastSmall, smallSeat)) return { button: lastSmall, smallBlind, bigBlind };
+  const behind = leftOf(dealtIn.filter((player) => player.seat !== bigBlind && player.seat !== smallSeat), smallSeat).at(-1)!;
+  return { button: behind.seat, smallBlind, bigBlind };
+}
+
+/**
+ * Positions for the next hand when every seat given is dealt in. Pass last hand's button and big
+ * blind, plus its small-blind seat when known; with no previous big blind the button moves one seat.
+ */
+export function nextDealer(seats: readonly PokerSeat[], previousDealer: number, previousBigBlind?: number, previousSmallBlind?: number | null): BlindPositions {
+  if (seats.length < 2) throw new RangeError('Poker needs at least two active players.');
+  if (previousBigBlind === undefined) return livePositions(seats, leftOf(seats, previousDealer)[0]!.seat);
+  return blindPositions(seats, nextBigBlind(seats, previousBigBlind), { bigBlind: previousBigBlind, smallBlind: previousSmallBlind });
+}
+
+/**
+ * Deal a hand. `dealer` is either a seated button (the blinds are the next players; heads-up the
+ * button posts the small blind) or explicit dead-button positions. `posts` are out-of-turn blinds from
+ * players entering the game; a post must leave the player at least one chip behind.
+ */
+export function dealPoker(
+  seats: readonly PokerSeat[],
+  dealer: number | BlindPositions,
+  smallBlind: number,
+  bigBlind: number,
+  rng?: Rng,
+  posts: readonly PokerPost[] = [],
+): PokerHand {
   const total = seats.reduce((sum, player) => sum + player.stack, 0);
   if (!Number.isSafeInteger(smallBlind) || !Number.isSafeInteger(bigBlind) || smallBlind <= 0 || bigBlind <= smallBlind || bigBlind > Number.MAX_SAFE_INTEGER / 2) {
     throw new RangeError('Poker requires valid small and big blinds.');
   }
+  const seated = (seat: number | null) => seats.some((player) => player.seat === seat);
   if (seats.length < 2 || seats.length > 9 || !Number.isSafeInteger(total)
     || new Set(seats.map((player) => player.seat)).size !== seats.length
     || new Set(seats.map((player) => player.userId)).size !== seats.length
-    || !seats.some((player) => player.seat === dealer)
+    || (typeof dealer === 'number' && !seated(dealer))
     || seats.some((player) => !player.userId || !Number.isSafeInteger(player.seat) || player.seat < 0 || !Number.isSafeInteger(player.stack) || player.stack <= 0)) {
     throw new RangeError('Poker requires two to nine distinct, funded seats and a seated dealer.');
   }
+  const { button, smallBlind: smallBlindSeat, bigBlind: bigBlindSeat } = typeof dealer === 'number' ? livePositions(seats, dealer) : dealer;
+  if (!Number.isSafeInteger(button) || button < 0 || !seated(bigBlindSeat) || smallBlindSeat === bigBlindSeat
+    || (smallBlindSeat !== null && !seated(smallBlindSeat))
+    || (seats.length === 2 && (smallBlindSeat !== button || !seated(button)))) {
+    throw new RangeError('Poker requires a seated big blind, a seated or dead small blind, and heads-up the small blind on the button.');
+  }
+  const stackOf = (seat: number) => seats.find((player) => player.seat === seat)?.stack ?? 0;
+  if (new Set(posts.map((post) => post.seat)).size !== posts.length || posts.some((post) => !seated(post.seat)
+    || post.seat === bigBlindSeat || post.seat === smallBlindSeat
+    || !Number.isSafeInteger(post.live) || !Number.isSafeInteger(post.dead) || post.live < 0 || post.dead < 0
+    || post.live > bigBlind || post.dead > smallBlind || post.live + post.dead === 0 || post.live + post.dead >= stackOf(post.seat))) {
+    throw new RangeError('Poker posts must come from other seated players and leave chips behind.');
+  }
   const deck = createShoe(1, rng);
-  const order = leftOf(seats, dealer);
-  const smallBlindSeat = order[seats.length === 2 ? 1 : 0]!.seat;
-  const bigBlindSeat = order[seats.length === 2 ? 0 : 1]!.seat;
+  const order = leftOf(seats, button);
   const hand: PokerHand = {
-    seq: 0, street: 'preflop', dealer, smallBlindSeat, bigBlindSeat, bigBlind, currentBet: bigBlind,
+    seq: 0, street: 'preflop', dealer: button, smallBlindSeat, bigBlindSeat, bigBlind, currentBet: bigBlind,
     fullRaise: bigBlind, actor: null, board: [], deck, cursor: seats.length * 2, refunds: [], result: null, lastAction: null,
     seats: order.map((player, i): HandSeat => ({
-      ...player, cards: [deck[i]!, deck[i + seats.length]!], streetPaid: 0, committed: 0, actedAt: null, folded: false,
+      ...player, cards: [deck[i]!, deck[i + seats.length]!], streetPaid: 0, committed: 0, dead: 0, actedAt: null, folded: false,
     })).sort((a, b) => a.seat - b.seat),
   };
   for (const player of hand.seats) {
     const blind = player.seat === smallBlindSeat ? smallBlind : player.seat === bigBlindSeat ? bigBlind : 0;
     pay(player, Math.min(blind, player.stack));
+  }
+  for (const post of posts) {
+    const player = hand.seats.find((seat) => seat.seat === post.seat)!;
+    // A live post is a bet: it counts toward a call, and the poster may still raise when the action reaches them.
+    pay(player, post.live);
+    player.stack -= post.dead;
+    player.committed += post.dead;
+    player.dead = post.dead;
   }
   advance(hand, bigBlindSeat);
   return hand;
@@ -221,20 +326,26 @@ function refundUncalled(hand: PokerHand): void {
 }
 
 function potsFor(hand: PokerHand, live: HandSeat[]): { amount: number; eligible: HandSeat[] }[] {
-  const levels = [...new Set(hand.seats.map((player) => player.committed))].filter((total) => total > 0).sort((a, b) => a - b);
+  // Side pots are layered on bets only; dead blinds belong to the main pot, whoever wins it.
+  const bet = (player: HandSeat) => player.committed - (player.dead ?? 0);
+  const dead = hand.seats.reduce((sum, player) => sum + (player.dead ?? 0), 0);
+  const levels = [...new Set(hand.seats.map(bet))].filter((total) => total > 0).sort((a, b) => a - b);
   const pots: { amount: number; eligible: HandSeat[] }[] = [];
   let previous = 0;
   for (const level of levels) {
-    const contributors = hand.seats.filter((player) => player.committed >= level);
+    const contributors = hand.seats.filter((player) => bet(player) >= level);
     const amount = (level - previous) * contributors.length;
     previous = level;
-    const eligible = live.length === 1 ? live : live.filter((player) => player.committed >= level);
+    const eligible = live.length === 1 ? live : live.filter((player) => bet(player) >= level);
     if (!eligible.length) throw new Error('A poker side pot has no eligible player.');
     const last = pots.at(-1);
     // A folded player's contribution can create a layer without changing who can win it.
     if (last?.eligible.length === eligible.length) last.amount += amount;
     else pots.push({ amount, eligible });
   }
+  // Everyone folded to an uncalled big blind with no small blind: only dead money (if any) is left.
+  if (!pots.length) return dead ? [{ amount: dead, eligible: live }] : [];
+  pots[0]!.amount += dead;
   return pots;
 }
 

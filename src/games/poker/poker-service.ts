@@ -1,6 +1,7 @@
 import type { Database } from '../../db/database.js';
-import type { Clock } from '../../core/clock.js';
+import { DAY, type Clock } from '../../core/clock.js';
 import { StaleActionError, UserError } from '../../core/errors.js';
+import { chips, discordTime } from '../../core/format.js';
 import type { Logger } from '../../core/logger.js';
 import { newId, shortCode, type Rng } from '../../core/random.js';
 import type { Scheduler } from '../../core/scheduler.js';
@@ -9,7 +10,22 @@ import type { IdleExemption } from '../../tables/blackjack-table-service.js';
 import type { EconomyService, SettingsProvider } from '../../domain/economy/economy-service.js';
 import type { RoundRecorder } from '../../domain/round-recorder.js';
 import { isCard } from '../cards.js';
-import { dealPoker, nextDealer, playPoker, pokerActions, publicPokerHand, type PokerAction, type PokerHand, type PokerSeat } from './engine.js';
+import {
+  blindPositions, dealPoker, nextBigBlind, nextDealer, playPoker, pokerActions, publicPokerHand, seatBetween,
+  type BlindPositions, type PokerAction, type PokerHand, type PokerPost, type PokerSeat,
+} from './engine.js';
+
+/**
+ * Chip-dumping safeguard. Gifts need accounts at least 24 hours old (EconomyService.gift() checks
+ * `created_at + DAY`); without a matching rule a brand-new account could sit at Hold'em and lose its
+ * starting chips to a friend in one hand. Until an account is this old...
+ */
+export const NEW_ACCOUNT_AGE_MS = DAY;
+/**
+ * ...its Hold'em buy-in plus its net Hold'em losses so far may total at most this many table-minimum
+ * buy-ins (200 chips at the default settings). Winning players and accounts a day old are unaffected.
+ */
+export const NEW_ACCOUNT_HOLDEM_BUY_INS = 2;
 
 export interface PokerConfig {
   maxSeats: number;
@@ -36,10 +52,28 @@ export interface PokerTableRecord {
   lastActivityAt: number;
 }
 
+/**
+ * Entering a game in progress (missed-blind rule). The blinds themselves follow the dead-button rule
+ * described on BlindPositions in engine.ts.
+ * - A player who joins a table that has already dealt, or whom the big blind passed while they sat
+ *   out, owes a live big blind; the second case also owes a dead small blind. Sitting out on the hand
+ *   where your small blind was due owes a dead small blind.
+ * - By default they post what they owe and are dealt in on the next hand, from any seat except the
+ *   small-blind seat. A live post counts toward their bet; a dead blind goes straight into the pot.
+ * - Or they choose to wait: they are dealt in when the big blind reaches them, owing nothing more.
+ * - When fewer than two players are already in the game (a new table, or everyone else left), there
+ *   is no game to buy into: everyone ready is dealt in and nothing is owed.
+ */
 export interface PokerTableSeat extends PokerSeat {
   name: string;
   sittingOut: boolean;
   leaving: boolean;
+  /** Owes a live big blind before being dealt in anywhere but the big blind. */
+  owesBigBlind: boolean;
+  /** Owes a dead small blind before being dealt in anywhere but the big blind. */
+  owesSmallBlind: boolean;
+  /** Chose to wait for the big blind instead of posting what they owe. */
+  waitForBigBlind: boolean;
 }
 
 export interface PokerTableState {
@@ -47,10 +81,28 @@ export interface PokerTableState {
   hand: PokerHand | null;
   handId: string | null;
   number: number;
+  /** Last hand's button (possibly a dead seat), or -1 before the first hand. */
   dealer: number;
   lastBigBlind: number | null;
+  /** Last hand's small-blind seat, live or dead (heads-up, the button): next hand's button goes here. */
+  lastSmallBlind: number | null;
   deadline: number | null;
   result: ReturnType<typeof publicPokerHand> | null;
+}
+
+/** What a seated player must post to be dealt in before the big blind reaches them. */
+export function blindsOwed(seat: Pick<PokerTableSeat, 'owesBigBlind' | 'owesSmallBlind'>, config: Pick<PokerConfig, 'smallBlind' | 'bigBlind'>): { live: number; dead: number } {
+  return { live: seat.owesBigBlind ? config.bigBlind : 0, dead: seat.owesSmallBlind ? config.smallBlind : 0 };
+}
+
+/**
+ * For the private screen: null when the player owes nothing (they play the next hand as usual).
+ * Otherwise what posting costs, and whether they chose to wait for the big blind instead.
+ */
+export function pendingBlinds(table: PokerSnapshot, userId: string): { live: number; dead: number; waiting: boolean } | null {
+  const seat = table.state.seats.find((player) => player.userId === userId);
+  if (!seat || (!seat.owesBigBlind && !seat.owesSmallBlind)) return null;
+  return { ...blindsOwed(seat, table.record.config), waiting: seat.waitForBigBlind };
 }
 
 export interface PokerSnapshot {
@@ -125,7 +177,9 @@ export class PokerTableService {
         db.run(`INSERT INTO game_tables (id, guild_id, game, number, name, owner_id, is_private, access_code, config_json, status, state_json, created_at, last_activity_at)
                  VALUES (?, ?, 'poker', ?, ?, ?, ?, ?, ?, 'open', '{}', ?, ?)`,
         [record.id, guildId, number, record.name, userId, record.isPrivate, record.accessCode, JSON.stringify(config), now, now]);
-        const state: PokerTableState = { seats: [], hand: null, handId: null, number: 0, dealer: -1, lastBigBlind: null, deadline: null, result: null };
+        const state: PokerTableState = {
+          seats: [], hand: null, handId: null, number: 0, dealer: -1, lastBigBlind: null, lastSmallBlind: null, deadline: null, result: null,
+        };
         this.addSeat(record, state, userId, input.name, input.buyIn, now);
         db.run('UPDATE game_tables SET state_json = ? WHERE id = ?', [JSON.stringify(state), record.id]);
         return { record, state };
@@ -164,11 +218,34 @@ export class PokerTableService {
     const taken = new Set(state.seats.map((seat) => seat.seat));
     const seat = Array.from({ length: config.maxSeats }, (_, i) => i).find((index) => !taken.has(index));
     if (seat === undefined) throw new UserError('All seats are taken.');
-    economy.ensurePlayer(guildId, userId, name);
+    const player = economy.ensurePlayer(guildId, userId, name);
+    this.checkNewAccountLimit(record, userId, player.created_at, amount, now);
     economy.reserve({ guildId, userId, game: 'poker', contextId: id, amount, key: 'buy-in:' + newId(), memo: 'Hold’em buy-in' });
     db.run('INSERT INTO table_seats (table_id, guild_id, user_id, seat_index, joined_at) VALUES (?, ?, ?, ?, ?)', [id, guildId, userId, seat, now]);
     if (!state.seats.length) record.ownerId = userId;
-    state.seats.push({ userId, seat, name, stack: amount, sittingOut: false, leaving: false });
+    // Joining a game that has already dealt means posting a big blind or waiting for it.
+    const joining = state.lastBigBlind !== null;
+    state.seats.push({ userId, seat, name, stack: amount, sittingOut: false, leaving: false, owesBigBlind: joining, owesSmallBlind: false, waitForBigBlind: false });
+  }
+
+  /**
+   * See NEW_ACCOUNT_HOLDEM_BUY_INS. Reads only the existing round_results rows; records nothing.
+   * Collusion between established accounts is not something a buy-in rule can stop.
+   */
+  private checkNewAccountLimit(record: PokerTableRecord, userId: string, createdAt: number, amount: number, now: number): void {
+    const until = createdAt + NEW_ACCOUNT_AGE_MS;
+    if (now >= until) return;
+    const { config, guildId } = record;
+    const limit = config.minBuyIn * NEW_ACCOUNT_HOLDEM_BUY_INS;
+    const { net } = this.deps.db.get<{ net: number }>(
+      "SELECT COALESCE(SUM(net), 0) AS net FROM round_results WHERE guild_id = ? AND user_id = ? AND game = 'poker'", [guildId, userId],
+    )!;
+    const room = limit - Math.max(0, -net);
+    if (amount <= room) return;
+    const why = `Brand-new casino accounts can put up to ${chips(limit)} chips at risk at Hold’em during their first 24 hours: your buy-in plus anything you’ve already lost at Hold’em. Like the 24-hour rule for gifts, this stops new accounts passing their starting chips to friends.`;
+    throw new UserError(room >= config.minBuyIn
+      ? `${why}\nYou can buy in for up to ${chips(room)} chips now. The limit lifts ${discordTime(until)}.`
+      : `${why}\nYou’ve reached it for today. You can sit down again ${discordTime(until)}.`, 'new_account_limit');
   }
 
   leave(id: string, userId: string): Promise<void> {
@@ -195,6 +272,20 @@ export class PokerTableService {
     });
   }
 
+  /**
+   * A player who owes blinds (see PokerTableSeat) either posts them and plays the next hand (the
+   * default, `false`) or waits until the big blind reaches them (`true`). Harmless when nothing is owed.
+   */
+  waitForBigBlind(id: string, userId: string, value: boolean): Promise<void> {
+    return this.mutate(id, undefined, (_record, state) => {
+      const seat = this.requireSeat(state, userId);
+      if (seat.leaving) throw new UserError('You’re cashing out after this hand.');
+      if (seat.waitForBigBlind === value) return null;
+      seat.waitForBigBlind = value;
+      return 'update';
+    });
+  }
+
   start(id: string, userId: string, version: number, origin?: object): Promise<void> {
     return this.mutate(id, origin, (record, state, now) => {
       this.requireHost(record, userId);
@@ -204,14 +295,56 @@ export class PokerTableService {
       const ready = state.seats.filter((seat) => !seat.sittingOut && !seat.leaving && seat.stack > 0);
       if (ready.length < 2) throw new UserError('Two funded players need to be ready.');
       const { config } = record;
-      state.dealer = nextDealer(ready, state.dealer, state.lastBigBlind ?? undefined);
-      state.hand = dealPoker(ready.map(({ userId, seat, stack }) => ({ userId, seat, stack })), state.dealer, config.smallBlind, config.bigBlind, this.deps.rng);
-      state.lastBigBlind = state.hand.bigBlindSeat;
+      const { positions, dealtIn, posts } = this.planBlinds(record, state, ready);
+      state.hand = dealPoker(dealtIn.map(({ userId, seat, stack }) => ({ userId, seat, stack })), positions, config.smallBlind, config.bigBlind, this.deps.rng, posts);
+      state.lastSmallBlind = positions.smallBlind ?? state.lastBigBlind;
+      state.lastBigBlind = positions.bigBlind;
+      state.dealer = positions.button;
       state.handId = newId().replaceAll('-', '');
       state.number++;
       state.result = null;
       return this.advance(record, state, now, 'dealt');
     });
+  }
+
+  /**
+   * Choose the blinds (dead-button rule) and who is dealt in (missed-blind rule) for the next hand, and
+   * update what every seat owes. Mutates `state.seats` only; the caller stores the positions.
+   */
+  private planBlinds(record: PokerTableRecord, state: PokerTableState, ready: PokerTableSeat[]): { positions: BlindPositions; dealtIn: PokerTableSeat[]; posts: PokerPost[] } {
+    const previous = state.lastBigBlind;
+    if (previous === null) return { positions: nextDealer(ready, state.dealer), dealtIn: ready, posts: [] };
+    const owes = (seat: PokerTableSeat) => seat.owesBigBlind || seat.owesSmallBlind;
+    // Players who owe nothing can take the big blind; so can players owing blinds, which settles them.
+    const bigBlind = nextBigBlind(ready, previous);
+    for (const seat of state.seats) {
+      if (!seat.sittingOut || seat.leaving || seat.owesBigBlind) continue;
+      if (seatBetween(previous, seat.seat, bigBlind)) {
+        // The big blind passed them while they sat out: both blinds are owed (big live, small dead).
+        seat.owesBigBlind = true;
+        seat.owesSmallBlind = true;
+      } else if (seat.seat === previous) {
+        // Last hand's big blind sat out the hand where their small blind was due.
+        seat.owesSmallBlind = true;
+      }
+    }
+    // With fewer than two players already in the game there is nothing to buy into.
+    const fresh = ready.filter((seat) => !owes(seat)).length < 2;
+    const canPost = (seat: PokerTableSeat) => {
+      const { live, dead } = blindsOwed(seat, record.config);
+      return !seat.waitForBigBlind && seat.seat !== previous && seat.stack > live + dead;
+    };
+    const dealtIn = fresh ? ready : ready.filter((seat) => !owes(seat) || seat.seat === bigBlind || canPost(seat));
+    const positions = blindPositions(dealtIn, bigBlind, { bigBlind: previous, smallBlind: state.lastSmallBlind });
+    const posts = fresh ? [] : dealtIn
+      .filter((seat) => owes(seat) && seat.seat !== bigBlind)
+      .map((seat): PokerPost => ({ seat: seat.seat, ...blindsOwed(seat, record.config) }));
+    for (const seat of dealtIn) {
+      seat.owesBigBlind = false;
+      seat.owesSmallBlind = false;
+      seat.waitForBigBlind = false;
+    }
+    return { positions, dealtIn, posts };
   }
 
   act(id: string, userId: string, handId: string, seq: number, action: PokerAction, origin?: object): Promise<void> {
@@ -340,6 +473,14 @@ export class PokerTableService {
       try {
         const state = JSON.parse(row.state_json) as PokerTableState;
         const config = JSON.parse(row.config_json) as PokerConfig;
+        // Tables saved before the blind rules existed: nobody owes anything and the button simply moves on.
+        state.lastBigBlind ??= null;
+        state.lastSmallBlind ??= null;
+        for (const seat of state.seats) {
+          seat.owesBigBlind ??= false;
+          seat.owesSmallBlind ??= false;
+          seat.waitForBigBlind ??= false;
+        }
         this.validateRestored(row, state, config);
         const record: PokerTableRecord = {
           id: row.id, guildId: row.guild_id, number: row.number, name: row.name, ownerId: row.owner_id,
@@ -368,7 +509,9 @@ export class PokerTableService {
     if (!safe(config.maxSeats) || config.maxSeats < 2 || config.maxSeats > 7 || !safe(config.bigBlind) || config.bigBlind <= config.smallBlind
       || !safe(state.number) || !Array.isArray(state.seats) || state.seats.length !== indexed.length
       || indexed.some((entry) => !state.seats.some((seat) => seat.userId === entry.user_id && seat.seat === entry.seat_index))
+      || (state.lastSmallBlind !== null && !safe(state.lastSmallBlind)) || (state.lastBigBlind !== null && !safe(state.lastBigBlind))
       || state.seats.some((seat) => !safe(seat.seat) || seat.seat >= config.maxSeats || !safe(seat.stack)
+        || typeof seat.owesBigBlind !== 'boolean' || typeof seat.owesSmallBlind !== 'boolean' || typeof seat.waitForBigBlind !== 'boolean'
         || escrows.filter((escrow) => escrow.user_id === seat.userId).reduce((sum, entry) => sum + entry.amount, 0) !== seat.stack)
       || escrows.some((escrow) => escrow.game !== 'poker' || !state.seats.some((seat) => seat.userId === escrow.user_id))) {
       throw new Error('Invalid poker stacks or seats.');
@@ -380,6 +523,7 @@ export class PokerTableService {
       || !Array.isArray(hand.board) || !hand.board.every(isCard) || !safe(hand.seq) || !safe(hand.cursor) || hand.cursor > hand.deck.length
       || !hand.seats.some((player) => player.seat === hand.actor && !player.folded && player.stack > 0)
       || hand.seats.some((player) => !safe(player.committed) || !safe(player.stack) || !safe(player.streetPaid)
+        || (player.dead !== undefined && (!safe(player.dead) || player.streetPaid + player.dead > player.committed))
         || player.streetPaid > player.committed || !Array.isArray(player.cards) || player.cards.length !== 2 || !player.cards.every(isCard)
         || !state.seats.some((seat) => seat.userId === player.userId && seat.seat === player.seat && seat.stack === player.committed + player.stack))) {
       throw new Error('Invalid active poker hand.');

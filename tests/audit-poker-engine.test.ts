@@ -111,19 +111,19 @@ describe('audit: No-Limit Hold’em rules', () => {
 });
 
 describe('audit: button movement', () => {
-  // Rule deviation (not fixed): nextDealer() moves the button to the next live seat, so when the
-  // previous big blind leaves, the player after them posts the small blind instead of the big blind
-  // and the previous button posts the big blind. Under the dead-button rule the big blind always
-  // advances exactly one seat. Fixing it needs dealPoker() to allow a dead small blind / an empty
-  // button seat; see the sit-out case in audit-poker-service.test.ts.
-  it.fails('the big blind advances one seat when the previous big blind leaves (dead button)', () => {
+  // Fixed: nextDealer() used to move the button to the next live seat, so when the previous big blind
+  // left, the player after them posted the small blind instead of the big blind. It now returns
+  // dead-button positions (BlindPositions in engine.ts) that dealPoker() accepts: the big blind always
+  // advances exactly one seat, with a dead small blind / dead button where needed. More cases live in
+  // tests/poker-blinds.test.ts.
+  it('the big blind advances one seat when the previous big blind leaves (dead button)', () => {
     const four = stacks(100, 100, 100, 100);
     const first = dealPoker(four, 0, 5, 10, seededRng(1));
     expect([first.smallBlindSeat, first.bigBlindSeat]).toEqual([1, 2]);
     const remaining = four.filter((seat) => seat.seat !== 2);
     const dealer = nextDealer(remaining, first.dealer, first.bigBlindSeat);
     const second = dealPoker(remaining, dealer, 5, 10, seededRng(2));
-    // Current behaviour: dealer 1, small blind 3, big blind 0 — seat 3 skips the big blind.
+    // Before the fix: dealer 1, small blind 3, big blind 0, so seat 3 skipped the big blind.
     expect(second.bigBlindSeat).toBe(3);
   });
 

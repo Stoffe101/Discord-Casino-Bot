@@ -169,14 +169,12 @@ describe('audit: leaving mid-hand', () => {
 });
 
 describe('audit: blinds and the button', () => {
-  // Rule deviation (not fixed): the button simply moves to the next ready seat, and sitting out has no
-  // missed-blind bookkeeping. A player can sit out for the one hand where the big blind would reach
-  // them and sit back in on the button, skipping both blinds for that orbit. Established rules
-  // (TDA dead-button / missed-blind rules) require the big blind to advance one seat per hand and a
-  // returning player to post the missed blinds or wait for the big blind. Fixing it needs dealPoker()
-  // to accept a dead small blind / empty button seat plus per-seat missed-blind state in
-  // PokerTableState, which is a design change for the owner to approve.
-  it.fails('a player cannot dodge the big blind by sitting out for one hand', async () => {
+  // Fixed: the button used to move to the next ready seat with no missed-blind bookkeeping, so a player
+  // could sit out for the one hand where the big blind would reach them and sit back in on the button.
+  // Now the big blind moves one player per hand (dead-button rule) and a sitting-out player the big
+  // blind passes owes it: sitting back in posts the big blind (live) plus the small blind (dead) on the
+  // next hand, unless they choose to wait for the big blind. See tests/poker-blinds.test.ts.
+  it('a player cannot dodge the big blind by sitting out for one hand', async () => {
     const id = await table(['a', 'b', 'c']);
     const playOut = async () => {
       while (peek(id).state.hand) {
@@ -197,7 +195,7 @@ describe('audit: blinds and the button', () => {
     await h.app.poker.start(id, 'a', peek(id).record.version);
     const third = peek(id).state.hand!;
     const posted = third.seats.find((seat) => seat.userId === 'a')!.committed;
-    expect(posted).toBeGreaterThan(0); // fails: 'a' is on the button and pays nothing
+    expect(posted).toBeGreaterThan(0); // used to fail: 'a' was on the button and paid nothing
   });
 });
 

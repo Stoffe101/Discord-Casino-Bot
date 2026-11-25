@@ -66,7 +66,8 @@ describe('No-Limit Hold’em betting', () => {
     for (let i = 0; i < 6; i++) hand = act(hand, { type: 'check' });
     expect(hand.board).toHaveLength(5);
     expect(hand.result).toMatchObject({ showdown: true, pots: [{ amount: 20 }] });
-    expect(nextDealer(stacks(100, 100), hand.dealer, hand.bigBlindSeat)).toBe(1);
+    // nextDealer() now returns full positions: the button (1) posts the small blind, the big blind moves on.
+    expect(nextDealer(stacks(100, 100), hand.dealer, hand.bigBlindSeat)).toEqual({ button: 1, smallBlind: 1, bigBlind: 0 });
   });
 
   it('keeps the full blind in multiway play with a short BB and checks legal action and sequence', () => {

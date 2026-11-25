@@ -50,6 +50,10 @@ export function pokerRulesScreen(): Screen {
     navRow('games'),
     text('## No-Limit Texas Hold’em\nBuy in with fictional chips to take a seat. Only you can see your hole cards in **My hand**. Make the best five-card hand using any combination of your two cards and the five community cards.'),
     text('**Betting** · Match the current bet to call, raise by at least the last full bet or raise, or go all-in. Folded chips stay in the pot. Tied hands share their pot.\n**Table stack** · Your chips stay reserved while seated. Leaving returns your remaining stack after any active hand. There is no rake.'),
+    // Cash-game dead-button and missed-blind rules: BlindPositions in games/poker/engine.ts, PokerTableSeat in poker-service.ts.
+    text('**Blinds** · The big blind moves one player to the left every hand, so nobody skips it. Last hand’s big blind posts the small blind. If they’ve left or are sitting out, that hand has no small blind, and the dealer button can sit on an empty seat. Heads-up, the button posts the small blind and acts first before the flop.\n'
+      + '**Joining or coming back** · Joining a game in progress costs one big blind to be dealt in on the next hand. If your blinds came round while you sat out, sitting back in costs what you skipped: a big blind counts toward your bet, a small blind goes straight into the pot. Or choose **Wait for big blind** to be dealt in for free when it reaches you.\n'
+      + '**New accounts** · During an account’s first 24 hours, its Hold’em buy-in plus its Hold’em losses can total at most two table minimums. Like the 24-hour rule for gifts, this stops brand-new accounts passing chips to friends.'),
   ])] };
 }
 

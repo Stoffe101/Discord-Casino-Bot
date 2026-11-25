@@ -27,7 +27,9 @@ describe('database & migrations', () => {
   it('preserves balances and existing ledger rows when adding wallet preferences', () => {
     const db = new Database(':memory:');
     db.migrate(MIGRATIONS.slice(0, 1));
-    db.run("INSERT INTO players (guild_id, user_id, balance, highest_balance, passive_anchor_at, created_at, last_seen_at) VALUES ('g', 'u', 1000, 1000, 0, 0, 0)");
+    // Passive income just collected: nothing for migration 7 to credit (that credit has its own
+    // test, tests/passive-rebalance.test.ts), so the balance must come through every migration as is.
+    db.run("INSERT INTO players (guild_id, user_id, balance, highest_balance, passive_anchor_at, created_at, last_seen_at) VALUES ('g', 'u', 1000, 1000, ?, 0, 0)", [Date.now()]);
     db.run("INSERT INTO ledger (id, guild_id, user_id, type, amount, balance_after, reserved_after, idempotency_key, created_at) VALUES ('row', 'g', 'u', 'initial_grant', 1000, 1000, 0, 'welcome', 0)");
     const prior = db.get("SELECT * FROM ledger WHERE id = 'row'");
     expect(db.migrate().applied).toEqual(MIGRATIONS.slice(1).map((migration) => migration.id));

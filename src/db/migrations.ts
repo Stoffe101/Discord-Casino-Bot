@@ -309,4 +309,49 @@ export const MIGRATIONS: readonly Migration[] = [
       CREATE INDEX casino_events_due ON casino_events (starts_at) WHERE state NOT IN ('completed', 'cancelled');
     `,
   },
+  {
+    id: 7,
+    name: 'passive_rebalance_2026_11',
+    sql: /* sql */ `
+      -- The 2026-11 passive-income rebalance: the defaults change from 20 chips/hour stored up to
+      -- 24 hours to 8/hour stored up to 48 hours (src/config/settings.ts). Passive income accrues
+      -- lazily from players.passive_anchor_at at the server's current settings, so without this
+      -- step income already earned at the old settings would be recalculated at the new ones.
+      --
+      -- For every player on a server whose effective rate or storage cap changes (a server that set
+      -- both values itself is skipped), the income accrued at the old settings is credited now, as a
+      -- 'passive_income' ledger entry exactly like a collection (same formula as
+      -- EconomyService.passiveStatus: whole chips, capped), and accrual restarts from now at the
+      -- new settings. Once only: the migration runs inside one transaction and is recorded in
+      -- schema_migrations; the ledger key is unique per player as well. Explicit overrides are read
+      -- from guild_settings exactly as the app reads them (invalid JSON counts as no overrides).
+      CREATE TEMP TABLE passive_rebalance AS
+      SELECT guild_id, user_id, balance, reserved, anchor, now_ms,
+        CASE WHEN old_rate > 0 AND old_cap > 0 AND now_ms > anchor
+          THEN MIN(((now_ms - anchor) * old_rate) / 3600000, old_rate * old_cap) ELSE 0 END AS earned
+      FROM (
+        SELECT p.guild_id, p.user_id, p.balance, p.reserved, p.passive_anchor_at AS anchor,
+          CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER) AS now_ms,
+          CAST(COALESCE(CASE WHEN json_valid(s.settings_json) THEN json_extract(s.settings_json, '$.economy.passivePerHour') END, 20) AS INTEGER) AS old_rate,
+          CAST(COALESCE(CASE WHEN json_valid(s.settings_json) THEN json_extract(s.settings_json, '$.economy.passiveCapHours') END, 24) AS INTEGER) AS old_cap,
+          CAST(COALESCE(CASE WHEN json_valid(s.settings_json) THEN json_extract(s.settings_json, '$.economy.passivePerHour') END, 8) AS INTEGER) AS new_rate,
+          CAST(COALESCE(CASE WHEN json_valid(s.settings_json) THEN json_extract(s.settings_json, '$.economy.passiveCapHours') END, 48) AS INTEGER) AS new_cap
+        FROM players p LEFT JOIN guild_settings s ON s.guild_id = p.guild_id
+      )
+      WHERE old_rate <> new_rate OR old_cap <> new_cap;
+
+      INSERT INTO ledger (id, guild_id, user_id, type, game, amount, balance_after, reserved_after, reference, idempotency_key, memo, actor_id, created_at)
+      SELECT lower(hex(randomblob(16))), guild_id, user_id, 'passive_income', NULL, earned, balance + earned, reserved,
+        'migration:7', 'passive-rebalance-2026-11:' || user_id, 'Passive earnings at the previous rate', NULL, now_ms
+      FROM passive_rebalance WHERE earned > 0;
+
+      UPDATE players SET
+        balance = players.balance + r.earned,
+        highest_balance = MAX(players.highest_balance, players.balance + r.earned + players.reserved),
+        passive_anchor_at = r.now_ms
+      FROM passive_rebalance r WHERE players.guild_id = r.guild_id AND players.user_id = r.user_id;
+
+      DROP TABLE passive_rebalance;
+    `,
+  },
 ];

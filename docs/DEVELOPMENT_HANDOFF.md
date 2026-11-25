@@ -314,6 +314,26 @@ model.
 
 ## Database and release
 
+**Test runtime, 2026-11-25 (second session).** The PC restarted at about 14:29 and the runtime
+(409aba1) was not running; it was restarted as PID 36396 from a frozen copy of that build
+(`data/runtime-dist-409aba1/`, so later builds in `dist/` can't change a running bot), after a
+backup. Upgrade to 60d5576 (code as 89b43fc plus docs): verified PID 36396 by command line;
+`deploy-check inspect` showed 1 player, 520 chips, nothing held, no tables; backup
+`data/grand-test-pre-claude-2026-11-25T15-03-09-279Z.db`; graceful stop through
+`data/grand-test.db.stop` (exit in about a second, no other casino process); started exactly one
+process, PID 7040, from `data/runtime-dist-60d5576/` with the same env files. Migrations 6 and 7
+applied, recovery clean, reconcile empty, offline about 13 s. Migration 7 credited the one player
+369 chips earned at the old rate (520 → 889); the ledger matches. Record:
+`data/grand-test-runtime.json`. Rollback: stop through the `.stop` file, restore the backup above
+(it predates migrations 6 and 7) and start `data/runtime-dist-409aba1/main.js`; restoring is
+required, because 409aba1 doesn't know migration 7's credit.
+
+**Migration rehearsal (2026-11-25).** This build's migrations ran on copies made with SQLite's
+online backup API (sources opened read-only): the test database (schema 5 → 7, one player
+credited 351) and the stable database (schema 1 → 7, one player credited 480, the old cap). In
+both, nothing but the credit changed, the ledger reconciles, and running the migrations again
+applies nothing.
+
 Migration 3 adds `casino_events`, event registrations and their lookup indexes. Poker uses the
 existing game tables, seats, escrows and round tables. Existing ledger rows, preferences and
 admin overrides are preserved. Before the first test switch, SQLite's backup API created an online
@@ -359,6 +379,24 @@ For a future coordinated rollout:
    database intact.
 
 ## Remaining client checks
+
+**Focused checklist after the 2026-11-25 stabilization (first items first):**
+1. Image reuse on private screens (only proven against Fake Discord and real channel-message
+   edits, not yet on an ephemeral interaction in the client): open Games → Rules → Games, and
+   Wallet → Gifting → Wallet. The banner and the wallet badge must appear every time, and Home
+   right after Games must not show a stray banner (kept images stay unreferenced). If an
+   image is ever missing, set `canKeepAttachments` to always return false in
+   `src/discord/payload.ts` (one line) and report it.
+2. Hold'em with two or three people: one player sits out past the big blind and sits back in.
+   My hand shows "You owe …" and "Wait for big blind"; pressing it switches to "Post and play
+   next hand", and the next deal leaves them out until the big blind reaches them.
+3. Event table: create a Blackjack event starting in 20 minutes with two registered players; at
+   15 minutes before the start the table opens by itself and "Join the table" seats each player
+   with one click. For Hold'em, check that nothing opens by itself and that "Join the table" asks
+   for a buy-in.
+4. Roulette: two players bet and both press Ready; the wheel spins at the ready time (the
+   early-timer fix).
+5. #casino stays to the lobby, live challenges and nothing else after a restart (wait a minute).
 
 - Run a fresh `/casino`, check that the complete Home controls are immediately visible, then
   open Games and return. Repeat on a narrower Discord window or mobile and check wrapping.
@@ -442,7 +480,7 @@ the switch; see "Uncollected passive income" below.
   values are skipped. Explicit overrides are read the way the app reads them (invalid JSON counts
   as none). A crash rolls the whole migration back and the next start runs it again; once
   recorded in `schema_migrations` it never runs again. Rehearsed on copies of the test and stable
-  databases (see Verification). Tests: `tests/passive-rebalance.test.ts`.
+  databases (see "Migration rehearsal" under Database and release). Tests: `tests/passive-rebalance.test.ts`.
 - **To keep the old behaviour:** in the admin panel, under Economy, set Passive chips / hour to 20
   and Passive cap to 24.
 - **Tests:** `tests/economy-defaults.test.ts`.

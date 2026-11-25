@@ -5,6 +5,7 @@
  * never touched.
  */
 import { afterEach, expect, it } from 'vitest';
+import { ChannelType } from 'discord.js';
 import { silentLogger } from '../../src/core/logger.js';
 import { tidyCasinoChannels, tidyTiming } from '../../src/discord/channel-tidy.js';
 import { CasinoHarness } from '../harness/casino-harness.js';
@@ -88,5 +89,24 @@ it('a finished challenge card whose timer was lost (a restart) is swept once its
   tidyTiming.otherMs = 0;
   expect(await tidyCasinoChannels(h.bot.client, h.app, h.guard, silentLogger)).toBe(1);
   expect(h.fd.messages.get(card.id)!.deleted).toBe(true);
+  expect(h.guard!.blocked).toEqual([]);
+});
+
+it('a "started a thread" notice left by an interrupted run goes when its thread is a casino table’s; other notices stay', async () => {
+  h = new CasinoHarness({ allowThreads: true });
+  await h.boot();
+  const channel = await h.bot.client.channels.fetch(h.casino);
+  if (!channel || channel.type !== ChannelType.GuildText) throw new Error('no casino channel');
+  // Two public threads, each leaving the bot's "started a thread" notice in #casino.
+  const tableThread = await channel.threads.create({ name: 'blackjack-table-07' });
+  const otherThread = await channel.threads.create({ name: 'not-a-table' });
+  const notice = (threadId: string) => [...h.fd.messages.values()].find((m) => m.type === 18 && m.referenceChannelId === threadId)!;
+  // The records know the first thread as a (closed) table's thread; nothing knows the second.
+  h.app.db.run(`INSERT INTO game_tables (id, guild_id, game, number, name, owner_id, is_private, config_json, status, state_json, version, created_at, last_activity_at, closed_at, channel_id, thread_id)
+    VALUES ('t-left', ?, 'blackjack', 7, 'Left over', 'someone', 0, '{}', 'closed', '{}', 0, 0, 0, 0, ?, ?)`, [h.guildId, h.casino, tableThread.id]);
+  tidyTiming.minAgeMs = 0;
+  expect(await tidyCasinoChannels(h.bot.client, h.app, h.guard, silentLogger)).toBe(1);
+  expect(notice(tableThread.id).deleted).toBe(true);
+  expect(notice(otherThread.id).deleted).toBeFalsy();
   expect(h.guard!.blocked).toEqual([]);
 });

@@ -401,9 +401,11 @@ describe('restarts keep the blind state', () => {
     await p.deal(); // BB passes 'a' (sitting out) to 'b'
     await p.playOut();
     expect(p.seatOf('a')).toMatchObject({ owesBigBlind: true, owesSmallBlind: true });
+    await t.app.poker.waitForBigBlind(p.id, 'a', true); // "Wait for big blind" is stored with the seat
     await t.restart(3);
-    expect(p.seatOf('a')).toMatchObject({ owesBigBlind: true, owesSmallBlind: true, sittingOut: true });
+    expect(p.seatOf('a')).toMatchObject({ owesBigBlind: true, owesSmallBlind: true, sittingOut: true, waitForBigBlind: true });
     expect(p.peek().state).toMatchObject({ lastBigBlind: 1, lastSmallBlind: 3 });
+    await t.app.poker.waitForBigBlind(p.id, 'a', false); // changed their mind: post and play
     await t.app.poker.sitOut(p.id, 'a', false);
     await p.deal();
     expect(p.inHand('a')).toMatchObject({ committed: 15, dead: 5 });

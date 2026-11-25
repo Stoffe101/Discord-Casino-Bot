@@ -51,7 +51,7 @@ it('organizes a Blackjack event with the Discord router and links the assigned t
   const freshHostEvent = await getPlayerEvents(host);
   await h.click(host, freshHostEvent, 'Start event');
   expect(h.text(freshHostEvent)).toContain('In progress');
-  expect(h.buttons(freshHostEvent).find((button) => button.label === 'Open table')?.style).toBe(5);
+  expect(h.buttons(freshHostEvent).find((button) => button.label === 'Go to the table')?.style).toBe(5); // the host is seated there
   await h.click(host, freshHostEvent, 'Finish event');
   expect(h.app.events.upcoming(h.guildId)).toEqual([]);
   expect(h.guard!.blockedCount).toBe(0);

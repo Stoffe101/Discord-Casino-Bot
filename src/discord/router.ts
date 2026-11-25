@@ -18,7 +18,8 @@ import { chips, discordTime, escapeMarkdown, plural, signedChips, parseChipAmoun
 import { newId, shortCode } from '../core/random.js';
 import { getSpec, type SettingGroup } from '../config/settings.js';
 import { parseEventTime } from '../domain/casino-events.js';
-import { eventDetailsScreen, eventEditor, eventInviteModal, eventsScreen } from '../ui/screens/events.js';
+import { eventBuyInModal, eventDetailsScreen, eventEditor, eventInviteModal, eventSeatConflictScreen, eventSeatedScreen, eventsScreen, eventTableModal } from '../ui/screens/events.js';
+import { assertMaySit, closeEventTable, openEventTable, seatAtEventTable } from './event-tables.js';
 import { MIN_GIFT } from '../domain/economy/economy-service.js';
 import { resetGuildData } from '../domain/dev-reset.js';
 import type { LeaderboardCategory, LeaderboardPeriod } from '../domain/leaderboard-service.js';
@@ -672,13 +673,60 @@ export class InteractionRouter {
       if (event.revision !== revision) throw new StaleActionError('Refresh the event before editing.');
       return this.showModal(i, eventEditor(this.app, viewer, event));
     }
+    if (action === 'table') {
+      // The event table's settings, before it opens.
+      const event = events.view(viewer, id);
+      if (!events.canManage(viewer, event)) throw new UserError('Only this event’s organizer can change its table.');
+      if (event.revision !== revision) throw new StaleActionError('Refresh the event before changing its table.');
+      if (events.table(event)) throw new UserError('The table is already open, so its settings are fixed.');
+      return this.showModal(i, eventTableModal(this.app, event));
+    }
+    if (action === 'seat' || action === 'opennow') {
+      // "Join the table" (registered players) and "Open table now" (organizer).
+      this.requireOpen(viewer);
+      const event = events.view(viewer, id);
+      const opening = action === 'opennow';
+      if (opening && !events.canManage(viewer, event)) throw new UserError('Only this event’s organizer can open its table.');
+      if (opening && event.revision !== revision) throw new StaleActionError('Refresh the event before opening its table.');
+      const table = events.table(event);
+      const me = myTable(this.app, viewer);
+      // Hold'em seats need a buy-in first: the modal comes before any acknowledgement.
+      const needsBuyIn = event.game === 'poker' && !me && !(opening && table) && (!opening || events.maySit(event, viewer.userId));
+      if (needsBuyIn) {
+        assertMaySit(this.app, viewer, event);
+        return this.showModal(i, eventBuyInModal(this.app, event, opening));
+      }
+      arm(this.fromEphemeral(i) ? 'update' : 'reply');
+      if (opening) {
+        await openEventTable(this.app, this.bot, viewer.guildId, event.id);
+        return this.show(i, eventDetailsScreen(this.app, viewer, events.view(viewer, id)));
+      }
+      if (me && table && me.id === table.id) {
+        return this.show(i, eventSeatedScreen(event, { tableId: table.id, tableName: table.name, url: me.url, opened: false }, 'You already have a seat at this table.'));
+      }
+      if (me) return this.show(i, eventSeatConflictScreen(event, me));
+      return this.show(i, eventSeatedScreen(event, await seatAtEventTable(this.app, this.bot, viewer, id)));
+    }
+    if (action === 'leave') {
+      // Registration is how this player got their seat: withdrawing while seated would keep the
+      // seat and free a registration place, so they leave the table first.
+      const table = events.table(events.view(viewer, id));
+      if (table && myTable(this.app, viewer)?.id === table.id) {
+        throw new UserError('You’re seated at this event’s table. Leave the table first, then withdraw.', 'seated', 'Still seated');
+      }
+    }
     arm(this.fromEphemeral(i) ? 'update' : 'reply');
-    const event = action === 'open' ? events.view(viewer, id)
+    let event = action === 'open' ? events.view(viewer, id)
       : action === 'join' ? events.join(viewer, id, viewer.displayName)
       : action === 'leave' ? events.leave(viewer, id)
       : action === 'assign' && i.isStringSelectMenu()
         ? events.assign(viewer, id, revision, i.values[0] === 'detach' ? null : i.values[0] ?? '')
         : events.manageAction(viewer, id, revision, action);
+    if (action === 'cancel' && event.opened_table_id) {
+      // Cancelling closes the table the event opened, with refunds (an assigned own table stays).
+      await closeEventTable(this.app, event.opened_table_id, 'the event was cancelled');
+      event = events.view(viewer, id);
+    }
     return this.show(i, eventDetailsScreen(this.app, viewer, event));
   }
 
@@ -1204,10 +1252,23 @@ export class InteractionRouter {
       if (n === null) throw new UserError(`Please enter a number of chips — e.g. 250, 2k${context ? ' or all' : ''}.`, 'bad_amount', 'Not a number');
       return n;
     };
-    if (action === 'evtcode' || action === 'evtnew' || action === 'evtedt') {
+    if (action === 'evtcode' || action === 'evtnew' || action === 'evtedt' || action === 'evttbl' || action === 'evtbuy') {
       arm(this.fromEphemeral(i) ? 'update' : 'reply');
       const events = this.app.events;
       if (action === 'evtcode') return this.show(i, eventDetailsScreen(this.app, viewer, events.joinWithCode(viewer, field('code'), viewer.displayName)));
+      if (action === 'evttbl') {
+        const event = events.view(viewer, args[0] ?? '');
+        const seats = intArg(selectValue('seats'), -1);
+        const config = event.game === 'blackjack'
+          ? { game: 'blackjack', seats, minBet: amount(field('min')), maxBet: amount(field('max')) } as const
+          : { game: 'poker', seats, buyIn: amount(field('buyin')) } as const;
+        return this.show(i, eventDetailsScreen(this.app, viewer, events.configureTable(viewer, event.id, intArg(args[1], -1), config)));
+      }
+      if (action === 'evtbuy') {
+        this.requireOpen(viewer);
+        const event = events.view(viewer, args[0] ?? '');
+        return this.show(i, eventSeatedScreen(event, await seatAtEventTable(this.app, this.bot, viewer, event.id, amount(field('buyin')))));
+      }
       const [game, visibility] = selectValue('format').split('-');
       if ((game !== 'blackjack' && game !== 'poker') || (visibility !== 'public' && visibility !== 'private')) throw new UserError('Choose a game and visibility.');
       const startsAt = parseEventTime(field('time'));

@@ -1,6 +1,7 @@
 import type { Database } from '../db/database.js';
 import type { Clock } from '../core/clock.js';
 import { StaleActionError, UserError } from '../core/errors.js';
+import { chips } from '../core/format.js';
 import { newId, shortCode } from '../core/random.js';
 import type { Scheduler } from '../core/scheduler.js';
 import type { SettingsProvider } from './economy/economy-service.js';
@@ -31,14 +32,30 @@ export interface CasinoEvent {
   table_id: string | null;
   revision: number;
   registered: number;
+  /** The organizer's table settings (NULL: server defaults). Read through tableConfig(). */
+  table_config_json: string | null;
+  /** The last table this event opened itself (never reopened automatically once set). */
+  opened_table_id: string | null;
+  /** Why the event's table could not open yet, for the organizer. */
+  table_note: string | null;
 }
+
+/**
+ * What the event's table is opened with. Hold'em blinds and the buy-in range come from the
+ * server settings (PokerTableService.create has no per-table limits); `buyIn` is what the
+ * organizer brings to the table when it opens with them as host.
+ * Extension point for multi-table events: a list of these, one per table.
+ */
+export type EventTableConfig =
+  | { game: 'blackjack'; seats: number; minBet: number; maxBet: number }
+  | { game: 'poker'; seats: number; buyIn: number };
 
 type EventInput = {
   title: string; description: string; game: EventGame; startsAt: number;
   minPlayers: number; maxPlayers: number; private: boolean;
 };
 
-interface EventTable {
+export interface EventTable {
   id: string;
   game: EventGame;
   name: string;
@@ -53,6 +70,10 @@ interface EventTable {
 
 /** How long after its start an event's assigned table is kept open despite being idle. */
 export const EVENT_TABLE_GRACE_MS = 30 * 60_000;
+/** An event's own table opens this long before the start, once enough players registered. */
+export const EVENT_TABLE_LEAD_MS = 15 * 60_000;
+
+const ACTIVE = "e.state IN ('scheduled','ready','awaiting','in_progress')";
 
 const SELECT = `SELECT e.*, (SELECT COUNT(*) FROM casino_event_players p WHERE p.event_id = e.id) AS registered FROM casino_events e`;
 
@@ -110,20 +131,27 @@ export class CasinoEvents {
     const id = newId();
     const code = input.private ? this.uniqueCode(actor.guildId) : null;
     const { db, clock } = this.deps;
-    db.run(`INSERT INTO casino_events (id,guild_id,organizer_id,title,description,game,starts_at,min_players,max_players,access_code,state,registration_open,revision,created_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,'scheduled',1,0,?)`, [id, actor.guildId, actor.userId, input.title, input.description, input.game, input.startsAt,
-      input.minPlayers, input.maxPlayers, code, clock.now()]);
+    const config = this.defaultTableConfig(actor.guildId, input.game);
+    db.run(`INSERT INTO casino_events (id,guild_id,organizer_id,title,description,game,starts_at,min_players,max_players,access_code,state,registration_open,revision,created_at,table_config_json)
+           VALUES (?,?,?,?,?,?,?,?,?,?,'scheduled',1,0,?,?)`, [id, actor.guildId, actor.userId, input.title, input.description, input.game, input.startsAt,
+      input.minPlayers, input.maxPlayers, code, clock.now(), JSON.stringify(config)]);
     return this.updateSchedule(this.get(actor.guildId, id));
   }
 
   edit(actor: EventActor, id: string, revision: number, input: EventInput): CasinoEvent {
     this.validate(actor.guildId, input);
     const event = this.manage(actor, id, revision);
-    if (!this.isUpcoming(event) || event.table_id) throw new UserError('Detach the table before editing an upcoming event.');
+    if (!this.isUpcoming(event) || event.table_id) throw new UserError('An event can be edited until its table opens (an assigned table can be detached first).');
     if (event.registered > input.maxPlayers) throw new UserError('Keep enough places for your existing registrations.');
     const code = input.private ? event.access_code ?? this.uniqueCode(actor.guildId) : null;
-    this.deps.db.run(`UPDATE casino_events SET title=?,description=?,game=?,starts_at=?,min_players=?,max_players=?,access_code=?,state='scheduled',revision=revision+1 WHERE id=?`,
-      [input.title, input.description, input.game, input.startsAt, input.minPlayers, input.maxPlayers, code, id]);
+    // Same game: keep the table settings, with room for the new maximum. New game: its defaults.
+    const kept = input.game === event.game ? this.tableConfig(event) : this.defaultTableConfig(actor.guildId, input.game);
+    const seatsCap = this.seatLimit(actor.guildId, input.game);
+    const config = { ...kept, seats: Math.min(seatsCap, Math.max(kept.seats, input.maxPlayers)) };
+    // A rescheduled event opens a fresh table at its new time.
+    this.deps.db.run(`UPDATE casino_events SET title=?,description=?,game=?,starts_at=?,min_players=?,max_players=?,access_code=?,state='scheduled',
+        table_config_json=?,opened_table_id=NULL,table_note=NULL,revision=revision+1 WHERE id=?`,
+      [input.title, input.description, input.game, input.startsAt, input.minPlayers, input.maxPlayers, code, JSON.stringify(config), id]);
     return this.updateSchedule(this.get(actor.guildId, id));
   }
 
@@ -226,10 +254,11 @@ export class CasinoEvents {
     let state = event.state;
     let registration = event.registration_open;
     if (action === 'start') {
+      // Starting early is allowed once enough players registered and the table is open.
       const settings = this.deps.settings(actor.guildId);
-      if (this.deps.clock.now() < event.starts_at || !upcoming || event.registered < event.min_players || !this.table(event)
+      if (!upcoming || event.registered < event.min_players || !this.table(event)
         || !settings.enabled || !settings[event.game].enabled) {
-        throw new UserError('Starting requires the scheduled time, enough players and an open assigned table.');
+        throw new UserError('Starting requires enough registered players and an open event table.');
       }
       state = 'in_progress';
       registration = 0;
@@ -261,6 +290,153 @@ export class CasinoEvents {
       this.updateSchedule(this.recheck(event.id, event.guild_id));
     }
     return events.length;
+  }
+
+  // ───────────────────────────── the event's own table ─────────────────────────────
+
+  /** A fresh read without access checks (sweeps and the table keeper re-read inside their lock). */
+  find(guildId: string, id: string): CasinoEvent | undefined {
+    return this.deps.db.get<CasinoEvent>(SELECT + ' WHERE e.guild_id = ? AND e.id = ?', [guildId, id]);
+  }
+
+  defaultTableConfig(guildId: string, game: EventGame): EventTableConfig {
+    const settings = this.deps.settings(guildId);
+    const seats = this.seatLimit(guildId, game);
+    return game === 'blackjack'
+      ? { game, seats, minBet: settings.blackjack.minBet, maxBet: settings.blackjack.maxBet }
+      : { game, seats, buyIn: settings.poker.minBuyIn };
+  }
+
+  /** The settings the event's table opens with, kept inside the server's current limits. */
+  tableConfig(event: CasinoEvent): EventTableConfig {
+    const fallback = this.defaultTableConfig(event.guild_id, event.game);
+    let stored: Record<string, unknown> = {};
+    try {
+      const parsed: unknown = event.table_config_json ? JSON.parse(event.table_config_json) : {};
+      if (parsed && typeof parsed === 'object' && (parsed as { game?: unknown }).game === event.game) stored = parsed as Record<string, unknown>;
+    } catch {
+      stored = {};
+    }
+    const int = (value: unknown, otherwise: number) => (Number.isSafeInteger(value) ? (value as number) : otherwise);
+    const limit = this.seatLimit(event.guild_id, event.game);
+    const seats = clamp(int(stored.seats, fallback.seats), Math.min(event.max_players, limit), limit);
+    const settings = this.deps.settings(event.guild_id);
+    if (event.game === 'blackjack') {
+      const bj = settings.blackjack;
+      const minBet = clamp(int(stored.minBet, bj.minBet), bj.minBet, bj.maxBet);
+      return { game: 'blackjack', seats, minBet, maxBet: clamp(int(stored.maxBet, bj.maxBet), minBet, bj.maxBet) };
+    }
+    const pk = settings.poker;
+    return { game: 'poker', seats, buyIn: clamp(int(stored.buyIn, pk.minBuyIn), pk.minBuyIn, pk.maxBuyIn) };
+  }
+
+  configureTable(actor: EventActor, id: string, revision: number, config: EventTableConfig): CasinoEvent {
+    const event = this.manage(actor, id, revision);
+    if (!this.isUpcoming(event)) throw new UserError('Table settings can only change before the event starts.');
+    if (this.table(event)) throw new UserError('The table is already open, so its settings are fixed.');
+    if (config.game !== event.game) throw new StaleActionError('Refresh the event before changing its table.');
+    const settings = this.deps.settings(actor.guildId);
+    const limit = this.seatLimit(actor.guildId, event.game);
+    if (!Number.isInteger(config.seats) || config.seats < event.max_players || config.seats > limit) {
+      throw new UserError(`Choose ${event.max_players >= limit ? limit : `${event.max_players}–${limit}`} seats: every registered player needs one.`);
+    }
+    let clean: EventTableConfig;
+    if (config.game === 'blackjack') {
+      const bj = settings.blackjack;
+      if (!Number.isSafeInteger(config.minBet) || !Number.isSafeInteger(config.maxBet) || config.minBet > config.maxBet) {
+        throw new UserError('The minimum bet must not be higher than the maximum.');
+      }
+      if (config.minBet < bj.minBet || config.maxBet > bj.maxBet) throw new UserError(`Bet limits must stay within the server range ${chips(bj.minBet)}–${chips(bj.maxBet)}.`);
+      clean = { game: 'blackjack', seats: config.seats, minBet: config.minBet, maxBet: config.maxBet };
+    } else {
+      const pk = settings.poker;
+      if (!Number.isSafeInteger(config.buyIn) || config.buyIn < pk.minBuyIn || config.buyIn > pk.maxBuyIn) {
+        throw new UserError(`Choose a buy-in from ${chips(pk.minBuyIn)} to ${chips(pk.maxBuyIn)} chips.`);
+      }
+      clean = { game: 'poker', seats: config.seats, buyIn: config.buyIn };
+    }
+    this.deps.db.run('UPDATE casino_events SET table_config_json = ?, revision = revision + 1 WHERE id = ?', [JSON.stringify(clean), id]);
+    this.changed(actor.guildId);
+    return this.get(actor.guildId, id);
+  }
+
+  /**
+   * The organizer keeps the host seat when registered, or when the table has a seat beyond the
+   * player limit; otherwise their seat would take a registered player's place.
+   */
+  organizerKeepsSeat(event: CasinoEvent): boolean {
+    return this.registered(event.id, event.organizer_id) || this.tableConfig(event).seats > event.max_players;
+  }
+
+  /** Who may sit at the event's table through the event: registered players, and the organizer when a seat is spare. */
+  maySit(event: CasinoEvent, userId: string): boolean {
+    return this.registered(event.id, userId) || (userId === event.organizer_id && this.organizerKeepsSeat(event));
+  }
+
+  /** Whether a player asking to sit may open the table now: inside its window, with enough players. */
+  openable(event: CasinoEvent, now: number): boolean {
+    if (this.table(event) || now >= event.starts_at + EVENT_TABLE_GRACE_MS) return false;
+    return event.state === 'in_progress'
+      || (this.isUpcoming(event) && now >= event.starts_at - EVENT_TABLE_LEAD_MS && event.registered >= event.min_players);
+  }
+
+  /** Events whose table the maintenance sweep opens now: due, nothing assigned, never opened by the event. */
+  dueForTables(now: number): CasinoEvent[] {
+    return this.deps.db.all<CasinoEvent>(SELECT + ` WHERE ${ACTIVE} AND e.table_id IS NULL AND e.opened_table_id IS NULL
+      AND ? < e.starts_at + ? AND (e.state = 'in_progress' OR (e.starts_at - ? <= ?
+        AND (SELECT COUNT(*) FROM casino_event_players p WHERE p.event_id = e.id) >= e.min_players))
+      ORDER BY e.starts_at, e.id`, [now, EVENT_TABLE_GRACE_MS, EVENT_TABLE_LEAD_MS, now]);
+  }
+
+  /** Link the table the event just opened, before Discord shows it: a restart never opens a second one. */
+  linkOpenedTable(guildId: string, id: string, tableId: string): void {
+    this.deps.db.run('UPDATE casino_events SET table_id = ?, opened_table_id = ?, table_note = NULL, revision = revision + 1 WHERE guild_id = ? AND id = ?',
+      [tableId, tableId, guildId, id]);
+    this.changed(guildId);
+  }
+
+  /** Discord could not show the new table: detach it before it closes (with refunds), so the event stays as it was. */
+  unlinkFailedTable(guildId: string, id: string, tableId: string, note: string): void {
+    this.deps.db.run('UPDATE casino_events SET table_id = NULL, table_note = ?, revision = revision + 1 WHERE guild_id = ? AND id = ? AND table_id = ?',
+      [note, guildId, id, tableId]);
+    this.changed(guildId);
+  }
+
+  /** Why the table has not opened yet (null clears it). Informational: no revision change. */
+  noteTable(guildId: string, id: string, note: string | null): void {
+    const result = this.deps.db.run('UPDATE casino_events SET table_note = ? WHERE guild_id = ? AND id = ? AND table_note IS NOT ?', [note, guildId, id, note]);
+    if (result.changes) this.changed(guildId);
+  }
+
+  /**
+   * Settles events still upcoming 30 minutes after their start, so none lingers in the lists:
+   * short of players: called off (the caller closes any table they opened, with refunds);
+   * table open: in progress (completed when the table closes); table played and closed: completed;
+   * table never opened: called off.
+   */
+  settleOverdue(now: number): void {
+    const events = this.deps.db.all<CasinoEvent>(SELECT + " WHERE e.state IN ('scheduled','ready','awaiting') AND e.starts_at + ? <= ?",
+      [EVENT_TABLE_GRACE_MS, now]);
+    for (const event of events) {
+      const [state, note] = event.registered < event.min_players ? ['cancelled', 'Called off: not enough players registered by the start.']
+        : this.table(event) ? ['in_progress', null]
+          : event.opened_table_id ? ['completed', null]
+            : ['cancelled', 'Called off: the table never opened.'];
+      this.deps.db.run('UPDATE casino_events SET state = ?, registration_open = 0, table_note = COALESCE(?, table_note), revision = revision + 1 WHERE id = ?',
+        [state, note, event.id]);
+      this.updateSchedule(this.get(event.guild_id, event.id));
+    }
+  }
+
+  /** Open tables that cancelled events opened themselves (also after a restart between cancel and close). */
+  tablesToClose(): Array<{ guildId: string; tableId: string }> {
+    return this.deps.db.all(`SELECT e.guild_id AS guildId, e.opened_table_id AS tableId FROM casino_events e
+      JOIN game_tables t ON t.id = e.opened_table_id AND t.status = 'open' WHERE e.state = 'cancelled'`);
+  }
+
+  private seatLimit(guildId: string, game: EventGame): number {
+    const settings = this.deps.settings(guildId);
+    return game === 'poker' ? settings.poker.maxSeats : settings.blackjack.maxSeats;
   }
 
   private uniqueCode(guildId: string): string {
@@ -318,4 +494,8 @@ export class CasinoEvents {
     this.changed(event.guild_id);
     return event;
   }
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }

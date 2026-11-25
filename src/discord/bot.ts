@@ -30,6 +30,7 @@ import type { Screen } from '../ui/kit.js';
 import { PanelSync, sleep, type PanelLocation } from './panel-sync.js';
 import { DISCORD_ERRORS, createOptions, discordErrorCode, editOptions, primaryFileName, screenDigest } from './payload.js';
 import { InteractionRouter } from './router.js';
+import { openDueEventTables } from './event-tables.js';
 import type { AdmissionCandidate, OutboundGuard } from './outbound-guard.js';
 import { tidyCasinoChannels } from './channel-tidy.js';
 
@@ -352,6 +353,8 @@ export class CasinoBot {
     for (const { guildId } of this.app.settings.guildsWithLobby()) this.requestLobby(guildId, 0);
     // Closes whose Discord side failed or was interrupted (e.g. by a crash) are finished now.
     this.track(this.reconcileClosedTables().then(() => undefined));
+    // Casino events: open event tables that came due while the bot was down (event-tables.ts).
+    this.track(openDueEventTables(this.app, this));
     // Keep #casino to the lobby and live challenges: remove the bot's own leftovers, once startup
     // (panel recovery, lobby sync) has settled, at low priority.
     this.tidySweep = setTimeout(() => this.track(tidyCasinoChannels(this.client, this.app, this.guard, this.logger).then(() => undefined, () => undefined)), TIDY_DELAY_MS);
@@ -386,6 +389,8 @@ export class CasinoBot {
       });
       await step('close reconciliation', () => this.reconcileClosedTables());
       await step('nickname restoration', async () => this.nicknames?.restoreDue());
+      // Casino events: open due event tables, call off under-subscribed events (event-tables.ts).
+      await step('event tables', () => openDueEventTables(this.app, this));
     } finally {
       this.maintaining = false;
     }

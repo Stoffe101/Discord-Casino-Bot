@@ -73,8 +73,11 @@ with the same env files against a copy of the backup, and carry forward any acti
 - Hold'em chip dumping lets a new account move its starting chips to a friend in one hand (the
   gift age rule doesn't apply at the table). Options: an account-age gate on Hold'em seats.
 - Real nicknames remain disabled until you approve them for a guild.
-- Events still need a manually opened, assigned table; automatic creation near start time is not
-  built yet.
+- Event tables: one table per event (multi-table events would extend `EventTableConfig` to a
+  list). A player who withdraws must leave the event's table first. A crash in the instant
+  between the game service creating the table and the event recording it would leave that
+  table unlinked (it then idles out normally with refunds); the event records the table before
+  any Discord call, so a crash anywhere later resumes the same table.
 
 **Still needs a real person (not clickable by Claude this round):** a fresh `/casino` to confirm the
 whole Home appears on first open (Home no longer carries any image attachment); a two-player
@@ -140,10 +143,18 @@ were already archived and locked by the bot. Reconciliation reported zero proble
   cards revealed. Stacks remain in table escrow. A hand settles and rolls stacks into the
   next hand atomically, with no rake. Blackjack and Hold’em share seat exclusivity.
 - The table browser lists Blackjack, Hold’em, roulette and upcoming events. Event organizers
-  create single-table sessions, set registration and capacity, and explicitly assign a
-  matching table they have opened. Start times require a date and UTC offset. Registrations,
-  invite codes and state recover from SQLite. The first version has no automatic table
-  assignment, waitlist, entry fees, pings or Discord-native event announcements.
+  create single-table sessions, set registration and capacity, and configure the event's table
+  (seats and bets, or the Hold'em buy-in) from the event. Blackjack event tables open by
+  themselves 15 minutes before the start once enough players registered (startup and the
+  minute sweep, one at a time per event, never a second table); the organizer can open early.
+  Hold'em event tables never open by themselves: a seat holds the player's own buy-in, so the
+  first registered player to click "Join the table" (organizer included) opens it with the
+  buy-in they enter. Registered players take a seat with one click; registration is the access
+  to a private event's table (its code is never shown). Cancelling, or an event called off
+  short of players, closes the table it opened with refunds. Event tables are exempt from idle
+  closing until 30 minutes after the start. Start times require a date and UTC offset.
+  Registrations, invite codes and state recover from SQLite. No waitlist, entry fees, pings or
+  Discord-native event announcements.
 - Relief considers the lowest opening stake or buy-in across the enabled games. Held stakes,
   table stacks, active reward availability, cooldown and recent outgoing gifts still affect
   eligibility. Gifting is enabled by default while explicit guild overrides take precedence.

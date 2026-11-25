@@ -294,4 +294,19 @@ export const MIGRATIONS: readonly Migration[] = [
         WHERE status = 'closed' AND thread_id IS NOT NULL AND discord_closed_at IS NULL;
     `,
   },
+  {
+    id: 6,
+    name: 'event_tables',
+    sql: /* sql */ `
+      -- Casino events open their own table shortly before the start.
+      -- table_config_json: the organizer's table settings (NULL = server defaults when it opens).
+      -- opened_table_id:   the last table the event opened itself (closed with refunds when the
+      --                    event is cancelled; set once, so a closed table is never reopened by the sweep).
+      -- table_note:        why the table could not open yet (shown to the organizer).
+      ALTER TABLE casino_events ADD COLUMN table_config_json TEXT;
+      ALTER TABLE casino_events ADD COLUMN opened_table_id TEXT;
+      ALTER TABLE casino_events ADD COLUMN table_note TEXT;
+      CREATE INDEX casino_events_due ON casino_events (starts_at) WHERE state NOT IN ('completed', 'cancelled');
+    `,
+  },
 ];

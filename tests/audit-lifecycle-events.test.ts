@@ -184,7 +184,10 @@ describe('audit: casino events', () => {
     expect(recs.some((r) => /full/i.test(h.text(h.seen(r))))).toBe(true);
   });
 
-  it('a private event is unreachable without the invite code, and its table still needs the table code (verified)', async () => {
+  // Changed with automatic event tables: registration is the access to a private event's table,
+  // so the table code is never shown (it used to be shown to registered guests). Outsiders still
+  // need the code for the table itself.
+  it('a private event is unreachable without the invite code; registration seats a guest without ever showing the table code', async () => {
     const h = harness({ allowThreads: true });
     const host = player(h, 'Host', true);
     const organizer = actor(h, host, true);
@@ -203,10 +206,16 @@ describe('audit: casino events', () => {
     await h.app.blackjack.setSittingOut(tableId, host.id, true);
     const ready = h.app.events.view(organizer, event.id);
     h.app.events.manageAction(organizer, event.id, ready.revision, 'start');
-    // The registered guest sees the table code; the outsider pressing the same seat control by id
-    // only gets the access-code modal, and a wrong code is refused.
+    // The registered guest never sees the table code but takes a seat through the event; the
+    // outsider pressing the event's seat control is refused, and the table's own control only
+    // gets the access-code modal, where a wrong code is refused.
+    const code = h.app.blackjack.peek(tableId)!.record.accessCode!;
     const guestView = await press(h, guest, await anchor(h, guest), `evt:open:${event.id}`);
-    expect(h.text(h.seen(guestView))).toContain(h.app.blackjack.peek(tableId)!.record.accessCode!);
+    expect(h.text(h.seen(guestView))).not.toContain(code);
+    const seated = await press(h, guest, h.seen(guestView)!, `evt:seat:${event.id}`);
+    expect(h.text(h.seen(seated))).not.toContain(code);
+    expect(h.app.blackjack.tableOfUser(h.guildId, guest.id)?.record.id).toBe(tableId);
+    expect(h.text(h.seen(await press(h, outsider, outsiderAnchor, `evt:seat:${event.id}`)))).toMatch(/invitation code/i);
     const opener = await press(h, outsider, outsiderAnchor, `tbl:join:${tableId}`);
     expect(opener.modal).not.toBeNull();
     await h.submit(outsider, opener, { code: 'WRONG' });

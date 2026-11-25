@@ -98,6 +98,13 @@ export class CoinflipService {
     return row ? toChallenge(row) : undefined;
   }
 
+  /** Messages of challenges still waiting for an answer (they must stay in the channel). */
+  pendingMessageIds(guildId: string): string[] {
+    return this.db
+      .all<{ message_id: string }>("SELECT message_id FROM coinflip_challenges WHERE guild_id = ? AND status = 'pending' AND message_id IS NOT NULL", [guildId])
+      .map((row) => row.message_id);
+  }
+
   idle(): Promise<void> {
     return this.queue.drain();
   }

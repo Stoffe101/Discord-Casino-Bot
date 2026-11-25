@@ -48,6 +48,7 @@ import {
   type TableFilter,
 } from '../ui/screens/blackjack.js';
 import { myTable } from '../ui/screens/my-table.js';
+import { challengeLingerMs } from './channel-tidy.js';
 import { coinflipLobbyScreen, coinflipModal, gamesHubScreen, paytableScreen, rouletteBetModal, rouletteHelpScreen, slotsScreen } from '../ui/screens/games.js';
 import { HELP_TOPICS, helpScreen, type HelpTopic } from '../ui/screens/help.js';
 import { adjustModal, adminScreen, adminTablesScreen, auditScreen, devResetModal, settingModal } from '../ui/screens/admin.js';
@@ -1057,7 +1058,28 @@ export class InteractionRouter {
   }
 
   /** Observer path: refresh a challenge message after expiry (clicks update it directly). */
+  private readonly challengeTidy = new Map<string, NodeJS.Timeout>();
+
+  /** A finished challenge card leaves #casino after a short while (the result stays in history). */
+  private scheduleChallengeTidy(challenge: Challenge): void {
+    const linger = challengeLingerMs(challenge.status);
+    const { channelId, messageId } = challenge;
+    if (linger === null || !channelId || !messageId || this.challengeTidy.has(challenge.id)) return;
+    const timer = setTimeout(() => {
+      this.challengeTidy.delete(challenge.id);
+      void (async () => {
+        const channel = await this.bot.client.channels.fetch(channelId).catch(() => null);
+        if (!channel?.isTextBased() || !('messages' in channel)) return;
+        this.bot.guard?.allowDelete(messageId);
+        await channel.messages.delete(messageId).catch(() => undefined);
+      })();
+    }, linger);
+    timer.unref?.();
+    this.challengeTidy.set(challenge.id, timer);
+  }
+
   async refreshChallenge(challenge: Challenge): Promise<void> {
+    this.scheduleChallengeTidy(challenge);
     if (this.handledChallenges.has(challenge.id) || !challenge.channelId || !challenge.messageId) return;
     try {
       const screen = await this.bot.coinflipScreen(challenge.id);

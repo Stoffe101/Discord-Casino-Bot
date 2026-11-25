@@ -31,6 +31,7 @@ import { PanelSync, sleep, type PanelLocation } from './panel-sync.js';
 import { DISCORD_ERRORS, createOptions, discordErrorCode, editOptions, primaryFileName } from './payload.js';
 import { InteractionRouter } from './router.js';
 import type { AdmissionCandidate, OutboundGuard } from './outbound-guard.js';
+import { tidyCasinoChannels } from './channel-tidy.js';
 import { RestMetrics } from './rest-metrics.js';
 import { SosseNicknames, type NicknameMembers } from '../domain/sosse-nicknames.js';
 import { discordNicknameMembers } from './sosse-members.js';
@@ -342,6 +343,8 @@ export class CasinoBot {
     for (const { guildId } of this.app.settings.guildsWithLobby()) this.requestLobby(guildId, 0);
     // Closes whose Discord side failed or was interrupted (e.g. by a crash) are finished now.
     this.track(this.reconcileClosedTables().then(() => undefined));
+    // Keep #casino to the lobby and live challenges: remove the bot's own leftovers (low priority).
+    this.track(tidyCasinoChannels(this.client, this.app, this.guard, this.logger).then(() => undefined, () => undefined));
     this.firstSweep = setTimeout(() => this.track(this.maintenance()), this.timing.firstSweepMs);
     this.firstSweep.unref?.();
     this.intervals.push(

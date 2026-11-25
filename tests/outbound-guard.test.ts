@@ -185,6 +185,7 @@ describe('OutboundGuard inside the running bot (full stack)', () => {
     // Session 1 without the guard: threads are used.
     const path = `${process.env.TEMP ?? '/tmp'}/casino-guard-${Date.now()}-${Math.random().toString(36).slice(2)}.db`;
     const before = new CasinoHarness({ guard: false, dbPath: path });
+    await before.slash(before.user('Admin', true), 'casinoadmin', { subcommand: 'setup' }); // tables open only in the casino channel
     const alice = before.user('Alice');
     await before.openBlackjack(alice);
     const tableId = before.app.blackjack.allOpenTables()[0]!.record.id;

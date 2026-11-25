@@ -281,4 +281,17 @@ export const MIGRATIONS: readonly Migration[] = [
       );
     `,
   },
+  {
+    id: 5,
+    name: 'table_discord_close',
+    sql: /* sql */ `
+      -- When the Discord side of a closed table (closed panel, locked and archived thread) was
+      -- confirmed. A closed row with a thread and no timestamp still has to be reconciled: the
+      -- bot retries it at startup and on every maintenance sweep. Rows closed before this
+      -- migration start out pending and are reconciled in small batches.
+      ALTER TABLE game_tables ADD COLUMN discord_closed_at INTEGER;
+      CREATE INDEX game_tables_discord_pending ON game_tables (closed_at)
+        WHERE status = 'closed' AND thread_id IS NOT NULL AND discord_closed_at IS NULL;
+    `,
+  },
 ];

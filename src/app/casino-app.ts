@@ -74,6 +74,8 @@ export class CasinoApp {
       scheduler: this.scheduler,
       logger: this.logger,
       rng: this.rng,
+      // A table assigned to a due casino event is not idle-closed (until 30 min after its start).
+      idleExempt: (tableId: string, guildId: string, now: number) => this.events.holdsTable(guildId, tableId, now),
     };
     this.blackjack = new BlackjackTableService(gameDeps);
     this.poker = new PokerTableService(gameDeps);

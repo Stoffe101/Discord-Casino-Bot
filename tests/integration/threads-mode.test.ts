@@ -183,8 +183,9 @@ describe('thread mode (full stack)', () => {
 
   it('never writes to a table thread under another channel; the table is re-homed under #casino', async () => {
     const dbPath = tempDb();
-    // Session 1, no guard: someone plays from #general, so the table thread lives under #general.
+    // Session 1, no guard, with #general configured as the casino channel: the table thread lives under #general.
     const before = new CasinoHarness({ guard: false, dbPath });
+    await before.slash(before.user('Admin', true), 'casinoadmin', { subcommand: 'setup' }, before.general);
     const alice = before.user('Alice');
     await before.openBlackjack(alice, null, before.general);
     const tableId = before.app.blackjack.tableOfUser(before.guildId, alice.id)!.record.id;

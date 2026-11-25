@@ -5,6 +5,7 @@ import type { Logger } from '../../core/logger.js';
 import { newId, shortCode, type Rng } from '../../core/random.js';
 import type { Scheduler } from '../../core/scheduler.js';
 import { KeyedSerialQueue } from '../../core/serial-queue.js';
+import type { IdleExemption } from '../../tables/blackjack-table-service.js';
 import type { EconomyService, SettingsProvider } from '../../domain/economy/economy-service.js';
 import type { RoundRecorder } from '../../domain/round-recorder.js';
 import { isCard } from '../cards.js';
@@ -79,6 +80,8 @@ export class PokerTableService {
   constructor(private readonly deps: {
     db: Database; economy: EconomyService; recorder: RoundRecorder; settings: SettingsProvider;
     clock: Clock; scheduler: Scheduler; logger: Logger; rng: Rng;
+    /** Keeps an otherwise idle table open (e.g. assigned to a due casino event); always bounded. */
+    idleExempt?: IdleExemption;
   }) {}
 
   setObserver(observer: Observer): void { this.observer = observer; }
@@ -309,7 +312,8 @@ export class PokerTableService {
     if (table.state.hand) return false;
     const { idleMinutes, idleEmptyMinutes } = this.deps.settings(table.record.guildId).tables;
     const limit = table.state.seats.length ? idleMinutes : idleEmptyMinutes;
-    return now - table.record.lastActivityAt >= limit * 60_000;
+    if (now - table.record.lastActivityAt < limit * 60_000) return false;
+    return !this.deps.idleExempt?.(table.record.id, table.record.guildId, now);
   }
 
   async sweepIdle(): Promise<void> {

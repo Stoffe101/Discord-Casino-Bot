@@ -325,7 +325,7 @@ export class FakeDiscord {
       }
       return { status: 201, body: this.channelJson(thread) };
     }
-    if (s[1] === 'thread-members' && method === 'PUT') return { status: 204 };
+    if (s[1] === 'thread-members' && (method === 'PUT' || method === 'DELETE')) return { status: 204 };
     if (s[1] === 'messages') {
       if (s.length === 2 && method === 'GET') {
         const list = [...this.messages.values()].filter((m) => m.channelId === channel.id && !m.forUser && !m.deleted).reverse().slice(0, 50);

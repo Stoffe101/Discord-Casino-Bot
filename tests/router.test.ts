@@ -126,6 +126,8 @@ describe('InteractionRouter (headless)', () => {
     scheduler = new ManualScheduler(clock);
     app = new CasinoApp({ db, logger: silentLogger, clock, scheduler, rng: seededRng(5) });
     bot = new CasinoBot(app, silentLogger, { animations: false }); // routing, not animation, is under test here
+    // No casino channel exists in this headless setup; tables are created directly by the tests.
+    app.blackjack.setCreationCheck(() => undefined);
   });
 
   afterEach(async () => {

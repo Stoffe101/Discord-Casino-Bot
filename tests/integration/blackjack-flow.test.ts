@@ -194,7 +194,7 @@ describe('blackjack via the Discord panel', () => {
   });
 
   it('protects private tables and host-only controls', async () => {
-    h = new CasinoHarness();
+    h = new CasinoHarness({ allowThreads: true }); // private tables only exist in private threads
     const [host, guest, stranger] = [h.user('Host'), h.user('Guest'), h.user('Stranger')];
     const tables = h.seen(await h.slash(host, 'blackjack'));
     const opener = await h.click(host, tables, 'Open a Blackjack table');

@@ -334,6 +334,10 @@ export class InteractionRouter {
       }
       case 'blackjack':
         return this.show(i, tablesScreen(this.app, viewer, 'blackjack'));
+      case 'holdem':
+        return this.show(i, tablesScreen(this.app, viewer, 'poker'));
+      case 'games':
+        return this.show(i, await gamesHubScreen(this.app, viewer));
       case 'roulette':
         return this.openRoulette(i, viewer);
       case 'slots':
@@ -659,7 +663,7 @@ export class InteractionRouter {
           tone: 'gold',
           buttons: [
             button({ id: cid('eco', 'nickname', viewer.userId), label: 'Set my server nickname to Sosse' }),
-            button({ id: NAV.wallet, label: 'Back to Wallet', emoji: ICONS.wallet }),
+            button({ id: NAV.wallet, label: 'Back to wallet', emoji: ICONS.wallet }),
           ],
         }));
       }
@@ -769,7 +773,7 @@ export class InteractionRouter {
       title: `♠ ${escapeMarkdown(tableName)}`,
       body,
       tone: 'success',
-      buttons: [url ? linkButton('Go to the table', url, ICONS.blackjack) : null, button({ id: NAV.home, label: 'Casino home', emoji: ICONS.home })].filter(
+      buttons: [url ? linkButton('Go to the table', url, ICONS.blackjack) : null, button({ id: NAV.home, label: 'Home', emoji: ICONS.home })].filter(
         (b): b is ReturnType<typeof button> => b !== null,
       ),
     });
@@ -794,13 +798,24 @@ export class InteractionRouter {
     }
     arm(this.fromEphemeral(i) ? 'update' : 'reply');
     const seat = await this.app.blackjack.join(tableId, viewer.userId, viewer.displayName, code);
-    const url = await this.bot.addToTableThread(tableId, viewer.userId);
+    const url = await this.seatLink(tableId, viewer.userId);
     const inRound = snap.state.phase !== 'betting';
     return this.show(
       i,
       this.seatedScreen(snap.record.name, url, `You're in seat **${seat.seatIndex + 1}**. ${inRound ? "A hand is in progress — you'll be dealt in next hand." : 'Press a chip on the table to bet.'}`),
       this.fromEphemeral(i) ? 'auto' : 'private',
     );
+  }
+
+  /** Link (and private-thread access) for a seat just taken; the seat is released if Discord refuses access. */
+  private async seatLink(tableId: string, userId: string): Promise<string | null> {
+    try {
+      return await this.bot.addToTableThread(tableId, userId);
+    } catch (error) {
+      await this.app.blackjack.leave(tableId, userId).catch(() => undefined);
+      this.app.logger.warn('private table thread unavailable for a new seat; seat released', { tableId, error });
+      throw new UserError("Discord didn't let me add you to this private table's thread, so your seat was released. Ask the host to try again in a moment.", 'thread_access', 'Could not join');
+    }
   }
 
   // ───────────────────────────── blackjack table panel ─────────────────────────────
@@ -923,7 +938,15 @@ export class InteractionRouter {
         ? `https://discord.com/channels/${viewer.guildId}/${wheel.record.threadId}`
         : `https://discord.com/channels/${viewer.guildId}/${wheel.record.channelId}/${wheel.record.messageId}`;
     }
-    return this.show(i, noticeScreen({ title: '🎡 The wheel is ready', body: 'Pick a bet from the menu under the wheel. It spins shortly after the first bet.', tone: 'success', buttons: url ? [linkButton('Go to the wheel', url)] : [] }));
+    return this.show(i, noticeScreen({
+      title: `${ICONS.roulette} The wheel is ready`,
+      body: 'Pick a bet from the menu under the wheel. It spins shortly after the first bet, or as soon as most bettors are ready.',
+      tone: 'success',
+      // Never a dead end: the way to the wheel, and the way back to the floor.
+      buttons: [url ? linkButton('Go to the wheel', url, ICONS.roulette) : null, button({ id: NAV.floor, label: 'Games', emoji: ICONS.back })].filter(
+        (b): b is ReturnType<typeof button> => b !== null,
+      ),
+    }));
   }
 
   private async roulette(i: Component, viewer: Viewer, action: string, args: string[], arm: (m: AckMode) => void): Promise<void> {
@@ -1164,7 +1187,7 @@ export class InteractionRouter {
         const snap = this.table(viewer, args[0] ?? '');
         const tableId = snap.record.id;
         await this.app.blackjack.join(tableId, viewer.userId, viewer.displayName, field('code'));
-        const url = await this.bot.addToTableThread(tableId, viewer.userId);
+        const url = await this.seatLink(tableId, viewer.userId);
         return this.show(i, this.seatedScreen(snap.record.name, url, 'Code accepted — welcome to the table.'), this.fromEphemeral(i) ? 'auto' : 'private');
       }
       case 'bjbet': {

@@ -20,6 +20,8 @@ describe('multiple servers', () => {
     const b = fd.addGuild('Server B');
     const bCasino = fd.addChannel(b, 'casino');
     h = new CasinoHarness({ discord: fd, guard: false });
+    // Tables open only in a server's configured casino channel.
+    await h.slash(h.user('Admin B', true), 'casinoadmin', { subcommand: 'setup' }, bCasino);
     const alice = h.user('Alice');
 
     // Alice plays in both servers: two independent wallets.

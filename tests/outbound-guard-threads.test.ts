@@ -47,6 +47,8 @@ describe('thread policy', () => {
     ['PATCH', `/channels/${T_OK}`, { locked: true }],
     ['PATCH', `/channels/${T_OK}`, { archived: false, auto_archive_duration: 1440 }],
     ['PUT', `/channels/${T_OK}/thread-members/123456789012345678`],
+    // A departed player is removed from a private casino table thread.
+    ['DELETE', `/channels/${T_OK}/thread-members/123456789012345678`],
     ['GET', `/channels/${T_UNKNOWN}`], // lookup only (verifies parentage)
   ];
   const blocked: Array<[string, string, RegExp, unknown?]> = [
@@ -62,7 +64,8 @@ describe('thread policy', () => {
     ['PATCH', `/channels/${T_OK}`, /only archiving or locking/, { name: 'renamed' }],
     ['PATCH', `/channels/${T_OK}`, /only archiving or locking/, { archived: true, rate_limit_per_user: 60 }],
     ['DELETE', `/channels/${T_OK}`, /may not be deleted/],
-    ['DELETE', `/channels/${T_OK}/thread-members/123456789012345678`, /only adding members/],
+    ['DELETE', `/channels/${T_GENERAL}/thread-members/123456789012345678`, /not allowlisted/],
+    ['PATCH', `/channels/${T_OK}/thread-members/123456789012345678`, /adding or removing members/],
     ['PUT', `/channels/${T_GENERAL}/thread-members/123456789012345678`, /not allowlisted/],
     ['PUT', `/channels/${T_OK}/messages/800000000000000005/reactions/x/@me`, /reactions, pins/],
     ['DELETE', `/channels/${T_OK}/messages/800000000000000005`, /created by this test session/],

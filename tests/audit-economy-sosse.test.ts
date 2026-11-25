@@ -248,14 +248,11 @@ describe('restarts and test mode', () => {
     expect(fake.writes).toEqual([[userId, 'Sosse']]);
   });
 
-  // CONFIRMED (medium): restoration is wired to the same switch that enables new nicknames.
-  // bot.ts builds SosseNicknames only when CASINO_NICKNAME_GUILD_ID is set, so an operator who
-  // withdraws the approval (unset the variable) and restarts leaves every player who is currently
-  // named "Sosse" with that nickname permanently; their lease rows are never processed.
-  // Required change (src/discord/bot.ts constructor, outside the audited files): when not guarded,
-  // always construct a SosseNicknames for restoration, e.g. with approvedGuild '' so offered()
-  // stays false. restoreDue() already processes every guild's leases (fixed in this audit).
-  it.fails('restores a pending nickname after a restart that withdrew the nickname approval', async () => {
+  // Fixed (was medium): restoration was wired to the same switch that enables new nicknames, so
+  // withdrawing the approval (unsetting CASINO_NICKNAME_GUILD_ID) and restarting left current
+  // "Sosse" nicknames in place forever. bot.ts now always builds SosseNicknames outside test mode,
+  // with approvedGuild '' when unset so offered() stays false; restoreDue() covers every guild.
+  it('restores a pending nickname after a restart that withdrew the nickname approval', async () => {
     const fake = new FakeMembers();
     const dbPath = tempDb();
     const { fd, clock, userId } = await nicknamedPlayer(fake, dbPath);

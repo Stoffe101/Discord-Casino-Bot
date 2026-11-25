@@ -51,6 +51,9 @@ interface EventTable {
   access_code: string | null;
 }
 
+/** How long after its start an event's assigned table is kept open despite being idle. */
+export const EVENT_TABLE_GRACE_MS = 30 * 60_000;
+
 const SELECT = `SELECT e.*, (SELECT COUNT(*) FROM casino_event_players p WHERE p.event_id = e.id) AS registered FROM casino_events e`;
 
 /** Require an explicit UTC offset and reject normalized dates such as February 30. */
@@ -164,20 +167,50 @@ export class CasinoEvents {
   }
 
   assignableTables(actor: EventActor, event: CasinoEvent): EventTable[] {
+    return this.matchingTables(actor, event).filter((table) => this.seatsForRegistrants(event, table) >= event.max_players);
+  }
+
+  /** Open tables the actor hosts with the event's game and visibility (capacity not checked). */
+  private matchingTables(actor: EventActor, event: CasinoEvent): EventTable[] {
     if (!this.canManage(actor, event)) return [];
     return this.deps.db.all<EventTable>("SELECT * FROM game_tables WHERE guild_id = ? AND game = ? AND owner_id = ? AND is_private = ? AND status = 'open' AND message_id IS NOT NULL",
-      [actor.guildId, event.game, actor.userId, !!event.access_code])
-      .filter((table) => {
-        try { return (JSON.parse(table.config_json) as { maxSeats: number }).maxSeats >= event.max_players; }
-        catch { return false; }
-      });
+      [actor.guildId, event.game, actor.userId, !!event.access_code]);
+  }
+
+  /**
+   * Seats left for registrants: the table's seats minus those held by people who are not
+   * registered for this event — notably the host who opened it, unless they registered too.
+   */
+  private seatsForRegistrants(event: CasinoEvent, table: EventTable): number {
+    let maxSeats: number;
+    try {
+      maxSeats = (JSON.parse(table.config_json) as { maxSeats: number }).maxSeats;
+    } catch {
+      return 0;
+    }
+    const others = this.deps.db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM table_seats s WHERE s.table_id = ?
+      AND NOT EXISTS (SELECT 1 FROM casino_event_players p WHERE p.event_id = ? AND p.user_id = s.user_id)`, [table.id, event.id])?.n ?? 0;
+    return maxSeats - others;
+  }
+
+  /** True while an event that uses this table is due — bounded: until 30 minutes after it starts. */
+  holdsTable(guildId: string, tableId: string, now: number): boolean {
+    return !!this.deps.db.get(`SELECT 1 FROM casino_events WHERE guild_id = ? AND table_id = ?
+      AND state IN ('scheduled','ready','awaiting','in_progress') AND ? < starts_at + ?`, [guildId, tableId, now, EVENT_TABLE_GRACE_MS]);
   }
 
   assign(actor: EventActor, id: string, revision: number, tableId: string | null): CasinoEvent {
     const event = this.manage(actor, id, revision);
     if (!this.isUpcoming(event)) throw new UserError('Only upcoming events can change tables.');
-    if (tableId && !this.assignableTables(actor, event).some((table) => table.id === tableId)) {
+    const table = tableId ? this.matchingTables(actor, event).find((candidate) => candidate.id === tableId) : undefined;
+    if (tableId && !table) {
       throw new UserError('Choose one of your own open tables with matching game, visibility and enough seats.');
+    }
+    if (table) {
+      const free = this.seatsForRegistrants(event, table);
+      if (free < event.max_players) {
+        throw new UserError(`That table leaves only ${free} of the ${event.max_players} seats this event needs: seats held by players who aren't registered count against it — including yours as the host. Register for the event yourself, or open a table with more seats.`);
+      }
     }
     if (tableId && this.deps.db.get("SELECT id FROM casino_events WHERE table_id = ? AND id <> ? AND state NOT IN ('completed','cancelled')", [tableId, id])) {
       throw new UserError('That table belongs to another upcoming event.');

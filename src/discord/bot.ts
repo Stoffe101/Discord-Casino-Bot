@@ -32,6 +32,9 @@ import { DISCORD_ERRORS, createOptions, discordErrorCode, editOptions, primaryFi
 import { InteractionRouter } from './router.js';
 import type { AdmissionCandidate, OutboundGuard } from './outbound-guard.js';
 import { tidyCasinoChannels } from './channel-tidy.js';
+
+/** The casino channel is tidied this long after startup, once panels and the lobby have settled. */
+const TIDY_DELAY_MS = 30_000;
 import { RestMetrics } from './rest-metrics.js';
 import { SosseNicknames, type NicknameMembers } from '../domain/sosse-nicknames.js';
 import { discordNicknameMembers } from './sosse-members.js';
@@ -143,6 +146,7 @@ export class CasinoBot {
   private readonly lobbyBusy = new Map<string, Promise<void>>();
   private readonly intervals: NodeJS.Timeout[] = [];
   private firstSweep: NodeJS.Timeout | null = null;
+  private tidySweep: NodeJS.Timeout | null = null;
   private readonly inflight = new Set<Promise<void>>();
   private stopping = false;
   private maintaining = false;
@@ -343,8 +347,10 @@ export class CasinoBot {
     for (const { guildId } of this.app.settings.guildsWithLobby()) this.requestLobby(guildId, 0);
     // Closes whose Discord side failed or was interrupted (e.g. by a crash) are finished now.
     this.track(this.reconcileClosedTables().then(() => undefined));
-    // Keep #casino to the lobby and live challenges: remove the bot's own leftovers (low priority).
-    this.track(tidyCasinoChannels(this.client, this.app, this.guard, this.logger).then(() => undefined, () => undefined));
+    // Keep #casino to the lobby and live challenges: remove the bot's own leftovers, once startup
+    // (panel recovery, lobby sync) has settled, at low priority.
+    this.tidySweep = setTimeout(() => this.track(tidyCasinoChannels(this.client, this.app, this.guard, this.logger).then(() => undefined, () => undefined)), TIDY_DELAY_MS);
+    this.tidySweep.unref?.();
     this.firstSweep = setTimeout(() => this.track(this.maintenance()), this.timing.firstSweepMs);
     this.firstSweep.unref?.();
     this.intervals.push(
@@ -424,6 +430,7 @@ export class CasinoBot {
     if (this.stopping) return;
     this.stopping = true;
     if (this.firstSweep) clearTimeout(this.firstSweep);
+    if (this.tidySweep) clearTimeout(this.tidySweep);
     for (const t of this.intervals) clearInterval(t);
     for (const t of this.lobbyTimers.values()) clearTimeout(t);
     this.logMetrics();

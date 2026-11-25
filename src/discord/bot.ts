@@ -352,12 +352,18 @@ export class CasinoBot {
     this.app.roulette.touchAll();
     for (const { guildId } of this.app.settings.guildsWithLobby()) this.requestLobby(guildId, 0);
     // Closes whose Discord side failed or was interrupted (e.g. by a crash) are finished now.
-    this.track(this.reconcileClosedTables().then(() => undefined));
+    const reconciled = this.reconcileClosedTables().then(() => undefined);
+    this.track(reconciled);
     // Casino events: open event tables that came due while the bot was down (event-tables.ts).
-    this.track(openDueEventTables(this.app, this));
-    // Keep #casino to the lobby and live challenges: remove the bot's own leftovers, once startup
-    // (panel recovery, lobby sync) has settled, at low priority.
-    this.tidySweep = setTimeout(() => this.track(tidyCasinoChannels(this.client, this.app, this.guard, this.logger).then(() => undefined, () => undefined)), TIDY_DELAY_MS);
+    const eventTables = openDueEventTables(this.app, this);
+    this.track(eventTables);
+    // Keep #casino tidy: remove the bot's own messages the database shows are finished (see
+    // channel-tidy.ts). It runs once startup recovery has completed (closes reconciled, event tables
+    // opened, panels re-attached above), and then only after things have settled, at low priority.
+    const recovered = Promise.allSettled([reconciled, eventTables]);
+    this.tidySweep = setTimeout(() => this.track(recovered
+      .then(() => (this.stopping ? 0 : tidyCasinoChannels(this.client, this.app, this.guard, this.logger)))
+      .then(() => undefined, () => undefined)), TIDY_DELAY_MS);
     this.tidySweep.unref?.();
     this.firstSweep = setTimeout(() => this.track(this.maintenance()), this.timing.firstSweepMs);
     this.firstSweep.unref?.();

@@ -453,7 +453,7 @@ export async function blackjackPanel(
         button({ id: cid('bj', 'seat', tableId), label: state.phase === 'betting' ? 'My seat' : 'My hand', emoji: ICONS.hand }),
         button({ id: cid('bj', 'leave', tableId), label: 'Leave', emoji: ICONS.leave }),
         button({ id: cid('bj', 'rules', tableId), label: 'Rules', emoji: ICONS.help }),
-        button({ id: cid('bj', 'home', tableId), label: 'Casino', emoji: ICONS.home }),
+        button({ id: cid('bj', 'home', tableId), label: 'Home', emoji: ICONS.home }),
       ),
       row(returnToCasino(app, record.guildId, record.channelId)),
       ]),

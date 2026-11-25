@@ -329,7 +329,7 @@ export class InteractionRouter {
           title: `+${chips(claim.amount)} chips`,
           body: `Daily reward collected${claim.streak > 1 ? ` — **${claim.streak}-day streak!**` : '.'} Balance: **${chips(claim.balance)}**.`,
           tone: 'gold',
-          buttons: [button({ id: NAV.wallet, label: 'Wallet', emoji: ICONS.wallet }), button({ id: NAV.home, label: 'Casino', emoji: ICONS.home })],
+          buttons: [button({ id: NAV.wallet, label: 'Wallet', emoji: ICONS.wallet }), button({ id: NAV.home, label: 'Home', emoji: ICONS.home })],
         }));
       }
       case 'blackjack':

@@ -282,7 +282,7 @@ export async function roulettePanel(app: CasinoApp, wheel: Readonly<WheelSnapsho
           button({ id: cid('rl', 'ready', record.id, state.roundId), label: 'Ready', emoji: '✅', tone: 'success', disabled: !ready.bettors }),
           button({ id: cid('rl', 'unready', record.id, state.roundId), label: 'Withdraw vote', emoji: ICONS.back, disabled: !ready.votes }),
           button({ id: cid('rl', 'help', record.id), label: 'How to play', emoji: ICONS.rules }),
-          button({ id: cid('bj', 'home', 'wheel'), label: 'Casino', emoji: ICONS.home }),
+          button({ id: cid('bj', 'home', 'wheel'), label: 'Home', emoji: ICONS.home }),
         ),
       ]),
     ],

@@ -64,14 +64,30 @@ recovery and reconciliation clean, no warnings. Later builds can be stopped with
 To roll back: create `data/grand-test.db.stop`, wait for exit, start `data/rollback-dist-bdebf81/main.js`
 with the same env files against a copy of the backup, and carry forward any activity since.
 
-**Open decisions for the owner.**
-- Hold'em: no dead button / missed-blind tracking (sitting out one hand dodges the big blind).
-  Two `it.fails` tests describe the standard behaviour.
-- Economy: passive income is ~46% of chips created over 90 seeded days and the median balance
-  reaches ~33× the starting 500, so stakes become trivial over months. Consider a lower passive
-  rate or cap; nothing was changed without your call.
-- Hold'em chip dumping lets a new account move its starting chips to a friend in one hand (the
-  gift age rule doesn't apply at the table). Options: an account-age gate on Hold'em seats.
+**Decisions since made (2026-11-25), with what remains.**
+- Hold'em blinds: a moving big blind with a dead button and missed-blind tracking (148cbf3).
+  A player who owes blinds chooses in their private view between posting and playing the next
+  hand (default) and "Wait for big blind"; the choice is stored with the seat, and a stack that
+  can't cover what is owed simply waits (`tests/integration/poker-wait-big-blind.test.ts`).
+- Economy: passive income 8/h stored for 48 h (see "Economy rebalance"), with income already
+  earned at the old rate kept by migration 7.
+- Hold'em chip dumping: for its first 24 hours (the gift rule's age) an account may put at most
+  two table minimums at risk (200 chips at the defaults): its buy-in plus its net Hold'em losses
+  so far, read from `round_results`. Reviewed: the buy-in and hand results are counted separately
+  (no double counting); leaving and buying in again cannot exceed the limit; winners and day-old
+  accounts are unaffected; the minimum is a server setting, so a table host cannot raise the
+  limit. Residual risks: a new account can still pass up to 200 chips on its first day, several
+  new accounts can each do so, and established accounts can collude (the admin "Unusual
+  transfers" review shows such patterns; nothing acts automatically).
+- #casino cleanup (`src/discord/channel-tidy.ts`): finished coinflip cards leave after 30 s
+  (3 min for a resolved flip). A sweep once startup recovery has completed (closes reconciled,
+  event tables opened, panels re-attached), plus 30 s, deletes only the bot's own messages this
+  database shows are finished: panels of closed tables and wheels, "started a thread" notices
+  for table threads, and finished challenge cards past their linger time. The lobby, live
+  challenges, open tables and wheels, anything younger than 10 minutes or pinned, anything the
+  records can't explain (for example another runtime's messages under the same bot account) and
+  everyone else's messages always stay. At most 40 deletes per sweep, each registered with the
+  test-mode guard.
 - Real nicknames remain disabled until you approve them for a guild.
 - Event tables: one table per event (multi-table events would extend `EventTableConfig` to a
   list). A player who withdraws must leave the event's table first. A crash in the instant
@@ -187,6 +203,45 @@ The initial `/casino` and the Home-tab update produced the same visible componen
 attachment references with Components V2 and private visibility. The user confirmed the
 buttons were visible on their latest attempt before the rollout. The original missing controls
 did not recur, and their original cause remains unknown.
+
+### Interaction bench, 409aba1 → 89b43fc (2026-11-25)
+
+`tests/harness/bench-interactions.ts` drives the real router, services, renderers and panel
+queues against Fake Discord with production timings and animations, adding 120 ms per Discord
+request and 150 ms per upload (calibrated against real Discord with `src/scripts/bench-live-rest.ts`).
+The baseline ran in an isolated worktree of 409aba1 with the same harness. Each side: 3 cold
+processes plus 8 passes in one process (warm = passes 2–8), and a concurrency run (5-seat
+Blackjack tables, a 4-seat Hold'em table, 10 roulette bettors and 5 browsers clicking at once,
+about 30 users). Results, median / p95 / max ms of the first visible change (warm):
+
+| Interaction | 409aba1 | 89b43fc |
+| --- | ---: | ---: |
+| Navigation without images (Home, Profile, Rules, lists…) | 123–125 / ≤138 | 123–125 / ≤137 |
+| Games, returning from a screen without images | 277 / 281 (179 KB) | 124 / 126 (2 KB) |
+| Games, after Wallet (the badge replaced its image) | 278 / 280 (179 KB) | 279 / 282 (97 KB) |
+| Relief / Gift confirm | 278 / 402 | 124 / 248 |
+| Blackjack bet → solo deal: deliberate wait | 1,115 | 790 |
+| Blackjack bet → solo deal: final frame | 2,228 | 1,893 |
+| Blackjack double | 475 | 421 |
+| Blackjack hit that ends the round | 970 / 1,021 | 778 / 787 |
+| Hold'em deal (host): final frame, errors | 1,878, 7 of 7 | 1,584, 0 |
+| Slots spin | 583 / 645 | 513 / 540 |
+| Coinflip accept | 371 | 355 |
+
+Concurrency: uploaded data 99 MB → 62 MB, lobby edits 24 → 9, event-loop max 309 → 56 ms
+(p99 17 ms both), peak RSS 409 → 351 MB, no errors. Raw results and the comparison are in the
+gitignored `recordings/perf/` (`compare-409aba1-89b43fc.txt`). Eight render threads instead of four
+(`UV_THREADPOOL_SIZE=8`) gained only 5–10% on the hit, so the default was kept.
+
+What remains slow, and why: a Blackjack hit or stand that ends the round answers with one GIF
+of the card, the dealer's reveal and the chip settlement (about 30 frames), so it shows after
+about 0.8 s. Showing the drawn card first (about 0.4 s) needs a text mode that does not reveal
+the outcome early; not done. Games after Wallet re-uploads its banner: Discord keeps either all
+existing attachments or none, so a screen with a different image replaces the banner.
+
+The bench also found a real bug, fixed in 89b43fc: Node timers can fire a millisecond before
+`Date.now()` reaches their target (9 of 400 here), and roulette spins and Hold'em turn timeouts
+treated such a call as not due and dropped it, leaving a wheel unspun with bets on it.
 
 ### Timing
 
@@ -366,7 +421,8 @@ Keeping 10–500 stakes meaningful for months needs a decision on those other so
 sinks or higher limits. None of that was changed here.
 
 **Existing servers.** `guild_settings.settings_json` holds only the keys an admin set, and
-defaults are read from code. There is no migration, and nothing is written at deploy.
+defaults are read from code. Migration 7 (`passive_rebalance_2026_11`) settles income earned before
+the switch; see "Uncollected passive income" below.
 - **Never set either passive key:** the server moves to 8/h and 48 h on the next start. The test
   server stores only `poker.enabled`, so it moves.
 - **Admin set either key, even to 20:** the server keeps that value. Changing another setting does
@@ -377,9 +433,16 @@ defaults are read from code. There is no migration, and nothing is written at de
   chips (1.18M vs 1.21M at 90 days) with no cross-effect, but loses the skip-a-day parity.
 - **Balances, ledger, streaks and committed chips** (escrows, Hold'em stacks) are untouched. No
   balance goes down.
-- **Uncollected passive income** is recomputed from each player's stored anchor at the current
-  rate, so a pending Collect button shows the new amount. For example, 24 hours waiting showed 480
-  and now shows 192.
+- **Uncollected passive income is kept.** Migration 7 runs once, on the first start of this build,
+  inside one transaction and before anything reads passive income. For every player on a server
+  whose effective rate or cap changes, it credits the income accrued at the old settings (same
+  formula as Collect: whole chips, capped, so 24 hours waiting still pays 480) as a
+  `passive_income` ledger entry with reference `migration:7` and memo "Passive earnings at the
+  previous rate", then restarts accrual from that moment at 8/h. Servers that set both passive
+  values are skipped. Explicit overrides are read the way the app reads them (invalid JSON counts
+  as none). A crash rolls the whole migration back and the next start runs it again; once
+  recorded in `schema_migrations` it never runs again. Rehearsed on copies of the test and stable
+  databases (see Verification). Tests: `tests/passive-rebalance.test.ts`.
 - **To keep the old behaviour:** in the admin panel, under Economy, set Passive chips / hour to 20
   and Passive cap to 24.
 - **Tests:** `tests/economy-defaults.test.ts`.

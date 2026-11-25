@@ -1,6 +1,7 @@
 import type { CasinoApp } from '../../app/casino-app.js';
 import { chips, discordTime, escapeMarkdown } from '../../core/format.js';
-import { cardLabel } from '../../games/cards.js';
+import { cardLabel, rankOf, suitOf } from '../../games/cards.js';
+import { bestHand } from '../../games/poker/hand-rank.js';
 import { privatePokerHand, publicPokerHand } from '../../games/poker/engine.js';
 import type { PokerSnapshot, PokerRenderHint } from '../../games/poker/poker-service.js';
 import { framesToGif } from '../../render/gif.js';
@@ -141,13 +142,23 @@ export function playerPokerScreen(table: PokerSnapshot, viewer: Viewer): Screen 
     legal.allIn ? button({ id: actionId('allin'), label: `All-in ${chips(active?.stack ?? 0)}` }) : null,
   ) : null;
   const url = pokerUrl(record);
+  const board = state.hand?.board ?? [];
+  const hole = privateView?.cards ?? [];
+  // What you're holding right now, in words (only your own cards and the public board).
+  const strength = hole.length === 2
+    ? board.length >= 3 ? `You have **${bestHand([...hole, ...board]).category.toLowerCase()}**`
+      : rankOf(hole[0]!) === rankOf(hole[1]!) ? 'You have **a pocket pair**' : suitOf(hole[0]!) === suitOf(hole[1]!) ? 'Two suited cards' : null
+    : null;
+  const turn = player?.leaving ? 'Your remaining stack returns to your wallet after this hand.'
+    : legal ? `### ▸ Your turn${legal.check ? ' · you can check' : legal.call !== null ? ` · **${chips(legal.call)}** to call` : ''}${legal.minTo !== null ? ` · min raise to ${chips(legal.minTo)}` : ''}`
+      : player && state.hand ? '-# Waiting for the other players. Refresh after they act.' : null;
   const parts = [
-    `## ${escapeMarkdown(record.name)} · My hand`,
-    player ? `**Your stack** · ${chips(active?.stack ?? player.stack)} chips` : 'Take a seat to receive a hand.',
-    privateView ? `### ${privateView.cards.map(cardLabel).join('  ')}` : null,
-    state.hand?.board.length ? `**Board** · ${state.hand.board.map(cardLabel).join('  ')}` : null,
-    state.hand ? `-# ${STREETS[state.hand.street]} · Pot ${chips(pot)}` : null,
-    player?.leaving ? 'Your remaining stack returns to Wallet after this hand.' : legal ? '**Your turn.**' : player && state.hand ? 'Waiting for play. Refresh to see the current action.' : null,
+    `## ${ICONS.poker} ${escapeMarkdown(record.name)} · My hand`,
+    hole.length ? `# ${hole.map(cardLabel).join('  ')}` : null,
+    strength ? `-# ${strength}` : null,
+    board.length ? `**Board** · ${board.map(cardLabel).join('  ')}` : null,
+    state.hand ? `-# ${STREETS[state.hand.street]} · pot ${chips(pot)} · your stack ${chips(active?.stack ?? player?.stack ?? 0)}` : player ? `**Your stack** · ${chips(player.stack)} chips` : 'Take a seat to receive a hand.',
+    turn,
   ].filter(Boolean);
   return { components: [container(COLORS.gold, [
     text(parts.join('\n')),

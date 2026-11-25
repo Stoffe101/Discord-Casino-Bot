@@ -189,7 +189,13 @@ class World {
       if (calm >= 3) return;
       await sleep(10);
     }
-    throw new Error('bench: did not settle');
+    // Say what was still going on, so an intermittent stall can be told apart from a slow run.
+    const slots = (name: string, p: unknown) => [...((p as { slots: Map<string, { running: boolean; pending: unknown }> }).slots.entries())]
+      .filter(([, slot]) => slot.running || slot.pending).map(([key, slot]) => `${name}:${key}:${slot.running ? 'running' : ''}${slot.pending ? 'pending' : ''}`);
+    const botInflight = (this.bot as unknown as { inflight: Set<unknown> }).inflight.size;
+    const wheel = this.app.roulette.wheelFor(this.guildId);
+    throw new Error(`bench: did not settle (requests in flight ${this.inflight}, bot tasks ${botInflight}, until ${until()}, panels [${[
+      ...slots('table', this.bot.tablePanels), ...slots('wheel', this.bot.wheelPanels), ...slots('poker', this.bot.pokerPanels)].join(', ')}], wheel ${wheel ? JSON.stringify({ phase: (wheel.state as { phase?: unknown }).phase, round: wheel.state.roundId, bets: wheel.state.bets.length, spinAt: rouletteSpinAt(wheel.state) }) : 'none'}, now ${Date.now()})`);
   }
 
   panel(messageId: string | null | undefined): FakeMessage {

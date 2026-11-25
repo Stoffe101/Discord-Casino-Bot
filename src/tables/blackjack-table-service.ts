@@ -47,8 +47,8 @@ import type {
 export const TURN_GRACE_MS = 2_000;
 /** When every seated player has bet, the deal happens this soon (lets people change their bet). */
 export const ALL_IN_DEAL_DELAY_MS = 1_500;
-/** A solo player's deal follows their bet after this beat (enough to add another chip). */
-export const SOLO_DEAL_DELAY_MS = 700;
+/** A solo player's deal follows their bet after this beat: room for a quick second chip, cards on screen within about a second. */
+export const SOLO_DEAL_DELAY_MS = 400;
 /** Consecutive timeouts before a player is automatically sat out. */
 export const TIMEOUTS_BEFORE_SIT_OUT = 2;
 /** Consecutive hands dealt without this player betting before they are sat out. */
